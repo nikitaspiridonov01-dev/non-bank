@@ -29,3 +29,10 @@ yarn-error.log*
 
 # Optional eslint cache
 .eslintcache
+
+# Build outputs
+ios/ios-www.bundle/
+
+# Xcode user data
+ios/non-bank.xcodeproj/xcuserdata/
+ios/non-bank.xcodeproj/project.xcworkspace/xcuserdata/

@@ -20,6 +20,17 @@ enum AppColors {
     static var backgroundElevated: Color { Color(.secondarySystemBackground) }
     static var backgroundChip: Color { Color(.tertiarySystemBackground) }
 
+    /// Softer chip / tile surface for light-mode contexts where the
+    /// system-gray family reads visibly darker than the surrounding
+    /// page (modal sheets, warm-tinted page bg). Near-white in light,
+    /// stays subtly elevated in dark.
+    static var backgroundChipSoft: Color {
+        dynamic(
+            UIColor(red: 0.98, green: 0.98, blue: 0.99, alpha: 1.0),
+            UIColor(red: 0.18, green: 0.18, blue: 0.19, alpha: 1.0)
+        )
+    }
+
     // Overlay used to modulate blur materials: in Dark, slightly darken; in Light, keep clear.
     static var backgroundOverlay: Color {
         dynamic(UIColor.clear, UIColor.black.withAlphaComponent(0.55))
@@ -66,7 +77,12 @@ enum AppColors {
             UIColor.systemOrange                                         // dark: system default
         )
     }
-    static var splitAccent: Color { Color(.systemPurple) }
+    static var splitAccent: Color {
+        dynamic(
+            UIColor(red: 0.42, green: 0.20, blue: 0.78, alpha: 1.0),
+            UIColor.systemPurple
+        )
+    }
 
     /// Reminder card background
     static var reminderBackgroundTint: Color {

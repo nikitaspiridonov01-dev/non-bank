@@ -152,15 +152,16 @@ struct ShareDistributionView: View {
         .clipShape(RoundedRectangle(cornerRadius: AppRadius.large))
     }
 
-    /// Grayscale track + fill bar. Non-colored per spec — shape alone conveys
-    /// the proportion, so no need to introduce a color legend here.
+    /// Soft track + split-accent fill. Bar fill matches the split
+    /// purple palette used elsewhere on this flow so the rows read as
+    /// part of the same visual family.
     private func bar(fraction: Double) -> some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(AppColors.backgroundChip)
+                    .fill(AppColors.splitAccent.opacity(0.18))
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(AppColors.textSecondary)
+                    .fill(AppColors.splitAccent)
                     .frame(width: max(geo.size.width * fraction, 3))
             }
         }

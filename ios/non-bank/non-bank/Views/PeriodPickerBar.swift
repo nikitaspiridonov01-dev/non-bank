@@ -57,12 +57,11 @@ struct PeriodPickerBar: View {
             // wide the filter group renders.
             Spacer(minLength: 16)
 
-            // Insights — opens the analytics screen. Uses
-            // `textTertiary` at full opacity (one notch *brighter*
-            // than the inactive filter labels at `× 0.6`, clearly
-            // dimmer than the selected filter at `textPrimary`) so
-            // it reads as a muted secondary action without
-            // competing with the active period for attention.
+            // Insights — opens the analytics screen. Reads as a muted
+            // secondary action via a soft chip background that picks
+            // up a subtle accent tint, with `textSecondary` for legibility
+            // in both themes (in dark mode the `textTertiary` text on a
+            // black background reads as washed-out and easy to miss).
             Button(action: onInsightsTap) {
                 HStack(spacing: AppSpacing.xs) {
                     Image(systemName: "chart.bar.xaxis")
@@ -70,7 +69,12 @@ struct PeriodPickerBar: View {
                     Text("Insights")
                         .font(AppFonts.metaText)
                 }
-                .foregroundColor(AppColors.textTertiary)
+                .foregroundColor(AppColors.textSecondary)
+                .padding(.horizontal, AppSpacing.sm)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule().fill(AppColors.backgroundChipSoft)
+                )
             }
             .buttonStyle(.plain)
         }

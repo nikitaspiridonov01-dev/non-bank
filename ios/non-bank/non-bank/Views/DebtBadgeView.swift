@@ -37,7 +37,7 @@ struct DebtBadgeView: View {
             .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: AppRadius.large)
-                    .fill(Color(.secondarySystemBackground))
+                    .fill(AppColors.backgroundChipSoft)
             )
     }
 
@@ -51,7 +51,7 @@ struct DebtBadgeView: View {
             +
             Text(formattedAmount(amount))
                 .font(.system(size: 12, weight: .bold))
-                .foregroundColor(AppColors.textPrimary)
+                .foregroundColor(AppColors.accent)
             +
             Text(" \(currency)")
                 .font(AppFonts.captionSmall)
@@ -66,7 +66,7 @@ struct DebtBadgeView: View {
         .padding(.vertical, 5)
         .background(
             RoundedRectangle(cornerRadius: AppRadius.large)
-                .fill(Color(.secondarySystemBackground))
+                .fill(AppColors.backgroundChipSoft)
         )
     }
 
@@ -87,7 +87,7 @@ struct DebtBadgeView: View {
                     .clipShape(Circle())
                     .overlay(
                         Circle()
-                            .stroke(Color(.secondarySystemBackground), lineWidth: 1.5)
+                            .stroke(AppColors.backgroundChipSoft, lineWidth: 1.5)
                     )
                     .zIndex(Double(ids.count - idx))
             }

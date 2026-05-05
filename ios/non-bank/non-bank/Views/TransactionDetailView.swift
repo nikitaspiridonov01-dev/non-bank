@@ -255,7 +255,7 @@ struct TransactionDetailView: View {
                     HStack(alignment: .center, spacing: AppSpacing.lg) {
                         ZStack {
                             RoundedRectangle(cornerRadius: AppRadius.xlarge, style: .continuous)
-                                .fill(source.isReminder ? AppColors.reminderEmojiBackground : Color(.systemGray5))
+                                .fill(source.isReminder ? AppColors.reminderEmojiBackground : AppColors.backgroundChipSoft)
                                 .frame(width: 64, height: 64)
                             Text(displayEmoji)
                                 .font(AppFonts.emojiLarge)
@@ -284,14 +284,15 @@ struct TransactionDetailView: View {
                             } label: {
                                 Image(systemName: "square.and.arrow.up")
                                     .font(AppFonts.body)
-                                    .foregroundColor(.accentColor)
+                                    .foregroundColor(AppColors.textPrimary)
                                     .frame(width: 40, height: 40)
                                     .background(
                                         Circle()
-                                            .fill(Color(.systemGray6))
+                                            .fill(AppColors.backgroundChipSoft)
                                     )
                             }
                             .accessibilityLabel("Share transaction")
+                            .tint(AppColors.textPrimary)
                         }
                     }
                     .background(

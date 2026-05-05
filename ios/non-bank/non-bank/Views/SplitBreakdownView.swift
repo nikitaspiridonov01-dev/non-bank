@@ -41,7 +41,7 @@ struct SplitBreakdownView: View {
     /// Colors are kept in sync with the ● markers in the legend below so it
     /// reads as one continuous formula (chart on top, legend under it).
     private var purchaseSectionColor: Color {
-        Color(red: 0.72, green: 0.50, blue: 0.95)
+        Color(red: 0.55, green: 0.34, blue: 0.88)
     }
 
     private var peopleSectionColor: Color {

@@ -94,7 +94,7 @@ struct PeriodPickerBar: View {
                 Text("Insights")
                     .font(AppFonts.metaText)
             }
-            .foregroundColor(AppColors.textTertiary)
+            .foregroundColor(AppColors.textSecondary)
             .padding(.horizontal, AppSpacing.sm)
             .padding(.vertical, 4)
             .glassEffect(.regular, in: .capsule)

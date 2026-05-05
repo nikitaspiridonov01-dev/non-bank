@@ -219,11 +219,13 @@ enum AppColors {
         )
     }
 
-    /// Split accent — soft lavender (`#B79AD4`, RGB 183/154/212). Pairs
-    /// with `splitBackgroundTint` for the "Split atmosphere".
+    /// Split accent — saturated violet that stays legible against
+    /// the cream page bg in light mode (the prior `#B79AD4` lavender
+    /// only hit ~2.4:1 against page fill, so inline labels and arrows
+    /// faded out). Brighter lavender retained for dark mode.
     static var splitAccent: Color {
         dynamic(
-            UIColor(red: 183/255, green: 154/255, blue: 212/255, alpha: 1.0),  // #B79AD4
+            UIColor(red: 110/255, green: 70/255, blue: 180/255, alpha: 1.0),   // ~#6E46B4 deeper violet
             UIColor(red: 200/255, green: 175/255, blue: 225/255, alpha: 1.0)   // brighter for dark
         )
     }

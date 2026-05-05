@@ -46,14 +46,19 @@ struct SplitBreakdownView: View {
     /// lavender (`splitAccent`), bottom is a deeper violet so the two
     /// sections still read as distinct slices of the same family.
     private var purchaseSectionColor: Color {
-        AppColors.splitAccent
+        // Lighter, cooler violet — paired with the much deeper
+        // `peopleSectionColor` for clear lightness contrast between
+        // the two sections (previously both sat in the same medium
+        // band and read as one block). Stays dark enough for ~5:1
+        // contrast with the white labels.
+        Color(red: 0.58, green: 0.43, blue: 0.92)
     }
 
     private var peopleSectionColor: Color {
-        // Deeper violet — same hue family as `splitAccent` but
-        // ~25% darker so the people section reads as a heavier
-        // counterpart to the lavender purchase section above.
-        Color(red: 0.55, green: 0.40, blue: 0.75)
+        // Deep dusty plum — about half the luminance of the
+        // purchase section so the two read as clearly distinct
+        // surfaces, not "two close shades of purple".
+        Color(red: 0.26, green: 0.16, blue: 0.50)
     }
 
     @ViewBuilder

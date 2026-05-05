@@ -93,6 +93,8 @@ struct CreateCategoryModal: View {
                 }
                 .background(Color.clear)
             }
+            .scrollContentBackground(.hidden)
+            .background(AppColors.backgroundPrimary)
             .navigationTitle("Create Category")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

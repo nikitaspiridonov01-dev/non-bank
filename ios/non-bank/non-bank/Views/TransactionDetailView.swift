@@ -297,18 +297,15 @@ struct TransactionDetailView: View {
                                 // opened the detail card.
                                 Image(systemName: "square.and.arrow.up")
                                     .font(AppFonts.body)
-                                    .foregroundColor(AppColors.splitAccent)
+                                    .foregroundColor(source == .debts ? AppColors.splitAccent : AppColors.textPrimary)
                                     .frame(width: 40, height: 40)
                                     .background(
-                                        // Split-themed circle backdrop —
-                                        // share button lives in Split-only
-                                        // contexts, so the chip behind it
-                                        // also picks up the Split palette.
                                         Circle()
-                                            .fill(AppColors.splitChipFill)
+                                            .fill(source == .debts ? AppColors.splitChipFill : AppColors.backgroundChip)
                                     )
                             }
                             .accessibilityLabel("Share transaction")
+                            .tint(source == .debts ? AppColors.splitAccent : AppColors.textPrimary)
                         }
                     }
                     .background(

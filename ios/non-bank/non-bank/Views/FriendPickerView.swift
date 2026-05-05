@@ -86,6 +86,8 @@ struct FriendPickerView: View {
                 hasFriends: !friendStore.friends.isEmpty,
                 allGroups: friendStore.allGroups
             )
+            .scrollContentBackground(.hidden)
+            .background(AppColors.backgroundPrimary)
             .searchable(text: $searchText, prompt: "Search friends")
             .navigationTitle("")
             .toolbarTitleDisplayMode(.inline)

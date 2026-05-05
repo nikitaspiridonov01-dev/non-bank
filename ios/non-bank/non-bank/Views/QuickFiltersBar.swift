@@ -49,7 +49,7 @@ struct QuickFilterButton: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, AppSpacing.sm)
-            .background(isActive ? Color.accentColor.opacity(0.15) : AppColors.backgroundChipSoft)
+            .background(isActive ? Color.accentColor.opacity(0.15) : AppColors.backgroundElevated)
             .foregroundColor(isActive ? .accentColor : AppColors.textPrimary)
             .cornerRadius(AppRadius.large)
             .overlay(

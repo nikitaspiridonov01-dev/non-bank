@@ -43,6 +43,8 @@ struct CategoriesSheetView_Select: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(AppColors.backgroundPrimary)
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search categories")
             .navigationTitle("Choose Category")
             .toolbar {

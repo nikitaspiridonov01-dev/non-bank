@@ -170,7 +170,7 @@ struct ShareDistributionView: View {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(AppColors.splitChipFill)
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(AppColors.textSecondary)
+                    .fill(AppColors.splitAccent)
                     .frame(width: max(geo.size.width * fraction, 3))
             }
         }

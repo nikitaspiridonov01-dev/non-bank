@@ -41,7 +41,7 @@ struct DebtBadgeView: View {
             .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: AppRadius.large)
-                    .fill(AppColors.splitChipFill)
+                    .fill(AppColors.backgroundElevated)
             )
     }
 
@@ -55,7 +55,7 @@ struct DebtBadgeView: View {
             +
             Text(formattedAmount(amount))
                 .font(.system(size: 12, weight: .bold))
-                .foregroundColor(AppColors.textPrimary)
+                .foregroundColor(Color.accentColor)
             +
             Text(" \(currency)")
                 .font(AppFonts.captionSmall)
@@ -72,7 +72,7 @@ struct DebtBadgeView: View {
             // Same lavender pill as `settledBadge` — DebtBadge always
             // signals "Split sub-app entry" regardless of state.
             RoundedRectangle(cornerRadius: AppRadius.large)
-                .fill(AppColors.splitChipFill)
+                .fill(AppColors.backgroundElevated)
         )
     }
 

@@ -69,6 +69,8 @@ struct CategoriesSheetView: View {
                 .onDelete(perform: deleteCategory)
             }
             .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(AppColors.backgroundPrimary)
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search categories")
             .navigationTitle("Categories")
             .toolbar {

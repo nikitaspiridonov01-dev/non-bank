@@ -74,7 +74,7 @@ struct PeriodPickerBar: View {
             .padding(.vertical, 4)
 
         if isSelected {
-            base.glassEffect(.regular, in: .capsule)
+            base.background(Capsule().fill(AppColors.backgroundElevated))
         } else {
             base
         }
@@ -94,10 +94,10 @@ struct PeriodPickerBar: View {
                 Text("Insights")
                     .font(AppFonts.metaText)
             }
-            .foregroundColor(AppColors.textTertiary)
+            .foregroundColor(AppColors.textSecondary)
             .padding(.horizontal, AppSpacing.sm)
             .padding(.vertical, 4)
-            .glassEffect(.regular, in: .capsule)
+            .background(Capsule().fill(AppColors.backgroundElevated))
         }
         .buttonStyle(.plain)
     }

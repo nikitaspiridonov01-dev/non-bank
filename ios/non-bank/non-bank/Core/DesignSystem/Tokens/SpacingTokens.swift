@@ -94,7 +94,7 @@ enum AppSizes {
     static let trendBarWidth: CGFloat = 1.5
     static let trendBarHeight: CGFloat = 72
     static let headerExpandedHeight: CGFloat = 305
-    static let headerFilterHeight: CGFloat = 420
+    static let headerFilterHeight: CGFloat = 360
     static let headerExtraTopPadding: CGFloat = 32
     static let headerCollapseThreshold: CGFloat = 140.0
 

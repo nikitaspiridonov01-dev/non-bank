@@ -52,7 +52,7 @@ struct CreateCategoryModal: View {
     var body: some View {
         NavigationView {
             ZStack {
-                Color(.systemGray6)
+                AppColors.backgroundChip
                     .ignoresSafeArea()
                 Form {
                     Section(header:

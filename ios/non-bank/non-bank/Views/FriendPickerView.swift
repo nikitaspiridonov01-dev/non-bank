@@ -279,12 +279,15 @@ private struct FriendPickerContent: View {
                 }
             }
 
-            // Friends list or empty state
+            // Friends list or empty state — same pattern as FriendsView:
+            // emptyBox for "ever-empty", search for "no-results-now".
             if filteredFriends.isEmpty {
                 VStack(spacing: AppSpacing.md) {
-                    Image(systemName: "person.2.slash")
-                        .font(AppFonts.iconHero)
-                        .foregroundColor(AppColors.textTertiary)
+                    if searchText.isEmpty {
+                        EmptyBoxIllustration(tint: .neutral, size: .standard)
+                    } else {
+                        SearchIllustration(tint: .neutral, size: .standard)
+                    }
                     Text(searchText.isEmpty ? "No friends yet" : "No results")
                         .font(AppFonts.labelPrimary)
                         .foregroundColor(AppColors.textSecondary)
@@ -351,7 +354,7 @@ private struct FriendPickerContent: View {
                 .font(AppFonts.captionEmphasized)
                 .padding(.horizontal, AppSpacing.md)
                 .padding(.vertical, 6)
-                .background(isSelected ? Color.accentColor.opacity(0.15) : Color(.systemGray5))
+                .background(isSelected ? Color.accentColor.opacity(0.15) : AppColors.backgroundChip)
                 .foregroundColor(isSelected ? .accentColor : AppColors.textPrimary)
                 .clipShape(Capsule())
         }

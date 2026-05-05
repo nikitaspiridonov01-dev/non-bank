@@ -49,7 +49,10 @@ struct PaidUpfrontView: View {
             }
             .padding(.top, AppSpacing.lg)
         }
-        .background(AppColors.backgroundPrimary)
+        // Pushed from `SplitBreakdownView` inside the Split context;
+        // matches that sub-palette's surface tint so the screen stays
+        // in the "Split atmosphere" on push.
+        .background(AppColors.splitBackgroundTint)
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -125,7 +128,7 @@ struct PaidUpfrontView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
-        .background(AppColors.backgroundElevated)
+        .background(AppColors.splitCardFill)
         .clipShape(RoundedRectangle(cornerRadius: AppRadius.large))
     }
 }

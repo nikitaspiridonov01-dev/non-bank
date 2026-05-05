@@ -48,7 +48,11 @@ struct FriendDetailView: View {
                 Spacer().frame(height: 40)
             }
         }
-        .background(AppColors.backgroundPrimary)
+        // Inherits the Split sub-palette from `DebtSummaryView`'s
+        // NavigationStack via `.colorContext(.split)`. Background
+        // matches that sub-palette's surface tint so the screen
+        // doesn't lose the "Split atmosphere" on push.
+        .background(AppColors.splitBackgroundTint)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: Binding(
             get: { showTransactionDetail && selectedTransaction != nil },
@@ -142,8 +146,11 @@ struct FriendDetailView: View {
     @ViewBuilder
     private var transactionsSection: some View {
         if groupedTransactions.isEmpty {
-            VStack {
+            VStack(spacing: AppSpacing.md) {
                 Spacer().frame(height: 40)
+                // Sleeping cat in the Split (lavender) tint —
+                // matches the sub-palette of the parent screen.
+                SleepingCatIllustration(tint: .split, size: .standard)
                 Text("No split transactions")
                     .font(AppFonts.labelCaption)
                     .foregroundColor(AppColors.textSecondary)

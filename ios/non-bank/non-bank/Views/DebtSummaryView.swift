@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DebtSummaryView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorContext) private var colorContext
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var currencyStore: CurrencyStore
     @EnvironmentObject var friendStore: FriendStore
@@ -78,7 +79,7 @@ struct DebtSummaryView: View {
                     Spacer().frame(height: 40)
                 }
             }
-            .background(AppColors.backgroundPrimary)
+            .background(AppColors.splitBackgroundTint)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -152,6 +153,11 @@ struct DebtSummaryView: View {
                 }
             }
         }
+        // Whole DebtSummary lives in the Split sub-palette: lavender
+        // accents, light-pink page tint, purple-tinted illustrations.
+        // FriendDetailView is pushed onto this NavigationStack and
+        // inherits the same context.
+        .colorContext(.split)
     }
 
     // MARK: - Header
@@ -232,7 +238,10 @@ struct DebtSummaryView: View {
     }
 
     /// Tappable currency picker — synchronized with the global `selectedCurrency`,
-    /// so changing it here also updates the Home header.
+    /// so changing it here also updates the Home header. Currency-code
+    /// colour reads from the surrounding colour context so the EUR /
+    /// USD label picks up lavender on Split screens, warm orange on
+    /// standard contexts.
     private var currencyMenu: some View {
         Menu {
             ForEach(currencyStore.currencyOptions, id: \.self) { code in
@@ -243,9 +252,16 @@ struct DebtSummaryView: View {
                 }
             }
         } label: {
+            // Hardcoded `splitAccent` — `colorContext` env value
+            // here would still be `.standard` because `DebtSummaryView`
+            // reads its OWN environment from its parent, not from
+            // its own `.colorContext(.split)` modifier (which only
+            // applies to descendants). Since this view is by
+            // definition Split-context, `splitAccent` is the
+            // right hardcoded answer.
             Text(currencyStore.selectedCurrency)
                 .font(AppFonts.balanceCurrency)
-                .foregroundColor(AppColors.balanceCurrency)
+                .foregroundColor(AppColors.splitAccent)
         }
     }
 
@@ -318,11 +334,22 @@ struct DebtSummaryView: View {
     @ViewBuilder
     private var transactionsSection: some View {
         if groupedTransactions.isEmpty {
-            VStack {
-                Spacer().frame(height: 40)
-                Text("No split transactions")
-                    .font(AppFonts.labelCaption)
+            // Whole DebtSummary is empty (no debts, no transactions).
+            // Sleeping cat in the Split (lavender) tint anchors it to
+            // the Split sub-palette; copy explains what would land
+            // here once the user splits something.
+            VStack(spacing: AppSpacing.md) {
+                Spacer().frame(height: 60)
+                SleepingCatIllustration(tint: .split, size: .hero)
+                Text("Nothing to settle yet")
+                    .font(AppFonts.subhead)
+                    .foregroundColor(AppColors.textPrimary)
+                Text("Split a transaction with a friend and it will appear here.")
+                    .font(AppFonts.caption)
                     .foregroundColor(AppColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, AppSpacing.xxxl)
+                Spacer()
             }
             .frame(maxWidth: .infinity)
         } else {
@@ -400,7 +427,11 @@ struct DebtRowView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.rowVertical)
         .frame(maxWidth: .infinity)
-        .background(AppColors.backgroundElevated)
+        // `splitCardFill` (lavender card on lavender page) instead of
+        // the warm-cream `backgroundElevated` so the row reads as part
+        // of the Split sub-app rather than borrowing from the main
+        // app's atmosphere.
+        .background(AppColors.splitCardFill)
         .cornerRadius(AppRadius.large)
     }
 
@@ -474,6 +505,11 @@ struct GroupChip: View {
     let isActive: Bool
     let action: () -> Void
 
+    /// Picks the active-fill colour from the surrounding context so
+    /// GroupChip in `.split` Reminders / Split screens uses the
+    /// matching sub-palette instead of the default warm primary.
+    @Environment(\.colorContext) private var colorContext
+
     var body: some View {
         Button(action: action) {
             Text(label)
@@ -482,7 +518,7 @@ struct GroupChip: View {
                 .padding(.horizontal, AppSpacing.md)
                 .padding(.vertical, 6)
                 .background(
-                    Capsule().fill(isActive ? AppColors.balanceCurrency : AppColors.backgroundChip)
+                    Capsule().fill(isActive ? colorContext.accent : AppColors.backgroundChip)
                 )
         }
         .buttonStyle(.plain)

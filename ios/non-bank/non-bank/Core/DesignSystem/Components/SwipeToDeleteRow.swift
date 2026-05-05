@@ -42,7 +42,10 @@ class SwipeToDeleteHostController<Content: View>: UIViewController, UIGestureRec
         view.backgroundColor = .clear
 
         deleteButton = UIButton(type: .system)
-        deleteButton.backgroundColor = .systemRed
+        // Use the design-system `danger` token instead of `.systemRed`
+        // so swipe-to-delete picks up the wine/rose hue that's
+        // visually distinct from `reminderAccent` (warm calendar-red).
+        deleteButton.backgroundColor = UIColor(AppColors.danger)
         let trashImage = UIImage(systemName: "trash.fill")?.withRenderingMode(.alwaysTemplate)
         deleteButton.setImage(trashImage, for: .normal)
         deleteButton.tintColor = .white

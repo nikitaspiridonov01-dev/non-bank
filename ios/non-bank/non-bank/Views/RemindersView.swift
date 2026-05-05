@@ -28,6 +28,11 @@ struct RemindersView: View {
             }
             .background(AppColors.reminderBackgroundTint)
         }
+        // Declares the entire Reminders screen as living in the
+        // `.reminders` colour context — descendants that read
+        // `@Environment(\.colorContext)` automatically pick up the
+        // warm-red sub-palette (accent, surface tint, pixel tint).
+        .colorContext(.reminders)
         // Two sibling sheets. On "Edit rules" we close the detail sheet first
         // and then open the editor after a short delay so SwiftUI can present
         // them sequentially — nested sheets were proving unreliable on iOS.
@@ -79,10 +84,11 @@ struct RemindersView: View {
     // MARK: - Empty State
 
     private var emptyState: some View {
+        // Sleeping cat in the `.reminders` tint (warm calendar-red)
+        // visually anchors the empty state to the Reminders sub-
+        // palette, so it doesn't read as a generic neutral empty.
         VStack(spacing: AppSpacing.lg) {
-            Image(systemName: "bell.slash")
-                .font(.system(size: 48, weight: .light))
-                .foregroundColor(AppColors.textTertiary)
+            SleepingCatIllustration(tint: .reminders, size: .standard)
             Text("No Reminders")
                 .font(AppFonts.labelPrimary)
                 .foregroundColor(AppColors.textSecondary)

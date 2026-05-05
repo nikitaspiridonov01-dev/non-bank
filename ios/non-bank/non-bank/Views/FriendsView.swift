@@ -137,7 +137,7 @@ struct FriendsView: View {
                 .font(AppFonts.captionEmphasized)
                 .padding(.horizontal, AppSpacing.md)
                 .padding(.vertical, 6)
-                .background(isSelected ? Color.accentColor.opacity(0.15) : Color(.systemGray5))
+                .background(isSelected ? Color.accentColor.opacity(0.15) : AppColors.backgroundChip)
                 .foregroundColor(isSelected ? .accentColor : AppColors.textPrimary)
                 .clipShape(Capsule())
         }
@@ -236,9 +236,15 @@ struct FriendsView: View {
     private var emptyState: some View {
         Section {
             VStack(spacing: AppSpacing.md) {
-                Image(systemName: "person.2.slash")
-                    .font(AppFonts.iconHero)
-                    .foregroundColor(AppColors.textTertiary)
+                // Different pixel figure per state — `emptyBox` reads
+                // as "container with nothing in it" for the no-friends-
+                // ever case; `search` reads as "active hunt with no
+                // hits" for the search-with-zero-results case.
+                if searchText.isEmpty {
+                    EmptyBoxIllustration(tint: .neutral, size: .standard)
+                } else {
+                    SearchIllustration(tint: .neutral, size: .standard)
+                }
                 Text(searchText.isEmpty ? "No friends yet" : "No results")
                     .font(AppFonts.labelPrimary)
                     .foregroundColor(AppColors.textSecondary)

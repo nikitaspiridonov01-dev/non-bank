@@ -36,44 +36,69 @@ struct PeriodPickerBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // Filter group — its own HStack so the inter-button
-            // spacing (20pt) is independent from the spacer between
-            // filters and Insights.
-            HStack(spacing: AppSpacing.xl) {
-                ForEach(filters) { filter in
-                    Button {
-                        dateFilter = filter
-                    } label: {
-                        Text(filter.shortLabel)
-                            .font(AppFonts.metaText)
-                            .foregroundColor(dateFilter == filter ? AppColors.textPrimary : AppColors.textTertiary)
-                            .opacity(dateFilter == filter ? 1.0 : 0.6)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            // Push Insights to the trailing edge regardless of how
-            // wide the filter group renders.
+            filterGroup
             Spacer(minLength: 16)
-
-            // Insights — opens the analytics screen. Uses
-            // `textTertiary` at full opacity (one notch *brighter*
-            // than the inactive filter labels at `× 0.6`, clearly
-            // dimmer than the selected filter at `textPrimary`) so
-            // it reads as a muted secondary action without
-            // competing with the active period for attention.
-            Button(action: onInsightsTap) {
-                HStack(spacing: AppSpacing.xs) {
-                    Image(systemName: "chart.bar.xaxis")
-                        .font(AppFonts.micro)
-                    Text("Insights")
-                        .font(AppFonts.metaText)
-                }
-                .foregroundColor(AppColors.textTertiary)
-            }
-            .buttonStyle(.plain)
+            insightsButton
         }
         .padding(.horizontal, AppSpacing.pageHorizontal)
+    }
+
+    // MARK: - Filter group
+    //
+    // Each filter pill gets a Liquid Glass capsule **only when
+    // selected** — the iOS 26 segmented-control pattern. Inactive
+    // labels stay flat / dim; the selected one pops out as a small
+    // glass pill.
+
+    private var filterGroup: some View {
+        HStack(spacing: AppSpacing.sm) {
+            ForEach(filters) { filter in
+                Button {
+                    dateFilter = filter
+                } label: {
+                    filterLabel(for: filter)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func filterLabel(for filter: DateFilterType) -> some View {
+        let isSelected = dateFilter == filter
+        let base = Text(filter.shortLabel)
+            .font(AppFonts.metaText)
+            .foregroundColor(isSelected ? AppColors.textPrimary : AppColors.textTertiary)
+            .opacity(isSelected ? 1.0 : 0.6)
+            .padding(.horizontal, AppSpacing.sm)
+            .padding(.vertical, 4)
+
+        if isSelected {
+            base.glassEffect(.regular, in: .capsule)
+        } else {
+            base
+        }
+    }
+
+    // MARK: - Insights CTA
+    //
+    // Always-on glass capsule because Insights is a constant CTA, not
+    // a toggle. `textTertiary` keeps it visually quieter than the
+    // active filter (which uses `textPrimary`).
+
+    private var insightsButton: some View {
+        Button(action: onInsightsTap) {
+            HStack(spacing: AppSpacing.xs) {
+                Image(systemName: "chart.bar.xaxis")
+                    .font(AppFonts.micro)
+                Text("Insights")
+                    .font(AppFonts.metaText)
+            }
+            .foregroundColor(AppColors.textTertiary)
+            .padding(.horizontal, AppSpacing.sm)
+            .padding(.vertical, 4)
+            .glassEffect(.regular, in: .capsule)
+        }
+        .buttonStyle(.plain)
     }
 }

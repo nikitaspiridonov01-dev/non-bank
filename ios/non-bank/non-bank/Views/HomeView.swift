@@ -223,9 +223,6 @@ struct HomeView: View {
                 }
                 .ignoresSafeArea(edges: .top)
             )
-            .overlay(
-                Divider().background(AppColors.border).opacity(collapseProgress > 0.9 ? 1 : 0), alignment: .bottom
-            )
             .overlay(alignment: .topLeading) {
                 // Reminders button (top-left toolbar position) — always
                 // visible so the entry point is discoverable. Native

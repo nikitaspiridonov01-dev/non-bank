@@ -46,6 +46,7 @@ struct DebugReceiptScannerView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(AppColors.accentBold)
                 .controlSize(.large)
                 .padding(.horizontal, AppSpacing.xxxl)
 

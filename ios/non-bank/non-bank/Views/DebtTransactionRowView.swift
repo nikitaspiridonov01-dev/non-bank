@@ -65,11 +65,15 @@ struct DebtTransactionRowView: View {
 
                 if !isLast {
                     Divider()
-                        .background(AppColors.border)
+                        .background(AppColors.splitBorder)
                         .padding(.leading, AppSizes.dividerLeading)
                 }
             }
-            .background(AppColors.backgroundPrimary)
+            // Transparent — transaction rows in the Split list sit
+            // directly on the lavender page tint without their own
+            // card backdrop. Cleaner read against `splitBackgroundTint`
+            // and matches how Reminders list rows render.
+            .background(Color.clear)
         }
         .frame(maxWidth: .infinity)
     }

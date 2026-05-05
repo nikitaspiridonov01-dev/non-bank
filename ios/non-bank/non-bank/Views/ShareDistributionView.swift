@@ -61,7 +61,10 @@ struct ShareDistributionView: View {
             }
             .padding(.top, AppSpacing.lg)
         }
-        .background(AppColors.backgroundPrimary)
+        // Same Split-context background as PaidUpfrontView — keeps
+        // the lavender / pink atmosphere through every push of the
+        // debt drilldown.
+        .background(AppColors.splitBackgroundTint)
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -70,12 +73,15 @@ struct ShareDistributionView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: AppSpacing.sm) {
             HStack(spacing: 6) {
+                // Split-themed pill ("50/50", "custom", etc.) — was
+                // warm `backgroundChip` cream which clashed with the
+                // lavender page tint.
                 Text(splitModeLabel)
                     .font(AppFonts.labelSmall)
                     .foregroundColor(AppColors.textPrimary)
                     .padding(.horizontal, AppSpacing.sm)
                     .padding(.vertical, 3)
-                    .background(Capsule().fill(AppColors.backgroundChip))
+                    .background(Capsule().fill(AppColors.splitChipFill))
                 Text("between \(sharers.count) \(sharers.count == 1 ? "person" : "people")")
                     .font(AppFonts.heading)
                     .foregroundColor(AppColors.textPrimary)
@@ -148,7 +154,9 @@ struct ShareDistributionView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
-        .background(AppColors.backgroundElevated)
+        // Split-themed card fill — replaces warm `backgroundElevated`
+        // which clashed with the lavender Split atmosphere.
+        .background(AppColors.splitCardFill)
         .clipShape(RoundedRectangle(cornerRadius: AppRadius.large))
     }
 
@@ -157,8 +165,10 @@ struct ShareDistributionView: View {
     private func bar(fraction: Double) -> some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
+                // Track also picks up the Split chip fill so the
+                // bar doesn't borrow warm cream against the lavender card.
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(AppColors.backgroundChip)
+                    .fill(AppColors.splitChipFill)
                 RoundedRectangle(cornerRadius: 4)
                     .fill(AppColors.textSecondary)
                     .frame(width: max(geo.size.width * fraction, 3))

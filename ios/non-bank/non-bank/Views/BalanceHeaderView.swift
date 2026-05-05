@@ -82,6 +82,11 @@ struct BalanceHeaderView: View {
                         }
                     }
                 } label: {
+                    // Currency picker label — the `balanceCurrency`
+                    // token now resolves to the warm primary accent
+                    // app-wide, so this site picks it up automatically
+                    // alongside the same picker in CreateTransactionModal
+                    // and DebtSummaryView.
                     Text(currencyStore.selectedCurrency)
                         .font(AppFonts.balanceCurrency)
                         .foregroundColor(AppColors.balanceCurrency)

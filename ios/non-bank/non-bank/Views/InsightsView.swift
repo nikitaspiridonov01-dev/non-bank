@@ -260,8 +260,11 @@ struct InsightsView: View {
     /// so we don't render either card and instead hint at the path
     /// to creating data.
     private var nothingYet: some View {
+        // Pixel growing-plant figure encodes the "your data is the
+        // seed" framing — softer than a chart icon for an empty-by-
+        // necessity screen.
         EmptyStateView(
-            systemImage: "chart.bar.xaxis",
+            figure: .growingPlant(),
             title: "Nothing to analyse yet",
             description: "Add a transaction to start seeing insights here.",
             size: .page

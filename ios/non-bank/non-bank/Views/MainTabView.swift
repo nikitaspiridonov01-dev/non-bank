@@ -57,22 +57,16 @@ struct MainTabView: View {
                     }
                 }
                 Spacer(minLength: AppSizes.tabBarCenterSpacing)
-                // Центральная кнопка
+                // Центральная кнопка — black-pill CTA с native iOS 26
+                // Liquid Glass поверх. `ctaSurface` инвертируется
+                // (чёрная в Light / белая в Dark), foreground — наоборот.
                 Button(action: { router.showCreateTransaction() }) {
-                    ZStack {
-                        LinearGradient(
-                            gradient: Gradient(colors: [AppColors.accentGradientTop, AppColors.accentGradientBottom]),
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
+                    Image(systemName: "plus")
+                        .font(AppFonts.fabIcon)
+                        .foregroundColor(AppColors.ctaForeground)
                         .frame(width: AppSizes.fabSize, height: AppSizes.fabSize)
-                        .shadow(color: AppColors.accentShadow, radius: 14, y: 8)
-                        .cornerRadius(AppRadius.fab)
-                        
-                        Image(systemName: "plus")
-                            .font(AppFonts.fabIcon)
-                            .foregroundColor(AppColors.textOnAccent)
-                    }
+                        .background(AppColors.ctaSurface, in: .circle)
+                        .glassEffect(.regular, in: .circle)
                 }
                 .offset(y: AppSizes.fabOffset)
                 Spacer(minLength: AppSizes.tabBarCenterSpacing)

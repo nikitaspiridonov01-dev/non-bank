@@ -144,6 +144,8 @@ struct ImportTransactionsView: View {
                 .background(AppColors.backgroundElevated)
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(AppColors.backgroundPrimary)
         .navigationTitle("Import Transactions")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { router.hideTabBar = true }

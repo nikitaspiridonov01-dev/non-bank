@@ -274,6 +274,8 @@ struct FilterSheetView: View {
                 }
 
             }
+            .scrollContentBackground(.hidden)
+            .background(AppColors.backgroundPrimary)
             .navigationBarTitle("All Filters", displayMode: .inline)
             .navigationBarItems(
                 leading: Button("Clear all") {

@@ -116,6 +116,8 @@ struct ExportTransactionsView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(AppColors.backgroundPrimary)
         .navigationTitle("Export Transactions")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { router.hideTabBar = true }

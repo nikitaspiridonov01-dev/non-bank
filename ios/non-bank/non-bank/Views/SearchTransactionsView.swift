@@ -49,6 +49,8 @@ struct SearchTransactionsView: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(AppColors.backgroundPrimary)
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search by title or notes")
             .navigationTitle("Search")
             .toolbar {

@@ -60,6 +60,8 @@ struct PeriodPickerSheet: View {
             applyButtonSection
             monthsSection
         }
+        .scrollContentBackground(.hidden)
+        .background(AppColors.backgroundPrimary)
         .dismissibleSheet(title: "Period")
     }
 

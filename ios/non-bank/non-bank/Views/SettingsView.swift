@@ -183,6 +183,8 @@ struct SettingsView: View {
                 //     }
                 // }
             }
+            .scrollContentBackground(.hidden)
+            .background(AppColors.backgroundPrimary)
             .navigationBarHidden(true)
             .safeAreaInset(edge: .bottom) {
                 Color.clear.frame(height: 80)

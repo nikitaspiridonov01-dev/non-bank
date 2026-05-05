@@ -224,7 +224,7 @@ struct HomeView: View {
                 .ignoresSafeArea(edges: .top)
             )
             .overlay(
-                Divider().background(AppColors.border).opacity(collapseProgress > 0.9 || vm.hasActiveFilters || stickyDateVisible ? 1 : 0), alignment: .bottom
+                Divider().background(AppColors.border).opacity(collapseProgress > 0.9 ? 1 : 0), alignment: .bottom
             )
             .overlay(alignment: .topLeading) {
                 // Reminders button (top-left toolbar position) — always

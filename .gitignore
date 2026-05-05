@@ -1,38 +1,25 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Apple / Xcode
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+DerivedData/
+build/
+ios/non-bank/non-bank.xcodeproj/xcuserdata/
+ios/non-bank/non-bank.xcodeproj/project.xcworkspace/xcuserdata/
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
+# Large binary files — do not commit
+*.gguf
+Frameworks/
 
-# testing
-/coverage
-
-# production
-/dist
-
-# misc
+# macOS / IDEs / agent state
 .DS_Store
+.idea
+.vscode/
+.claude/
+
+# Env (defensive — never commit)
+.env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
-/.nx
-/.nx/cache
-/.vscode/*
-!/.vscode/extensions.json
-.idea
-
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Optional eslint cache
-.eslintcache
-
-# Build outputs
-ios/ios-www.bundle/
-
-# Xcode user data
-ios/non-bank.xcodeproj/xcuserdata/
-ios/non-bank.xcodeproj/project.xcworkspace/xcuserdata/

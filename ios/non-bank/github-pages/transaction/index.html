@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Open in non-bank</title>
+
+    <!--
+        Smart App Banner. Once the app is published to the App Store,
+        replace `id000000000` with the real App Store ID. Until then the
+        banner won't render but everything else still works.
+    -->
+    <meta name="apple-itunes-app" content="app-id=000000000">
+
+    <!--
+        On iOS, if the user has the app installed, this page is never
+        loaded — Universal Link routing kicks in first. So this HTML
+        only ever runs for users WITHOUT the app, or on non-iOS devices.
+        For now we just redirect to the App Store search; once the app
+        is live we'll change this to the real App Store URL.
+    -->
+    <script>
+        (function() {
+            var ua = navigator.userAgent || "";
+            var isIOS = /iPad|iPhone|iPod/.test(ua);
+            // TODO: replace with `https://apps.apple.com/app/idXXXXXXXXX`
+            // once the app is published.
+            var appStoreURL = "https://apps.apple.com/search?term=non-bank";
+            if (isIOS) {
+                // Give Universal Link routing a brief chance to fire
+                // (cold-launch case where iOS is still resolving AASA).
+                // 800ms is the standard "it would have happened by now"
+                // window before we send the user to the App Store.
+                setTimeout(function() {
+                    window.location.replace(appStoreURL);
+                }, 800);
+            } else {
+                window.location.replace(appStoreURL);
+            }
+        })();
+    </script>
+
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f7f7f7;
+            color: #1c1c1e;
+            min-height: 100vh;
+        }
+        .wrap {
+            max-width: 480px;
+            margin: 0 auto;
+            padding: 60px 24px 40px;
+            text-align: center;
+        }
+        .icon {
+            width: 96px;
+            height: 96px;
+            margin: 0 auto 24px;
+            background: linear-gradient(135deg, #007AFF, #5856D6);
+            border-radius: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 48px;
+            color: #fff;
+        }
+        h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+        p {
+            font-size: 15px;
+            line-height: 1.5;
+            color: #6c6c70;
+            margin-bottom: 24px;
+        }
+        .button {
+            display: inline-block;
+            padding: 14px 28px;
+            background: #007AFF;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 16px;
+            margin-top: 8px;
+        }
+        .footer {
+            margin-top: 48px;
+            font-size: 12px;
+            color: #a0a0a5;
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="icon">💸</div>
+        <h1>Open this transaction in non-bank</h1>
+        <p>
+            If you have the non-bank app installed, this page will redirect you
+            into the app automatically. Otherwise, you'll be sent to the App
+            Store to download it.
+        </p>
+        <a class="button" href="https://apps.apple.com/search?term=non-bank">
+            Get non-bank
+        </a>
+        <div class="footer">
+            non-bank · split transactions privately
+        </div>
+    </div>
+</body>
+</html>

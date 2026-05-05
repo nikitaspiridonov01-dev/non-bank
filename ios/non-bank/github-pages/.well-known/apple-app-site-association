@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["28PGV25T47.nikitaspiridonov.non-bank"],
+        "components": [
+          {
+            "/": "/transaction/*",
+            "comment": "Receipt-share deep links — open inside the non-bank iOS app when installed."
+          }
+        ]
+      }
+    ]
+  }
+}

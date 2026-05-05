@@ -1,0 +1,294 @@
+[
+  {
+    "emoji": "🍽️",
+    "category": "Food",
+    "title": "Past regular expense",
+    "description": "Regular expense, past date, no repeat",
+    "amount": 25.50,
+    "currency": "USD",
+    "type": "expenses",
+    "isIncome": false,
+    "tags": ["test", "regular"],
+    "date": "2025-01-10"
+  },
+  {
+    "emoji": "💰",
+    "category": "Salary",
+    "title": "Past regular income",
+    "description": "Regular income, past date, no repeat",
+    "amount": 3000.00,
+    "currency": "USD",
+    "type": "income",
+    "isIncome": true,
+    "tags": ["test", "regular"],
+    "date": "2025-01-05"
+  },
+  {
+    "emoji": "☕️",
+    "category": "Food",
+    "title": "Recurring daily expense",
+    "description": "Recurring expense with daily repeat, past start date",
+    "amount": 5.00,
+    "currency": "USD",
+    "type": "expenses",
+    "isIncome": false,
+    "tags": ["test", "recurring"],
+    "date": "2025-01-01",
+    "repeatInterval": {
+      "daily": {
+        "hour": 9,
+        "minute": 0
+      }
+    }
+  },
+  {
+    "emoji": "💵",
+    "category": "Salary",
+    "title": "Recurring weekly income",
+    "description": "Recurring income with weekly repeat on Mon/Fri",
+    "amount": 500.00,
+    "currency": "USD",
+    "type": "income",
+    "isIncome": true,
+    "tags": ["test", "recurring"],
+    "date": "2025-01-06",
+    "repeatInterval": {
+      "weekly": {
+        "hour": 10,
+        "minute": 0,
+        "daysOfWeek": [2, 6]
+      }
+    }
+  },
+  {
+    "emoji": "🏠",
+    "category": "Housing",
+    "title": "Future one-time expense",
+    "description": "Future expense, no repeat",
+    "amount": 1200.00,
+    "currency": "USD",
+    "type": "expenses",
+    "isIncome": false,
+    "tags": ["test", "future"],
+    "date": "2027-06-01"
+  },
+  {
+    "emoji": "🎁",
+    "category": "Gifts",
+    "title": "Future one-time income",
+    "description": "Future income, no repeat",
+    "amount": 500.00,
+    "currency": "USD",
+    "type": "income",
+    "isIncome": true,
+    "tags": ["test", "future"],
+    "date": "2027-07-15"
+  },
+  {
+    "emoji": "🏠",
+    "category": "Housing",
+    "title": "Future recurring monthly expense",
+    "description": "Future start, monthly repeat on 1st and 15th",
+    "amount": 800.00,
+    "currency": "USD",
+    "type": "expenses",
+    "isIncome": false,
+    "tags": ["test", "future", "recurring"],
+    "date": "2027-08-01",
+    "repeatInterval": {
+      "monthly": {
+        "hour": 8,
+        "minute": 0,
+        "daysOfMonth": [1, 15]
+      }
+    }
+  },
+  {
+    "emoji": "💵",
+    "category": "Salary",
+    "title": "Future recurring yearly income",
+    "description": "Future start, yearly repeat on Dec 25",
+    "amount": 10000.00,
+    "currency": "USD",
+    "type": "income",
+    "isIncome": true,
+    "tags": ["test", "future", "recurring"],
+    "date": "2027-12-25",
+    "repeatInterval": {
+      "yearly": {
+        "hour": 12,
+        "minute": 0,
+        "month": 12,
+        "dayOfMonth": 25
+      }
+    }
+  },
+  {
+    "emoji": "🍕",
+    "category": "Food",
+    "title": "Split: I owe, partially paid",
+    "description": "Total 100, I paid 60, my share 40, lent 20 to friend",
+    "amount": 60.00,
+    "currency": "USD",
+    "type": "expenses",
+    "isIncome": false,
+    "tags": ["test", "split"],
+    "date": "2025-02-10",
+    "splitInfo": {
+      "totalAmount": 100.00,
+      "paidByMe": 60.00,
+      "myShare": 40.00,
+      "lentAmount": 20.00,
+      "friends": [
+        {
+          "friendID": "11111111-1111-1111-1111-111111111111",
+          "share": 30.00,
+          "isSettled": true
+        },
+        {
+          "friendID": "22222222-2222-2222-2222-222222222222",
+          "share": 30.00,
+          "isSettled": false
+        }
+      ]
+    }
+  },
+  {
+    "emoji": "🎬",
+    "category": "Entertainment",
+    "title": "Split: I owe, unpaid",
+    "description": "Total 50, I paid 0, my share 25, owe 25",
+    "amount": 0.00,
+    "currency": "USD",
+    "type": "expenses",
+    "isIncome": false,
+    "tags": ["test", "split"],
+    "date": "2025-02-15",
+    "splitInfo": {
+      "totalAmount": 50.00,
+      "paidByMe": 0.00,
+      "myShare": 25.00,
+      "lentAmount": 0.00,
+      "friends": [
+        {
+          "friendID": "33333333-3333-3333-3333-333333333333",
+          "share": 25.00,
+          "isSettled": false
+        }
+      ]
+    }
+  },
+  {
+    "emoji": "🍔",
+    "category": "Food",
+    "title": "Split: I lent money",
+    "description": "Total 80, I paid 80, my share 40, lent 40",
+    "amount": 80.00,
+    "currency": "USD",
+    "type": "expenses",
+    "isIncome": false,
+    "tags": ["test", "split"],
+    "date": "2025-03-01",
+    "splitInfo": {
+      "totalAmount": 80.00,
+      "paidByMe": 80.00,
+      "myShare": 40.00,
+      "lentAmount": 40.00,
+      "friends": [
+        {
+          "friendID": "11111111-1111-1111-1111-111111111111",
+          "share": 40.00,
+          "isSettled": false
+        }
+      ]
+    }
+  },
+  {
+    "emoji": "🍽️",
+    "category": "Food",
+    "title": "Split + recurring (past)",
+    "description": "Past split expense with daily repeat",
+    "amount": 30.00,
+    "currency": "USD",
+    "type": "expenses",
+    "isIncome": false,
+    "tags": ["test", "split", "recurring"],
+    "date": "2025-03-10",
+    "repeatInterval": {
+      "daily": {
+        "hour": 12,
+        "minute": 30
+      }
+    },
+    "splitInfo": {
+      "totalAmount": 60.00,
+      "paidByMe": 30.00,
+      "myShare": 30.00,
+      "lentAmount": 0.00,
+      "friends": [
+        {
+          "friendID": "22222222-2222-2222-2222-222222222222",
+          "share": 30.00,
+          "isSettled": false
+        }
+      ]
+    }
+  },
+  {
+    "emoji": "🎉",
+    "category": "Entertainment",
+    "title": "Split + future (no repeat)",
+    "description": "Future split expense, one-time",
+    "amount": 100.00,
+    "currency": "USD",
+    "type": "expenses",
+    "isIncome": false,
+    "tags": ["test", "split", "future"],
+    "date": "2027-09-01",
+    "splitInfo": {
+      "totalAmount": 200.00,
+      "paidByMe": 100.00,
+      "myShare": 100.00,
+      "lentAmount": 0.00,
+      "friends": [
+        {
+          "friendID": "33333333-3333-3333-3333-333333333333",
+          "share": 100.00,
+          "isSettled": false
+        }
+      ]
+    }
+  },
+  {
+    "emoji": "🏋️",
+    "category": "Health",
+    "title": "Split + future + recurring",
+    "description": "Future split expense with monthly repeat",
+    "amount": 25.00,
+    "currency": "USD",
+    "type": "expenses",
+    "isIncome": false,
+    "tags": ["test", "split", "future", "recurring"],
+    "date": "2027-10-01",
+    "repeatInterval": {
+      "monthly": {
+        "hour": 9,
+        "minute": 0,
+        "daysOfMonth": [1]
+      }
+    },
+    "splitInfo": {
+      "totalAmount": 50.00,
+      "paidByMe": 25.00,
+      "myShare": 25.00,
+      "lentAmount": 0.00,
+      "friends": [
+        {
+          "friendID": "11111111-1111-1111-1111-111111111111",
+          "share": 25.00,
+          "isSettled": false
+        }
+      ]
+    }
+  }
+]

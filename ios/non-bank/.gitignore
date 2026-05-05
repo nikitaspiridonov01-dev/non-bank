@@ -1,0 +1,10 @@
+# Large binary files — do not commit
+*.gguf
+Frameworks/
+
+# Xcode
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+DerivedData/
+build/

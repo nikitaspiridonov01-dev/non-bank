@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <!--
+        UIMainStoryboardFile / UILaunchStoryboardName were leftovers from
+        the old UIKit project template. This is a SwiftUI `@main` app —
+        no storyboards exist. Keeping these keys made UIKit search for a
+        non-existent `Main.storyboard` and crash with NSInvalidArgumentException.
+        Launch screen is auto-generated via `INFOPLIST_KEY_UILaunchScreen_Generation`.
+    -->
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Для импорта и экспорта файлов с транзакциями приложению требуется доступ к файлам на устройстве.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Для выбора файлов для импорта приложению требуется доступ к фото и файлам.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Камера используется для сканирования чеков и автоматического распознавания позиций.</string>
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>remote-notification</string>
+    </array>
+    <!--
+        Custom URL scheme used as the *interim* deep-link mechanism for share
+        links (e.g. `nonbank://share?p=BASE64URL`). When a Universal Link
+        domain is set up later, both schemes will work — `nonbank://` keeps
+        functioning as a fallback for development and for App Store-deferred
+        installs where the receiver hasn't yet associated the universal
+        domain.
+    -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.nonbank.share</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>nonbank</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

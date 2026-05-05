@@ -199,7 +199,7 @@ struct FriendFormView: View {
                         .font(.system(size: 20, weight: .medium))
                         .foregroundColor(!groups.isEmpty ? .accentColor : AppColors.textTertiary)
                         .frame(width: 36, height: 36)
-                        .background(!groups.isEmpty ? Color.accentColor.opacity(0.12) : Color(.systemGray5))
+                        .background(!groups.isEmpty ? Color.accentColor.opacity(0.12) : AppColors.backgroundChip)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
 
                     if groups.isEmpty {
@@ -246,7 +246,7 @@ struct FriendFormView: View {
                             .font(.system(size: 20, weight: .medium))
                             .foregroundColor(AppColors.textTertiary)
                             .frame(width: 36, height: 36)
-                            .background(Color(.systemGray5))
+                            .background(AppColors.backgroundChip)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .opacity(selectedSplitMode == nil ? 1 : 0)
 

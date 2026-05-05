@@ -30,6 +30,10 @@ struct DebtBadgeView: View {
     // MARK: - Settled
 
     private var settledBadge: some View {
+        // Lavender pill — DebtBadge is the entry point into the Split
+        // sub-app on Home, so it advertises that affiliation by
+        // adopting the Split palette's chip fill instead of the
+        // generic warm-cream `secondarySystemBackground`.
         Text("Settled")
             .font(AppFonts.metaText)
             .foregroundColor(AppColors.textTertiary)
@@ -37,7 +41,7 @@ struct DebtBadgeView: View {
             .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: AppRadius.large)
-                    .fill(AppColors.backgroundChipSoft)
+                    .fill(AppColors.splitChipFill)
             )
     }
 
@@ -51,7 +55,7 @@ struct DebtBadgeView: View {
             +
             Text(formattedAmount(amount))
                 .font(.system(size: 12, weight: .bold))
-                .foregroundColor(AppColors.accent)
+                .foregroundColor(AppColors.textPrimary)
             +
             Text(" \(currency)")
                 .font(AppFonts.captionSmall)
@@ -65,8 +69,10 @@ struct DebtBadgeView: View {
         .padding(.horizontal, AppSpacing.sm)
         .padding(.vertical, 5)
         .background(
+            // Same lavender pill as `settledBadge` — DebtBadge always
+            // signals "Split sub-app entry" regardless of state.
             RoundedRectangle(cornerRadius: AppRadius.large)
-                .fill(AppColors.backgroundChipSoft)
+                .fill(AppColors.splitChipFill)
         )
     }
 
@@ -87,7 +93,7 @@ struct DebtBadgeView: View {
                     .clipShape(Circle())
                     .overlay(
                         Circle()
-                            .stroke(AppColors.backgroundChipSoft, lineWidth: 1.5)
+                            .stroke(AppColors.splitChipFill, lineWidth: 1.5)
                     )
                     .zIndex(Double(ids.count - idx))
             }

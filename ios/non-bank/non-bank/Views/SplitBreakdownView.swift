@@ -40,12 +40,20 @@ struct SplitBreakdownView: View {
 
     /// Colors are kept in sync with the ● markers in the legend below so it
     /// reads as one continuous formula (chart on top, legend under it).
+    /// **Both sections live in the Split (purple) palette** — the
+    /// people row used to be warm orange (`AppColors.accent`) which
+    /// clashed with the lavender Split atmosphere. Now: top is soft
+    /// lavender (`splitAccent`), bottom is a deeper violet so the two
+    /// sections still read as distinct slices of the same family.
     private var purchaseSectionColor: Color {
-        Color(red: 0.55, green: 0.34, blue: 0.88)
+        AppColors.splitAccent
     }
 
     private var peopleSectionColor: Color {
-        Color(red: 0.95, green: 0.62, blue: 0.38)
+        // Deeper violet — same hue family as `splitAccent` but
+        // ~25% darker so the people section reads as a heavier
+        // counterpart to the lavender purchase section above.
+        Color(red: 0.55, green: 0.40, blue: 0.75)
     }
 
     @ViewBuilder

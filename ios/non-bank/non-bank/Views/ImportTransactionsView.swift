@@ -141,7 +141,7 @@ struct ImportTransactionsView: View {
                     .padding(.horizontal, AppSpacing.pageHorizontal)
                     .padding(.vertical, AppSpacing.rowVertical)
                 }
-                .background(Color(.systemGroupedBackground))
+                .background(AppColors.backgroundElevated)
             }
         }
         .navigationTitle("Import Transactions")
@@ -325,7 +325,7 @@ struct FieldMappingView: View {
                         }
                     }
                     .padding(.vertical, AppSpacing.xs)
-                    .listRowBackground(Color(.systemGroupedBackground))
+                    .listRowBackground(AppColors.backgroundElevated)
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                 }
 
@@ -470,7 +470,7 @@ struct FieldMappingView: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Color(.systemGray5))
+                        .fill(AppColors.backgroundChip)
                         .frame(height: 4)
                     Capsule()
                         .fill(Color.accentColor)
@@ -483,7 +483,7 @@ struct FieldMappingView: View {
         .padding(.horizontal, AppSpacing.pageHorizontal)
         .padding(.top, 10)
         .padding(.bottom, 14)
-        .background(Color(.systemGroupedBackground))
+        .background(AppColors.backgroundElevated)
     }
 
     // MARK: - Bottom Button
@@ -533,7 +533,7 @@ struct FieldMappingView: View {
                 .padding(.vertical, AppSpacing.rowVertical)
             }
         }
-        .background(Color(.systemGroupedBackground))
+        .background(AppColors.backgroundElevated)
     }
 
     private var buttonLabel: String {
@@ -1081,7 +1081,7 @@ struct ImportSuccessScreen: View {
 
     var body: some View {
         ZStack {
-            Color(.systemBackground)
+            AppColors.backgroundPrimary
                 .ignoresSafeArea()
 
             VStack(spacing: AppSpacing.lg) {

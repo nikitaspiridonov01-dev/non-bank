@@ -228,9 +228,11 @@ struct HomeView: View {
             )
             .overlay(alignment: .topLeading) {
                 // Reminders button (top-left toolbar position) — always
-                // visible so the entry point is discoverable. Uses the same
-                // subtle chip fill as other toolbar pills so it blends with
-                // the header background.
+                // visible so the entry point is discoverable. Native
+                // iOS 26 Liquid Glass capsule (replaces the previous
+                // solid `backgroundChip` fill) so the chip refracts
+                // the trend chart underneath rather than sitting flat
+                // on top of it.
                 let count = vm.reminderCount(from: transactionStore.transactions)
                 Button(action: { showReminders = true }) {
                     HStack(spacing: 5) {
@@ -246,9 +248,7 @@ struct HomeView: View {
                     }
                     .padding(.horizontal, AppSpacing.md)
                     .padding(.vertical, AppSpacing.sm)
-                    .background(
-                        Capsule().fill(AppColors.backgroundChip)
-                    )
+                    .glassEffect(.regular, in: .capsule)
                     // Explicit hit shape so taps register reliably across the
                     // whole pill (not just the icon/text glyphs).
                     .contentShape(Capsule())
@@ -260,8 +260,15 @@ struct HomeView: View {
             .zIndex(1)
             } // end if !isEmpty
             
-            // Empty state — centered on screen when no transactions
-            if transactionStore.homeTransactions.isEmpty && transactionStore.reminderTransactions.isEmpty {
+            // Empty state — centred on screen whenever the user has
+            // no past-dated transactions for Home. Previously gated
+            // on **both** home + reminder transactions being empty,
+            // but that left a blank middle when a user had reminders
+            // only: the BalanceHeader VStack is also gated on
+            // `!homeTransactions.isEmpty`, so neither rendered.
+            // Reminders stay reachable via the top-left toolbar
+            // button — the empty state can claim the centre.
+            if transactionStore.homeTransactions.isEmpty {
                 EmptyTransactionsView()
                     .zIndex(0)
             }

@@ -110,6 +110,7 @@ struct PeriodPickerSheet: View {
                     .padding(.vertical, AppSpacing.sm)
             }
             .buttonStyle(.borderedProminent)
+            .tint(AppColors.accentBold)
             .listRowBackground(Color.clear)
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
         }

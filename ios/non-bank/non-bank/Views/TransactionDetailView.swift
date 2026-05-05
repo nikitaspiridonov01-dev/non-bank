@@ -19,6 +19,7 @@ enum TransactionDetailSource {
 
 struct TransactionDetailView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorContext) private var colorContext
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var friendStore: FriendStore
@@ -254,8 +255,15 @@ struct TransactionDetailView: View {
                 VStack(alignment: .leading, spacing: AppSpacing.xxl) {
                     HStack(alignment: .center, spacing: AppSpacing.lg) {
                         ZStack {
+                            // Sub-app aware emoji tile background:
+                            // Reminders → warm cream, Debts → lavender,
+                            // standard → default chip cream.
                             RoundedRectangle(cornerRadius: AppRadius.xlarge, style: .continuous)
-                                .fill(source.isReminder ? AppColors.reminderEmojiBackground : AppColors.backgroundChipSoft)
+                                .fill(
+                                    source.isReminder ? AppColors.reminderEmojiBackground :
+                                    source == .debts ? AppColors.splitChipFill :
+                                    AppColors.backgroundChip
+                                )
                                 .frame(width: 64, height: 64)
                             Text(displayEmoji)
                                 .font(AppFonts.emojiLarge)
@@ -282,17 +290,25 @@ struct TransactionDetailView: View {
                             Button {
                                 handleShareTap()
                             } label: {
+                                // Share button only appears on split
+                                // transactions, so the icon is always
+                                // tinted with the Split palette's
+                                // lavender — regardless of which screen
+                                // opened the detail card.
                                 Image(systemName: "square.and.arrow.up")
                                     .font(AppFonts.body)
-                                    .foregroundColor(AppColors.textPrimary)
+                                    .foregroundColor(AppColors.splitAccent)
                                     .frame(width: 40, height: 40)
                                     .background(
+                                        // Split-themed circle backdrop —
+                                        // share button lives in Split-only
+                                        // contexts, so the chip behind it
+                                        // also picks up the Split palette.
                                         Circle()
-                                            .fill(AppColors.backgroundChipSoft)
+                                            .fill(AppColors.splitChipFill)
                                     )
                             }
                             .accessibilityLabel("Share transaction")
-                            .tint(AppColors.textPrimary)
                         }
                     }
                     .background(
@@ -411,7 +427,7 @@ struct TransactionDetailView: View {
                                 .foregroundColor(.secondary)
                             ZStack(alignment: .topLeading) {
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(source.isReminder ? AppColors.reminderNotesFill : Color(.systemBackground))
+                                    .fill(source.isReminder ? AppColors.reminderNotesFill : AppColors.backgroundPrimary)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 10)
                                             .stroke(source.isReminder ? AppColors.reminderNotesBorder : Color(.systemGray4), lineWidth: 1)
@@ -443,6 +459,15 @@ struct TransactionDetailView: View {
                 let threshold: CGFloat = -44
                 isCollapsedTitleVisible = y < threshold
             }
+            // Sub-app background tint — switches per source so the
+            // detail card carries the same atmosphere as the screen
+            // that opened it: warm cream for Reminders, muted lavender
+            // for Split / Debts, default elsewhere.
+            .background(
+                source == .debts ? AppColors.splitBackgroundTint :
+                source.isReminder ? AppColors.reminderBackgroundTint :
+                AppColors.backgroundPrimary
+            )
             .navigationTitle(isCollapsedTitleVisible ? transaction.title : "")
             .toolbarTitleDisplayMode(.inline)
             .toolbar {

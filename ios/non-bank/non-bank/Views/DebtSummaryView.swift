@@ -85,7 +85,7 @@ struct DebtSummaryView: View {
                     Spacer().frame(height: 40)
                 }
             }
-            .background(AppColors.splitBackgroundTint)
+            .background(SplitPageBackground())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -400,20 +400,31 @@ struct DebtSummaryView: View {
                             .padding(.top, AppSpacing.xxl)
                             .padding(.bottom, AppSpacing.sm)
 
-                        ForEach(Array(group.transactions.enumerated()), id: \.element.id) { idx, tx in
-                            DebtTransactionRowView(
-                                transaction: tx,
-                                emoji: categoryStore.validatedCategory(for: tx.category).emoji,
-                                isLast: idx == group.transactions.count - 1,
-                                onTap: {
-                                    selectedTransaction = tx
-                                    showTransactionDetail = true
-                                },
-                                onDelete: {
-                                    transactionStore.delete(id: tx.id)
-                                }
-                            )
+                        // Per-group iOS 26 Liquid Glass container —
+                        // matches the reminder list pattern. Rows
+                        // inside stay transparent; the group reads as
+                        // one frosted card on the lavender gradient.
+                        // `.clipShape` keeps the swipe-delete red layer
+                        // inside the rounded corners.
+                        VStack(spacing: 0) {
+                            ForEach(Array(group.transactions.enumerated()), id: \.element.id) { idx, tx in
+                                DebtTransactionRowView(
+                                    transaction: tx,
+                                    emoji: categoryStore.validatedCategory(for: tx.category).emoji,
+                                    isLast: idx == group.transactions.count - 1,
+                                    onTap: {
+                                        selectedTransaction = tx
+                                        showTransactionDetail = true
+                                    },
+                                    onDelete: {
+                                        transactionStore.delete(id: tx.id)
+                                    }
+                                )
+                            }
                         }
+                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                        .padding(.horizontal, AppSpacing.pageHorizontal)
                     }
                 }
             }
@@ -466,12 +477,12 @@ struct DebtRowView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.rowVertical)
         .frame(maxWidth: .infinity)
-        // `splitCardFill` (lavender card on lavender page) instead of
-        // the warm-cream `backgroundElevated` so the row reads as part
-        // of the Split sub-app rather than borrowing from the main
-        // app's atmosphere.
-        .background(AppColors.splitCardFill)
-        .cornerRadius(AppRadius.large)
+        // `.glassEffect(.regular, in:)` — iOS 26 native Liquid
+        // Glass that matches the toolbar Close / Edit pills. The
+        // older `.regularMaterial` rendered visibly darker; this
+        // API gives the same near-white frosted weight on the
+        // lavender Split page.
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous))
     }
 
     // MARK: - Avatar

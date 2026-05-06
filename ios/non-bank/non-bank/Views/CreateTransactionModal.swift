@@ -426,13 +426,16 @@ struct CreateTransactionModal: View {
                             let parts = vm.formattedAmountGrouped.split(separator: ".", omittingEmptySubsequences: false)
                             Text(String(parts.first ?? "0"))
                                 .font(.system(size: vm.amountFontSize, weight: .bold))
-                                .foregroundColor(vm.amount.isEmpty ? AppColors.textQuaternary : AppColors.textPrimary)
-                                // Faint placeholder zero — `textQuaternary`
-                                // alone reads as filled-in on the warm
-                                // cream background; halving alpha pushes
-                                // it into clear "placeholder" territory
-                                // without losing the warm hue.
-                                .opacity(vm.amount.isEmpty ? 0.5 : 1)
+                                // Empty state shares the **same**
+                                // `textDisabled` warm light grey as the
+                                // title-field placeholder ("My Food")
+                                // and the notes "Write a note…"
+                                // placeholder so all three empty
+                                // affordances on the create screen
+                                // read as one unified "tap to fill"
+                                // rhythm instead of three subtly
+                                // different greys.
+                                .foregroundColor(vm.amount.isEmpty ? AppColors.textDisabled : AppColors.textPrimary)
                             if parts.count > 1 {
                                 Text("." + (parts.count > 1 ? String(parts[1]) : "00"))
                                     .font(.system(size: vm.amountFontSize * 0.5, weight: .medium))

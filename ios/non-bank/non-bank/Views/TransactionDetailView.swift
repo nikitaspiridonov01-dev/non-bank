@@ -257,27 +257,19 @@ struct TransactionDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: AppSpacing.xxl) {
                     HStack(alignment: .center, spacing: AppSpacing.lg) {
-                        ZStack {
-                            // Emoji tile: pick the same surface as the
-                            // sub-app's row pills so the tile and rows
-                            // read as one family. Reminders → translucent
-                            // white (matches reminder cards); Debts →
-                            // `splitCardFill` (matches "Debts to settle
-                            // up" friend rows); standard → the same
-                            // translucent white — sits on the same
-                            // cream `backgroundPrimary` page as
-                            // Reminders, and `backgroundChip` read as a
-                            // noticeably darker tan tile against it.
-                            RoundedRectangle(cornerRadius: AppRadius.xlarge, style: .continuous)
-                                .fill(
-                                    source == .debts
-                                        ? AppColors.splitCardFill
-                                        : AppColors.reminderEmojiBackground
-                                )
-                                .frame(width: 64, height: 64)
-                            Text(displayEmoji)
-                                .font(AppFonts.emojiLarge)
-                        }
+                        // `.glassEffect(.regular, in: shape)` — same
+                        // iOS 26 native Liquid Glass that the system
+                        // uses for toolbar pills (Close, Edit, Done).
+                        // The older `.regularMaterial` rendered
+                        // visibly darker than the toolbar pills above
+                        // it; `.glassEffect` is the API specifically
+                        // intended for iOS 26 chip surfaces and
+                        // reads as the same near-white frosted pill
+                        // on every page atmosphere.
+                        Text(displayEmoji)
+                            .font(AppFonts.emojiLarge)
+                            .frame(width: 64, height: 64)
+                            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.xlarge, style: .continuous))
                         VStack(alignment: .leading, spacing: AppSpacing.xs) {
                             Text(transaction.title)
                                 .font(.title2).bold()
@@ -300,19 +292,19 @@ struct TransactionDetailView: View {
                             Button {
                                 handleShareTap()
                             } label: {
-                                // Share button only appears on split
-                                // transactions, so the icon is always
-                                // tinted with the Split palette's
-                                // lavender — regardless of which screen
-                                // opened the detail card.
+                                // Share button — Split-only, tinted
+                                // with the lavender accent. Background
+                                // mirrors the emoji tile next to it
+                                // via `.glassEffect(.regular, in:)` so
+                                // the tile, the share circle, and the
+                                // Close / Edit toolbar buttons all
+                                // read as one family of iOS 26 Liquid
+                                // Glass pills.
                                 Image(systemName: "square.and.arrow.up")
                                     .font(AppFonts.body)
                                     .foregroundColor(source == .debts ? AppColors.splitAccent : AppColors.textPrimary)
                                     .frame(width: 40, height: 40)
-                                    .background(
-                                        Circle()
-                                            .fill(source == .debts ? AppColors.splitChipFill : AppColors.backgroundChip)
-                                    )
+                                    .glassEffect(.regular, in: .circle)
                             }
                             .accessibilityLabel("Share transaction")
                             .tint(source == .debts ? AppColors.splitAccent : AppColors.textPrimary)
@@ -432,22 +424,23 @@ struct TransactionDetailView: View {
                             Text("Notes")
                                 .font(.subheadline)
                                 .foregroundColor(AppColors.textSecondary)
-                            ZStack(alignment: .topLeading) {
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(source.isReminder ? AppColors.reminderNotesFill : AppColors.backgroundPrimary)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .stroke(source.isReminder ? AppColors.reminderNotesBorder : Color(.systemGray4), lineWidth: 1)
-                                    )
-                                Text(notesContent)
-                                    .font(.body)
-                                    .foregroundColor(AppColors.textPrimary)
-                                    .multilineTextAlignment(.leading)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .padding(14)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            // Notes card uses iOS 26 native Liquid
+                            // Glass (`.glassEffect(.regular, in:)`) so
+                            // it sits in the same family as the
+                            // emoji tile, share button, timeline rows
+                            // and the toolbar Close / Edit pills —
+                            // one frosted-pill vocabulary across the
+                            // detail card. No explicit border: the
+                            // glass material's own edge reads as
+                            // sufficient elevation.
+                            Text(notesContent)
+                                .font(.body)
+                                .foregroundColor(AppColors.textPrimary)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(14)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
                         .padding(.vertical, AppSpacing.xxs)
                     }
@@ -471,14 +464,24 @@ struct TransactionDetailView: View {
                 let threshold: CGFloat = -44
                 isCollapsedTitleVisible = y < threshold
             }
-            // Sub-app background tint — switches per source so the
+            // Sub-app page background — switches per source so the
             // detail card carries the same atmosphere as the screen
-            // that opened it: warm cream for Reminders, muted lavender
-            // for Split / Debts, default elsewhere.
+            // that opened it. Each sub-app uses its own gradient
+            // *variant* so a pushed detail doesn't render identically
+            // to the list it was pushed from: `SplitDetailPageBackground`
+            // and `ReminderDetailPageBackground` re-arrange the same
+            // sub-app palette into a different mesh layout. Default
+            // home stays flat.
             .background(
-                source == .debts ? AppColors.splitBackgroundTint :
-                source.isReminder ? AppColors.reminderBackgroundTint :
-                AppColors.backgroundPrimary
+                Group {
+                    if source == .debts {
+                        SplitDetailPageBackground()
+                    } else if source.isReminder {
+                        ReminderDetailPageBackground()
+                    } else {
+                        AppColors.backgroundPrimary
+                    }
+                }
             )
             .navigationTitle(isCollapsedTitleVisible ? transaction.title : "")
             .toolbarTitleDisplayMode(.inline)
@@ -613,10 +616,19 @@ struct TransactionDetailView: View {
         .presentationCornerRadius(16)
         .presentationBackground {
             if source.isReminder {
-                AppColors.reminderBackgroundTint
+                ReminderDetailPageBackground()
+            } else if source == .debts {
+                SplitDetailPageBackground()
             } else {
-                Rectangle().fill(.regularMaterial)
-                    .overlay(AppColors.backgroundOverlay)
+                // Solid `backgroundPrimary` for home detail. The
+                // earlier `Rectangle().fill(.regularMaterial)` +
+                // `backgroundOverlay` showed grey artifacts at the
+                // top and bottom edges of the sheet — the material
+                // was picking up dark elements (analytics charts,
+                // etc.) on the home tab through the iOS 26 sheet
+                // and the resulting tint clashed with the warm-cream
+                // detail content.
+                AppColors.backgroundPrimary
             }
         }
         .alert(deleteAlertTitle, isPresented: $showDeleteAlert) {
@@ -832,8 +844,11 @@ private struct SingleOccurrenceView: View {
         }
         .padding(.vertical, 10)
         .padding(.horizontal, AppSpacing.md)
-        .background(AppColors.reminderTimelineBackground)
-        .clipShape(RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+        // `.glassEffect(.regular, in:)` — iOS 26 Liquid Glass to
+        // match the toolbar-pill weight on Close / Edit / Reminder
+        // so each occurrence row reads as a near-white frosted pill
+        // in the same family.
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
     }
 
     private static func shortDateLabel(_ date: Date) -> String {
@@ -897,7 +912,7 @@ private struct OccurrenceTimelineView: View {
                                     .modifier(PulseModifier(active: entry.isNext))
                                 Text(Self.shortDateLabel(entry.date))
                                     .font(.body)
-                                    .foregroundColor(entry.isPast ? .secondary : .primary)
+                                    .foregroundColor(entry.isPast ? AppColors.textTertiary : AppColors.textPrimary)
                                 Spacer()
                                 Text(Self.timeString(entry.date))
                                     .font(AppFonts.caption)
@@ -905,7 +920,7 @@ private struct OccurrenceTimelineView: View {
                                     .padding(.trailing, 6)
                                 Text("\(isIncome ? "+" : "–")\(NumberFormatting.integerPart(amount))\(NumberFormatting.decimalPartIfAny(amount)) \(currency)")
                                     .font(AppFonts.captionEmphasized)
-                                    .foregroundColor(entry.isPast ? AppColors.textTertiary : .secondary)
+                                    .foregroundColor(entry.isPast ? AppColors.textTertiary : AppColors.textSecondary)
                             }
                             .padding(.vertical, 10)
                             .padding(.horizontal, AppSpacing.md)
@@ -963,8 +978,11 @@ private struct OccurrenceTimelineView: View {
             }
         }
         .frame(height: 220)
-        .background(AppColors.reminderTimelineBackground)
-        .clipShape(RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+        // `.glassEffect(.regular, in:)` — iOS 26 Liquid Glass to
+        // match the toolbar-pill weight on Close / Edit / Reminder
+        // so each occurrence row reads as a near-white frosted pill
+        // in the same family.
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
     }
 
     // MARK: - Data

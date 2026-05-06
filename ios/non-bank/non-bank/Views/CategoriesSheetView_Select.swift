@@ -40,12 +40,20 @@ struct CategoriesSheetView_Select: View {
                         .padding(.vertical, AppSpacing.xxs)
                     }
                     .foregroundColor(AppColors.textPrimary)
+                    // `Color.clear` so rows sit directly on the
+                    // brighter `backgroundPrimary` page — matches the
+                    // `FriendPickerView` pattern ("Who to split with").
+                    .listRowBackground(Color.clear)
                 }
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
             .background(AppColors.backgroundPrimary)
-            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search categories")
+            // No explicit `placement:` — matches `FriendPickerView`
+            // ("Who to split with"). On iOS 26 the default places the
+            // search bar at the bottom integrated with the toolbar
+            // glass instead of pinning it under the title.
+            .searchable(text: $searchText, prompt: "Search categories")
             .navigationTitle("Choose Category")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {

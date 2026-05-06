@@ -61,10 +61,10 @@ struct ShareDistributionView: View {
             }
             .padding(.top, AppSpacing.lg)
         }
-        // Same Split-context background as PaidUpfrontView — keeps
-        // the lavender / pink atmosphere through every push of the
+        // Same Split-context gradient background as PaidUpfrontView —
+        // keeps the lavender / pink aurora through every push of the
         // debt drilldown.
-        .background(AppColors.splitBackgroundTint)
+        .background(SplitPageBackground())
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -154,10 +154,11 @@ struct ShareDistributionView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
-        // Split-themed card fill — replaces warm `backgroundElevated`
-        // which clashed with the lavender Split atmosphere.
-        .background(AppColors.splitCardFill)
-        .clipShape(RoundedRectangle(cornerRadius: AppRadius.large))
+        // `.glassEffect(.regular, in:)` — iOS 26 Liquid Glass that
+        // matches the toolbar Close / Edit pills and the friend
+        // rows in the debt summary so all Split list rows read as
+        // one frosted family.
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous))
     }
 
     /// Grayscale track + fill bar. Non-colored per spec — shape alone conveys

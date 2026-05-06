@@ -87,6 +87,10 @@ struct DebtTransactionRowView: View {
             Text("Not involved")
                 .font(AppFonts.labelCaption)
                 .foregroundColor(AppColors.textTertiary)
+        case .settled:
+            Text("Settled")
+                .font(AppFonts.labelCaption)
+                .foregroundColor(AppColors.textTertiary)
         case .lent(let amount):
             VStack(alignment: .trailing, spacing: 1) {
                 Text("You lent")

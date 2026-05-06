@@ -412,6 +412,7 @@ struct WhoPaidPickerView: View {
                     size: 36,
                     blackAndWhite: !isYou
                 )
+                .clipShape(Circle())
 
                 Text(participant.name)
                     .font(.system(size: 16, weight: isSelected ? .semibold : .regular))
@@ -555,6 +556,7 @@ struct WhoPaidPickerView: View {
                         size: 36,
                         blackAndWhite: !isYou
                     )
+                    .clipShape(Circle())
                     .opacity(disabled ? 0.35 : 1)
 
                     Text(participant.name)

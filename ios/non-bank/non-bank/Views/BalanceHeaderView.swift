@@ -73,15 +73,10 @@ struct BalanceHeaderView: View {
                 Text(NumberFormatting.decimalPart(displayBalance))
                     .font(AppFonts.balanceDecimal)
                     .foregroundColor(AppColors.textPrimary.opacity(0.8))
-                Menu {
-                    ForEach(currencyStore.currencyOptions, id: \.self) { code in
-                        Button {
-                            onCurrencyChange(code)
-                        } label: {
-                            Text("\(code) \(CurrencyInfo.byCode[code]?.emoji ?? "💱")")
-                        }
-                    }
-                } label: {
+                CurrencyDropdownButton(
+                    selected: currencyStore.selectedCurrency,
+                    onSelect: { code in onCurrencyChange(code) }
+                ) {
                     // Currency picker label — the `balanceCurrency`
                     // token now resolves to the warm primary accent
                     // app-wide, so this site picks it up automatically

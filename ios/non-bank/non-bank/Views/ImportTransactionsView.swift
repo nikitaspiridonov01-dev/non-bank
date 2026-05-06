@@ -327,12 +327,20 @@ struct FieldMappingView: View {
                         }
                     }
                     .padding(.vertical, AppSpacing.xs)
-                    .listRowBackground(AppColors.backgroundElevated)
+                    // Page-tone header — no row pill behind the
+                    // description text, so it reads as a blurb on the
+                    // cream page rather than a card stuck to a
+                    // mismatched system-grouped fill.
+                    .listRowBackground(Color.clear)
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                 }
 
-                // Field list
-                Section(header: Text("Available Fields").foregroundColor(.white)) {
+                // Field list — `.foregroundColor(.white)` was the
+                // remnant of an earlier dark-only design; on the cream
+                // light theme it dropped contrast to nearly zero. Use
+                // `textSecondary` so the header reads correctly in
+                // both modes.
+                Section(header: Text("Available Fields").foregroundColor(AppColors.textSecondary)) {
                     // "Not mapped" option
                     if !currentField.isRequired {
                         Button {
@@ -416,10 +424,13 @@ struct FieldMappingView: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(AppColors.backgroundPrimary)
 
             // Bottom button
             bottomButton
         }
+        .background(AppColors.backgroundPrimary)
         .sheet(isPresented: $showExamplesSheet) {
             ValidExamplesSheet(field: currentField)
         }
@@ -976,6 +987,7 @@ struct ValidExamplesSheet: View {
                             }
                         }
                         .listStyle(.insetGrouped)
+                        .scrollContentBackground(.hidden)
                     }
                 } else {
                     List {
@@ -987,8 +999,10 @@ struct ValidExamplesSheet: View {
                         }
                     }
                     .listStyle(.insetGrouped)
+                    .scrollContentBackground(.hidden)
                 }
             }
+            .background(AppColors.backgroundPrimary)
             .navigationTitle("Valid Examples")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -785,6 +785,8 @@ struct ItemPreviewSheet: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(AppColors.backgroundPrimary)
             .navigationTitle("Scanned Items")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

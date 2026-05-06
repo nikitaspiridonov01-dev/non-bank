@@ -77,12 +77,18 @@ struct FriendFormView: View {
                             ScrollView {
                                 VStack(spacing: 0) {
                                     avatarHeader
+                                    // No explicit gap — `avatarHeader`
+                                    // already has bottom padding from
+                                    // its outer VStack and `nameInput`
+                                    // has its own intrinsic vertical
+                                    // padding, so this row only added
+                                    // visual slack between the avatar
+                                    // and the name on edit-mode hero.
                                     nameInput
                                         .id("nameInput")
-                                        .padding(.top, AppSpacing.sm)
                                     if !isCompact {
                                         optionButtons
-                                            .padding(.top, 28)
+                                            .padding(.top, AppSpacing.md)
                                     }
                                 }
                             }
@@ -147,13 +153,18 @@ struct FriendFormView: View {
             // manual contacts and brand-new friends being created.
             // The avatar header only appears in edit mode (`isEditing`),
             // so `existingFriend` is non-nil here in practice.
-            PixelCatFillView(
+            //
+            // Same 72pt circular avatar as the friend-detail / debts
+            // headers — keeps every "friend hero" in the app on one
+            // shared shape and size.
+            PixelCatView(
                 id: friendID,
-                blackAndWhite: !(existingFriend?.isConnected ?? false),
-                cornerRadius: AppRadius.large
+                size: 72,
+                blackAndWhite: !(existingFriend?.isConnected ?? false)
             )
-            .padding(.horizontal, AppSpacing.pageHorizontal)
+            .clipShape(Circle())
         }
+        .frame(maxWidth: .infinity)
         .padding(.top, AppSpacing.sm)
     }
 
@@ -178,7 +189,7 @@ struct FriendFormView: View {
         }
         .lineLimit(1)
         .padding(.horizontal, AppSpacing.xxl)
-        .frame(height: 90)
+        .frame(height: isEditing ? 60 : 90)
         .onChange(of: name) { newValue in
             if newValue.count > Self.nameMaxLength {
                 name = String(newValue.prefix(Self.nameMaxLength))
@@ -237,61 +248,10 @@ struct FriendFormView: View {
             }
             .buttonStyle(.plain)
 
-            // Split mode button — always show the same icon slot to prevent layout jump
-            Button(action: { showSplitModeSheet = true }) {
-                HStack(spacing: 14) {
-                    ZStack {
-                        // Default icon (visible when no mode selected)
-                        Image(systemName: "arrow.triangle.branch")
-                            .font(.system(size: 20, weight: .medium))
-                            .foregroundColor(AppColors.textTertiary)
-                            .frame(width: 36, height: 36)
-                            .background(AppColors.backgroundChip)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .opacity(selectedSplitMode == nil ? 1 : 0)
-
-                        // Mode-specific icons stacked in ZStack, only one visible
-                        ForEach(SplitMode.allCases) { mode in
-                            SplitModeIcon(mode: mode, size: 36)
-                                .opacity(selectedSplitMode == mode ? 1 : 0)
-                        }
-                    }
-                    .frame(width: 36, height: 36)
-
-                    if selectedSplitMode == nil {
-                        VStack(alignment: .leading, spacing: AppSpacing.xxs) {
-                            Text("Select default split mode")
-                                .font(AppFonts.labelPrimary)
-                                .foregroundColor(AppColors.textPrimary)
-                            Text("How you usually split expenses with this friend")
-                                .font(AppFonts.rowDescription)
-                                .foregroundColor(AppColors.textTertiary)
-                                .lineLimit(2)
-                        }
-                    } else {
-                        VStack(alignment: .leading, spacing: AppSpacing.xxs) {
-                            Text("Default split mode")
-                                .font(AppFonts.rowDescription)
-                                .foregroundColor(AppColors.textTertiary)
-                            Text(selectedSplitMode!.displayLabel)
-                                .font(AppFonts.labelPrimary)
-                                .foregroundColor(AppColors.textPrimary)
-                                .lineLimit(1)
-                        }
-                    }
-
-                    Spacer()
-
-                    Image(systemName: "chevron.right")
-                        .font(AppFonts.footnote)
-                        .foregroundColor(AppColors.textTertiary)
-                }
-                .padding(14)
-                .background(AppColors.backgroundElevated)
-                .cornerRadius(AppRadius.medium)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            // Default split mode picker temporarily hidden — feature disabled
+            // for users until the surrounding flow is ready. Existing
+            // `selectedSplitMode` values on edited friends are preserved
+            // through save (they're just not editable from this screen).
         }
         .padding(.horizontal, AppSpacing.pageHorizontal)
     }
@@ -362,11 +322,20 @@ struct FriendFormView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(AppColors.backgroundPrimary)
             .navigationTitle("Groups")
             .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { showGroupSheet = false }
+                    Button("Done") {
+                        // Commit any pending typed text so the user
+                        // doesn't lose a group they typed but didn't
+                        // explicitly +-confirm. `addNewGroup` already
+                        // no-ops on empty/duplicate input.
+                        addNewGroup()
+                        showGroupSheet = false
+                    }
                 }
             }
             .onAppear {

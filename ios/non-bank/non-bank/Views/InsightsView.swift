@@ -273,10 +273,12 @@ struct InsightsView: View {
 
     // MARK: - Palette
 
-    /// Warm orange that matches the `reminderAccent` already used for
-    /// "outflow / heat" cues elsewhere in the app.
+    /// Primary Maple-orange accent — Insights is a main-app screen, so
+    /// it should pick up the global `accent` rather than the
+    /// `reminderAccent` (calendar-red) which belongs to the Reminders
+    /// sub-app and read as "wrong sub-app theme" here.
     private var spendingAccent: Color {
-        AppColors.reminderAccent
+        AppColors.accent
     }
 
     /// Mint green that pairs with the "money in" semantic. Using the

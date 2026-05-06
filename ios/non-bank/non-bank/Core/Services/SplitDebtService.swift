@@ -35,6 +35,11 @@ enum UserTransactionPosition: Equatable {
     case lent(Double)
     /// User's share exceeds what they paid — they owe others.
     case borrowed(Double)
+    /// User has a share or upfront contribution but the two cancel out
+    /// — they're a participant whose net delta is ~0 within this
+    /// single transaction. Distinct from `.notInvolved` so the UI can
+    /// say "your share is settled" instead of "you're not in this".
+    case settled
 }
 
 /// Simplified settlement within a single split transaction, from the user's POV.
@@ -123,20 +128,31 @@ enum SplitDebtService {
 
         let netAmount = perFriend.values.reduce(0, +)
 
-        // Top 3 friends by absolute debt in the direction of net
+        // Top 3 friends by absolute debt in the direction of net.
+        //
+        // **Stable order**: `perFriend` is a Dictionary, whose iteration
+        // order is undefined and reshuffles between runs. Sorting only
+        // by amount means two friends with equal debts (very common —
+        // both owe `5.00`) can swap positions on every recompute. The
+        // home split chip is recomputed on each render, so that swap
+        // shows up as flicker / reorder when the user just scrolls.
+        // Adding `friendID` as a deterministic tiebreaker pins the
+        // order until the underlying numbers actually change.
         let topFriendIDs: [String]
         if netAmount > 0.005 {
-            // User lent overall — show friends who owe the most
             topFriendIDs = perFriend
                 .filter { $0.value > 0 }
-                .sorted { $0.value > $1.value }
+                .sorted { lhs, rhs in
+                    lhs.value != rhs.value ? lhs.value > rhs.value : lhs.key < rhs.key
+                }
                 .prefix(3)
                 .map(\.key)
         } else if netAmount < -0.005 {
-            // User owes overall — show friends the user owes the most to
             topFriendIDs = perFriend
                 .filter { $0.value < 0 }
-                .sorted { $0.value < $1.value }
+                .sorted { lhs, rhs in
+                    lhs.value != rhs.value ? lhs.value < rhs.value : lhs.key < rhs.key
+                }
                 .prefix(3)
                 .map(\.key)
         } else {
@@ -219,11 +235,19 @@ enum SplitDebtService {
     /// Amounts are in the transaction's own currency — callers convert if needed.
     static func userPosition(in transaction: Transaction) -> UserTransactionPosition {
         guard let split = transaction.splitInfo else { return .notInvolved }
+        // True "not involved" — user neither has a share nor paid
+        // anything upfront, so this transaction is purely between
+        // other friends.
         if split.paidByMe < 0.005 && split.myShare < 0.005 { return .notInvolved }
         let delta = split.paidByMe - split.myShare
         if delta > 0.005 { return .lent(delta) }
         if delta < -0.005 { return .borrowed(-delta) }
-        return .notInvolved
+        // User IS a participant (share > 0 or paid > 0) but their
+        // contribution and consumption cancel out — settled within
+        // this single transaction. Earlier this fell through to
+        // `.notInvolved`, which surfaced the wrong "you're not
+        // involved" copy on perfectly balanced splits.
+        return .settled
     }
 
     /// Computes the simplified settlement within a single split transaction.

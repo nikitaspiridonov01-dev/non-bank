@@ -227,39 +227,11 @@ struct HomeView: View {
                 Divider().background(AppColors.border).opacity(collapseProgress > 0.9 ? 1 : 0), alignment: .bottom
             )
             .overlay(alignment: .topLeading) {
-                // Reminders button (top-left toolbar position) — always
-                // visible so the entry point is discoverable. Native
-                // iOS 26 Liquid Glass capsule (replaces the previous
-                // solid `backgroundChip` fill) so the chip refracts
-                // the trend chart underneath rather than sitting flat
-                // on top of it.
-                let count = vm.reminderCount(from: transactionStore.transactions)
-                Button(action: { showReminders = true }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: count > 0 ? "clock.badge" : "clock")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(count > 0 ? AppColors.reminderAccent : AppColors.textSecondary)
-                        if count > 0 {
-                            Text("\(count)")
-                                .font(AppFonts.footnote)
-                                .foregroundColor(AppColors.textPrimary)
-                                .monospacedDigit()
-                        }
-                    }
-                    .padding(.horizontal, AppSpacing.md)
-                    .padding(.vertical, AppSpacing.sm)
-                    .glassEffect(.regular, in: .capsule)
-                    // Explicit hit shape so taps register reliably across the
-                    // whole pill (not just the icon/text glyphs).
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 6)
-                .padding(.leading, AppSpacing.md)
+                remindersButton
             }
             .zIndex(1)
             } // end if !isEmpty
-            
+
             // Empty state — centred on screen whenever the user has
             // no past-dated transactions for Home. Previously gated
             // on **both** home + reminder transactions being empty,
@@ -271,6 +243,16 @@ struct HomeView: View {
             if transactionStore.homeTransactions.isEmpty {
                 EmptyTransactionsView()
                     .zIndex(0)
+            }
+        }
+        // Empty home hides the BalanceHeader VStack (and with it the
+        // header-overlay reminders chip), so we re-render the chip
+        // here at the same top-leading anchor. Without this, a user
+        // whose only entries are reminders has no entry point to the
+        // Reminders sheet.
+        .overlay(alignment: .topLeading) {
+            if transactionStore.homeTransactions.isEmpty {
+                remindersButton
             }
         }
         .sheet(isPresented: $showReminders) {
@@ -466,6 +448,37 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    // Top-left toolbar chip — opens the Reminders sheet. Native iOS
+    // 26 Liquid Glass capsule so the chip refracts whatever scrolls
+    // beneath (trend chart in non-empty mode, empty illustration in
+    // empty mode) instead of sitting flat on top of it.
+    @ViewBuilder
+    private var remindersButton: some View {
+        let count = vm.reminderCount(from: transactionStore.transactions)
+        Button(action: { showReminders = true }) {
+            HStack(spacing: 5) {
+                Image(systemName: count > 0 ? "clock.badge" : "clock")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(count > 0 ? AppColors.reminderAccent : AppColors.textSecondary)
+                if count > 0 {
+                    Text("\(count)")
+                        .font(AppFonts.footnote)
+                        .foregroundColor(AppColors.textPrimary)
+                        .monospacedDigit()
+                }
+            }
+            .padding(.horizontal, AppSpacing.md)
+            .padding(.vertical, AppSpacing.sm)
+            .glassEffect(.regular, in: .capsule)
+            // Explicit hit shape so taps register reliably across the
+            // whole pill (not just the icon/text glyphs).
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 6)
+        .padding(.leading, AppSpacing.md)
     }
 
     // MARK: - Helper Methods (moved to HomeViewModel + TransactionFilterService)

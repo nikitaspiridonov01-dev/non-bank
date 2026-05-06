@@ -164,8 +164,6 @@ struct CurrencyInfo: Identifiable {
         CurrencyInfo(code: "VUV", name: "Vanuatu Vatu", emoji: "🇻🇺"),
         CurrencyInfo(code: "WST", name: "Samoan Tala", emoji: "🇼🇸"),
         CurrencyInfo(code: "XAF", name: "Central African CFA Franc", emoji: "🇨🇫"),
-        CurrencyInfo(code: "XAG", name: "Silver (Troy Ounce)", emoji: "🪙"),
-        CurrencyInfo(code: "XAU", name: "Gold (Troy Ounce)", emoji: "⚱️"),
         CurrencyInfo(code: "XCD", name: "East Caribbean Dollar", emoji: "🌎"),
         CurrencyInfo(code: "XCG", name: "Caribbean Guilder", emoji: "🇨🇼"),
         CurrencyInfo(code: "XOF", name: "West African CFA Franc", emoji: "🌍"),

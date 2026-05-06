@@ -106,16 +106,20 @@ struct FriendDetailView: View {
 
     @ViewBuilder
     private var profileHeader: some View {
-        VStack(spacing: AppSpacing.md) {
+        VStack(spacing: AppSpacing.sm) {
             // Coloured avatar = friend's ID is verified (linked via
             // share-link round-trip). B&W = local-only phantom contact.
             PixelCatView(id: friend.id, size: 72, blackAndWhite: !friend.isConnected)
                 .clipShape(Circle())
+                .padding(.bottom, AppSpacing.xs)
             Text(friend.name)
                 .font(AppFonts.heading)
                 .foregroundColor(AppColors.textPrimary)
+                .multilineTextAlignment(.center)
+            FriendIDCopyLine(id: friend.id)
         }
         .frame(maxWidth: .infinity)
+        .padding(.horizontal, AppSpacing.pageHorizontal)
         .padding(.top, AppSpacing.xxl)
         .padding(.bottom, AppSpacing.xl)
     }

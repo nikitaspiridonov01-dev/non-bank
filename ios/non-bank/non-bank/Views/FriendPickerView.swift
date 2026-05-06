@@ -255,6 +255,7 @@ private struct FriendPickerContent: View {
                     } label: {
                         HStack(spacing: 14) {
                             PixelCatView(id: UserIDService.currentID(), size: 44, blackAndWhite: false)
+                                .clipShape(Circle())
 
                             Text("You")
                                 .font(AppFonts.labelPrimary)
@@ -370,6 +371,7 @@ private struct FriendPickerContent: View {
             // Coloured if connected (verified ID via share-link),
             // greyscale otherwise. Same convention as FriendsView.
             PixelCatView(id: friend.id, size: 44, blackAndWhite: !friend.isConnected)
+                .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(friend.name)

@@ -112,7 +112,7 @@ struct WhoAreYouPickerView: View {
     private func participantRow(_ participant: SharedTransactionPayload.Participant) -> some View {
         HStack(spacing: AppSpacing.md) {
             PixelCatView(id: participant.id, size: 40, blackAndWhite: false)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .clipShape(Circle())
             VStack(alignment: .leading, spacing: AppSpacing.xxs) {
                 Text(participant.n)
                     .font(.system(size: 15, weight: .medium))

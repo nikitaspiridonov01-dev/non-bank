@@ -421,8 +421,17 @@ struct CategoryHistoryView: View {
         .padding(.vertical, AppSpacing.rowVertical)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
+            // `insightRowFill` was chosen for rows that sit INSIDE an
+            // `insightCard` (where the row is one step lighter than
+            // its container). Here the rows live directly on
+            // `backgroundPrimary`, so that brighter cream washed out
+            // against the page. `backgroundElevated` is one step
+            // *darker* than the page in light mode (and one step
+            // brighter in dark) — the standard card surface — so the
+            // pill reads as a visible chip in both schemes. Empty
+            // months keep the 0.5 opacity to stay muted.
             RoundedRectangle(cornerRadius: AppRadius.rowPill)
-                .fill(AppColors.insightRowFill)
+                .fill(AppColors.backgroundElevated)
                 .opacity(entry.count > 0 ? 1.0 : 0.5)
         )
     }

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject var transactionStore: TransactionStore
@@ -27,12 +28,13 @@ struct SettingsView: View {
     private let userID = UserIDService.currentID()
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List {
                 // Profile avatar header
                 Section {
-                    VStack(spacing: AppSpacing.md) {
-                        PixelCatFillView(id: userID, blackAndWhite: false, cornerRadius: AppRadius.large)
+                    VStack(spacing: AppSpacing.sm) {
+                        PixelCatView(id: userID, size: 72, blackAndWhite: false)
+                            .clipShape(Circle())
 
                         Button(action: {
                             UIPasteboard.general.string = userID
@@ -53,7 +55,8 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, AppSpacing.rowVertical)
+                    .padding(.top, AppSpacing.sm)
+                    .padding(.bottom, AppSpacing.xs)
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
                 }
@@ -86,14 +89,13 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Picker(selection: $currencyStore.selectedCurrency) {
-                        ForEach(currencyStore.currencyOptions, id: \.self) { code in
-                            Text("\(CurrencyInfo.byCode[code]?.emoji ?? "💱") \(code)")
-                                .tag(code)
-                        }
-                    } label: {
-                        Label("Base Currency", systemImage: "dollarsign.circle")
-                    }
+                    // The "Base Currency" picker that used to live
+                    // here was removed in favour of letting the user
+                    // change base by tapping a row in the Currencies
+                    // sheet (see `CurrencyRatesSheet`). One canonical
+                    // entry point — every currency dropdown in the
+                    // app routes its "More currencies" overflow to
+                    // the same sheet.
                     Button(action: { showCurrencyRatesSheet = true }) {
                         Label("Currencies", systemImage: "coloncurrencysign.circle")
                     }
@@ -229,6 +231,7 @@ struct SettingsView: View {
             }
         }
     }
+
 }
 
 struct SettingsView_Previews: PreviewProvider {

@@ -57,8 +57,18 @@ struct FriendsView: View {
                 friendsListSection
             }
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(AppColors.backgroundPrimary)
         .searchable(text: $searchText, prompt: "Search friends")
         .navigationTitle("Friends")
+        // The parent `SettingsView` calls `.navigationBarHidden(true)`
+        // for its own screen. That leaks into pushed children inside
+        // `NavigationView` and forces an inline title here. Re-exposing
+        // the bar + asking for a large title explicitly restores the
+        // Reminders-style hero header on this screen only.
+        .navigationBarHidden(false)
+        .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(action: { sheetFriend = .create }) {
@@ -129,6 +139,8 @@ struct FriendsView: View {
             }
         }
         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
     }
 
     private func groupChip(label: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
@@ -150,14 +162,21 @@ struct FriendsView: View {
         Section {
             ForEach(filteredFriends) { friend in
                 friendRow(friend)
-                    .contentShape(Rectangle())
-                    .onTapGesture { sheetFriend = .view(friend) }
+                    .listRowInsets(EdgeInsets(
+                        top: AppSpacing.xxs,
+                        leading: AppSpacing.pageHorizontal,
+                        bottom: AppSpacing.xxs,
+                        trailing: AppSpacing.pageHorizontal
+                    ))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) {
                             handleDelete(friend)
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
+                        .tint(AppColors.danger)
                     }
             }
         }
@@ -187,48 +206,40 @@ struct FriendsView: View {
     }
 
     private func friendRow(_ friend: Friend) -> some View {
-        HStack(spacing: 14) {
-            // Connected friends (their ID matches a real userID, set
-            // either by importing a share-link from them or by the
-            // phantom-upgrade flow) get colored avatars; manually-typed
-            // contacts stay B&W until proven real.
-            PixelCatView(id: friend.id, size: 44, blackAndWhite: !friend.isConnected)
+        // Cream pill-card row, mirroring `WhoPaidPickerView.compactRow`
+        // and `DebtRowView` shape so all three friend list surfaces
+        // share one visual pattern. Tinted with `backgroundElevated`
+        // (cream) instead of `splitCardFill` (lavender) — Friends is
+        // a neutral page, not a Split sub-context.
+        Button(action: { sheetFriend = .view(friend) }) {
+            HStack(spacing: AppSpacing.md) {
+                PixelCatView(id: friend.id, size: 36, blackAndWhite: !friend.isConnected)
+                    .clipShape(Circle())
 
-            VStack(alignment: .leading, spacing: 3) {
                 Text(friend.name)
                     .font(AppFonts.labelPrimary)
                     .foregroundColor(AppColors.textPrimary)
                     .lineLimit(1)
 
-                HStack(spacing: AppSpacing.xs) {
-                    Text(friend.id)
-                        .font(.system(size: 12, weight: .regular, design: .monospaced))
-                        .foregroundColor(AppColors.textTertiary)
-                        .lineLimit(1)
+                Spacer(minLength: 4)
 
-                    Button(action: {
-                        UIPasteboard.general.string = friend.id
-                    }) {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 10))
+                if let mode = friend.splitMode {
+                    HStack(spacing: AppSpacing.xs) {
+                        SplitModeIcon(mode: mode, size: 18)
+                        Text(mode.displayLabel)
+                            .font(.system(size: 11))
                             .foregroundColor(AppColors.textTertiary)
                     }
-                    .buttonStyle(.plain)
                 }
             }
-
-            Spacer(minLength: 4)
-
-            if let mode = friend.splitMode {
-                HStack(spacing: AppSpacing.xs) {
-                    SplitModeIcon(mode: mode, size: 18)
-                    Text(mode.displayLabel)
-                        .font(.system(size: 11))
-                        .foregroundColor(AppColors.textTertiary)
-                }
-            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, AppSpacing.rowVertical)
+            .frame(maxWidth: .infinity)
+            .background(AppColors.backgroundElevated)
+            .cornerRadius(AppRadius.large)
+            .contentShape(RoundedRectangle(cornerRadius: AppRadius.large))
         }
-        .padding(.vertical, AppSpacing.xs)
+        .buttonStyle(.plain)
     }
 
     // MARK: - Empty State
@@ -261,97 +272,74 @@ struct FriendsView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 40)
         }
+        .listRowInsets(EdgeInsets())
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
     }
 }
 
-// MARK: - Friend Card View (full-width avatar + data below)
+// MARK: - Friend Card View
+//
+// Mirrors `FriendDetailView` (the Debts-tab friend screen) so the
+// profile-side friend page and the debts-side friend page share one
+// pattern: circular avatar → name → debt-status pill → date-grouped
+// past split transactions, on a Split lavender tint. The only
+// difference vs the Debts version is the toolbar — Close on the left
+// (sheet dismiss) and Edit on the right (forwards to the friend form).
 
 struct FriendCardView: View {
     let friend: Friend
     var onEdit: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
-    @State private var idCopied = false
+    @EnvironmentObject var transactionStore: TransactionStore
+    @EnvironmentObject var currencyStore: CurrencyStore
+    @EnvironmentObject var friendStore: FriendStore
+    @EnvironmentObject var categoryStore: CategoryStore
+
+    @State private var selectedTransaction: Transaction? = nil
+    @State private var showTransactionDetail: Bool = false
+    @State private var editingTransaction: Transaction? = nil
+
+    private var convert: (Double, String, String) -> Double {
+        { [currencyStore] amount, from, to in
+            currencyStore.convert(amount: amount, from: from, to: to)
+        }
+    }
+
+    private var pastSplitTransactions: [Transaction] {
+        SplitDebtService.pastSplitTransactions(from: transactionStore.transactions)
+            .filter { tx in
+                tx.splitInfo?.friends.contains { $0.friendID == friend.id } ?? false
+            }
+    }
+
+    private var myDebt: SimplifiedDebt? {
+        SplitDebtService.simplifiedDebts(
+            transactions: transactionStore.transactions,
+            targetCurrency: currencyStore.selectedCurrency,
+            convert: convert
+        )
+        .rows
+        .first { $0.friendID == friend.id }
+    }
+
+    private var groupedTransactions: [(date: Date, transactions: [Transaction])] {
+        TransactionFilterService.groupByDay(pastSplitTransactions)
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 0) {
-                    // Full-width avatar — colored when the friend is
-                    // a real user (share-link round-trip proved their
-                    // userID), grayscale for manually-typed contacts.
-                    // Mirrors the row treatment in `FriendsView`.
-                    PixelCatFillView(id: friend.id, blackAndWhite: !friend.isConnected, cornerRadius: AppRadius.large)
-                        .padding(.horizontal, AppSpacing.pageHorizontal)
-                        .padding(.top, AppSpacing.sm)
-
-                    // Name
-                    Text(friend.name)
-                        .font(AppFonts.displayMedium)
-                        .foregroundColor(AppColors.textPrimary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, AppSpacing.xxl)
-                        .padding(.top, AppSpacing.lg)
-
-                    // ID with copy
-                    Button(action: {
-                        UIPasteboard.general.string = friend.id
-                        idCopied = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            idCopied = false
-                        }
-                    }) {
-                        HStack(spacing: 6) {
-                            Text(friend.id)
-                                .font(.system(size: 14, weight: .medium, design: .monospaced))
-                                .foregroundColor(AppColors.textSecondary)
-                            Image(systemName: idCopied ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 12))
-                                .foregroundColor(idCopied ? .green : AppColors.textTertiary)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, 6)
-
-                    // Details
-                    VStack(spacing: 0) {
-                        if !friend.groups.isEmpty {
-                            detailRow(
-                                icon: "person.2",
-                                label: "Groups",
-                                value: friend.groups.joined(separator: ", ")
-                            )
-                        }
-
-                        if let mode = friend.splitMode {
-                            if !friend.groups.isEmpty {
-                                Divider().padding(.leading, 52)
-                            }
-                            HStack(spacing: AppSpacing.md) {
-                                SplitModeIcon(mode: mode, size: 28)
-
-                                VStack(alignment: .leading, spacing: AppSpacing.xxs) {
-                                    Text("Split mode")
-                                        .font(AppFonts.rowDescription)
-                                        .foregroundColor(AppColors.textTertiary)
-                                    Text(mode.displayLabel)
-                                        .font(AppFonts.labelPrimary)
-                                        .foregroundColor(AppColors.textPrimary)
-                                }
-
-                                Spacer()
-                            }
-                            .padding(.horizontal, AppSpacing.pageHorizontal)
-                            .padding(.vertical, 14)
-                        }
-                    }
-                    .background(AppColors.backgroundElevated)
-                    .cornerRadius(AppRadius.medium)
-                    .padding(.horizontal, AppSpacing.pageHorizontal)
-                    .padding(.top, AppSpacing.xxl)
+                VStack(alignment: .leading, spacing: 0) {
+                    profileHeader
+                    debtStatusRow
+                    transactionsSection
+                    Spacer().frame(height: 40)
                 }
             }
-            .background(AppColors.backgroundPrimary)
+            .background(AppColors.splitBackgroundTint)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
@@ -365,28 +353,182 @@ struct FriendCardView: View {
                     }
                 }
             }
+            .sheet(isPresented: Binding(
+                get: { showTransactionDetail && selectedTransaction != nil },
+                set: { newValue in
+                    if !newValue {
+                        showTransactionDetail = false
+                        selectedTransaction = nil
+                    }
+                }
+            )) {
+                if let selected = selectedTransaction,
+                   let tx = transactionStore.transactions.first(where: { $0.id == selected.id }) {
+                    TransactionDetailView(
+                        transaction: tx,
+                        onEdit: { editingTransaction = tx },
+                        onDelete: {
+                            transactionStore.delete(id: tx.id)
+                            showTransactionDetail = false
+                            selectedTransaction = nil
+                        },
+                        onClose: {
+                            showTransactionDetail = false
+                            selectedTransaction = nil
+                        },
+                        source: .debts
+                    )
+                    .environmentObject(categoryStore)
+                    .environmentObject(transactionStore)
+                    .environmentObject(friendStore)
+                    .environmentObject(currencyStore)
+                    .sheet(item: $editingTransaction) { editTx in
+                        CreateTransactionModal(
+                            isPresented: Binding(
+                                get: { true },
+                                set: { if !$0 { editingTransaction = nil } }
+                            ),
+                            editingTransaction: editTx
+                        )
+                        .environmentObject(categoryStore)
+                        .environmentObject(transactionStore)
+                        .environmentObject(currencyStore)
+                        .environmentObject(friendStore)
+                    }
+                }
+            }
         }
     }
 
-    private func detailRow(icon: String, label: String, value: String) -> some View {
-        HStack(spacing: AppSpacing.md) {
-            Image(systemName: icon)
-                .font(AppFonts.bodyRegular)
-                .foregroundColor(AppColors.textSecondary)
-                .frame(width: 28)
+    // MARK: - Profile Header
 
-            VStack(alignment: .leading, spacing: AppSpacing.xxs) {
-                Text(label)
-                    .font(AppFonts.rowDescription)
-                    .foregroundColor(AppColors.textTertiary)
-                Text(value)
-                    .font(AppFonts.labelPrimary)
-                    .foregroundColor(AppColors.textPrimary)
-            }
-
-            Spacer()
+    @ViewBuilder
+    private var profileHeader: some View {
+        VStack(spacing: AppSpacing.sm) {
+            PixelCatView(id: friend.id, size: 72, blackAndWhite: !friend.isConnected)
+                .clipShape(Circle())
+                .padding(.bottom, AppSpacing.xs)
+            Text(friend.name)
+                .font(AppFonts.heading)
+                .foregroundColor(AppColors.textPrimary)
+                .multilineTextAlignment(.center)
+            FriendIDCopyLine(id: friend.id)
         }
+        .frame(maxWidth: .infinity)
         .padding(.horizontal, AppSpacing.pageHorizontal)
-        .padding(.vertical, 14)
+        .padding(.top, AppSpacing.xxl)
+        .padding(.bottom, AppSpacing.xl)
+    }
+
+    // MARK: - Debt Status
+
+    @ViewBuilder
+    private var debtStatusRow: some View {
+        let currency = currencyStore.selectedCurrency
+        let amount = myDebt?.amount ?? 0
+
+        let kind: DebtRowView.Kind = {
+            if abs(amount) < 0.005 {
+                return .balancesOut(friendID: friend.id, friendName: friend.name)
+            }
+            if amount > 0 {
+                return .youLent(friendID: friend.id, friendName: friend.name, amount: amount)
+            }
+            return .youBorrow(friendID: friend.id, friendName: friend.name, amount: abs(amount))
+        }()
+
+        DebtRowView(kind: kind, currency: currency, isConnected: friend.isConnected)
+            .padding(.horizontal, AppSpacing.pageHorizontal)
+    }
+
+    // MARK: - Transactions Section
+
+    @ViewBuilder
+    private var transactionsSection: some View {
+        if groupedTransactions.isEmpty {
+            VStack(spacing: AppSpacing.md) {
+                Spacer().frame(height: 40)
+                SleepingCatIllustration(tint: .split, size: .standard)
+                Text("No splits yet with \(friend.name)")
+                    .font(AppFonts.labelCaption)
+                    .foregroundColor(AppColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, AppSpacing.pageHorizontal)
+            }
+            .frame(maxWidth: .infinity)
+        } else {
+            LazyVStack(spacing: 0, pinnedViews: []) {
+                ForEach(groupedTransactions, id: \.date) { group in
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(formattedSectionDate(group.date))
+                            .font(AppFonts.sectionHeader)
+                            .foregroundColor(AppColors.textSecondary)
+                            .tracking(AppFonts.sectionHeaderTracking)
+                            .padding(.horizontal, AppSpacing.pageHorizontal)
+                            .padding(.top, AppSpacing.xxl)
+                            .padding(.bottom, AppSpacing.sm)
+
+                        ForEach(Array(group.transactions.enumerated()), id: \.element.id) { idx, tx in
+                            DebtTransactionRowView(
+                                transaction: tx,
+                                emoji: categoryStore.validatedCategory(for: tx.category).emoji,
+                                isLast: idx == group.transactions.count - 1,
+                                onTap: {
+                                    selectedTransaction = tx
+                                    showTransactionDetail = true
+                                },
+                                onDelete: {
+                                    transactionStore.delete(id: tx.id)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Formatting
+
+    private func formattedSectionDate(_ date: Date) -> String {
+        let calendar = Calendar.current
+        let isCurrentYear = calendar.component(.year, from: date) == calendar.component(.year, from: Date())
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = isCurrentYear ? "EEE, MMM d" : "EEE, MMM d, yyyy"
+        return formatter.string(from: date).uppercased()
+    }
+}
+
+// MARK: - Friend ID Copy Line
+//
+// Mono ID with a copy-to-clipboard affordance, matching the user's own
+// ID treatment in `SettingsView`. Shared between `FriendCardView`
+// (Profile-side friend page) and `FriendDetailView` (Debts-side friend
+// page) so the two friend hero pages stay visually identical.
+
+struct FriendIDCopyLine: View {
+    let id: String
+    @State private var copied = false
+
+    var body: some View {
+        Button(action: {
+            UIPasteboard.general.string = id
+            copied = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                copied = false
+            }
+        }) {
+            HStack(spacing: 6) {
+                Text(id)
+                    .font(.system(size: 14, weight: .medium, design: .monospaced))
+                    .foregroundColor(AppColors.textSecondary)
+                    .lineLimit(1)
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 12))
+                    .foregroundColor(copied ? .green : AppColors.textTertiary)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }

@@ -52,7 +52,14 @@ struct CreateCategoryModal: View {
     var body: some View {
         NavigationView {
             ZStack {
-                AppColors.backgroundChip
+                // Was `backgroundChip` (~10% darker cream) which read as
+                // a dirty beige against every other sheet in the app.
+                // `backgroundPrimary` matches the page tone used by
+                // `WhoPaidPickerView` and the rest of the cream-themed
+                // sheets — kept here as the inner fill because the
+                // outer `.background(backgroundPrimary)` below the
+                // ZStack is otherwise occluded by it.
+                AppColors.backgroundPrimary
                     .ignoresSafeArea()
                 Form {
                     Section(header:

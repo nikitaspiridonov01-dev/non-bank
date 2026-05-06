@@ -104,6 +104,7 @@ struct PaidUpfrontView: View {
     private func row(_ payer: Payer) -> some View {
         HStack(spacing: 14) {
             PixelCatView(id: payer.avatarID, size: 44, blackAndWhite: !payer.isMe)
+                .clipShape(Circle())
 
             Text(payer.name)
                 .font(AppFonts.labelPrimary)

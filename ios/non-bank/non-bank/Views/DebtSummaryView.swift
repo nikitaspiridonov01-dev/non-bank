@@ -191,19 +191,26 @@ struct DebtSummaryView: View {
 
     private var headerTitle: some View {
         VStack(spacing: AppSpacing.md) {
-            PixelCatView(id: UserIDService.currentID(), size: 72, blackAndWhite: false)
-                .clipShape(Circle())
-            Text(headerLabelText)
-                .font(AppFonts.bodyLarge)
-                .foregroundColor(AppColors.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            headerAmount
+            // Pristine empty state (no past splits at all): skip the
+            // avatar + "settled" line entirely so the SleepingCat
+            // illustration below carries the whole message. Once the
+            // user has any split history, even a fully-paid one, the
+            // avatar + status header reappears.
+            if !groupedTransactions.isEmpty {
+                PixelCatView(id: UserIDService.currentID(), size: 72, blackAndWhite: false)
+                    .clipShape(Circle())
+                Text(headerLabelText)
+                    .font(AppFonts.bodyLarge)
+                    .foregroundColor(AppColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                headerAmount
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, AppSpacing.pageHorizontal)
-        .padding(.top, AppSpacing.xxl)
-        .padding(.bottom, AppSpacing.xxl)
+        .padding(.top, groupedTransactions.isEmpty ? 0 : AppSpacing.xxl)
+        .padding(.bottom, groupedTransactions.isEmpty ? 0 : AppSpacing.xxl)
     }
 
     private var headerLabelText: String {
@@ -241,17 +248,16 @@ struct DebtSummaryView: View {
     /// so changing it here also updates the Home header. Currency-code
     /// colour reads from the surrounding colour context so the EUR /
     /// USD label picks up lavender on Split screens, warm orange on
-    /// standard contexts.
+    /// standard contexts. Routed through the shared
+    /// `CurrencyDropdownButton` so the dropdown only exposes
+    /// currencies the user actually transacts in (plus a
+    /// "More currencies" route to the full sheet) instead of all
+    /// 160+ catalog codes.
     private var currencyMenu: some View {
-        Menu {
-            ForEach(currencyStore.currencyOptions, id: \.self) { code in
-                Button {
-                    currencyStore.selectedCurrency = code
-                } label: {
-                    Text("\(code) \(CurrencyInfo.byCode[code]?.emoji ?? "💱")")
-                }
-            }
-        } label: {
+        CurrencyDropdownButton(
+            selected: currencyStore.selectedCurrency,
+            onSelect: { code in currencyStore.selectedCurrency = code }
+        ) {
             // Hardcoded `splitAccent` — `colorContext` env value
             // here would still be `.standard` because `DebtSummaryView`
             // reads its OWN environment from its parent, not from

@@ -23,6 +23,24 @@ class CurrencyStore: ObservableObject {
         // Восстановление из store
         if let savedCurrency = self.store.string(forKey: selectedCurrencyKey) {
             self.selectedCurrency = savedCurrency
+        } else {
+            // First launch — there's no persisted choice yet, so we
+            // seed `selectedCurrency` from the device's regional
+            // settings. `Locale.current.currency` reads the iOS-level
+            // region code (Settings → General → Language & Region)
+            // and resolves it to an ISO 4217 code without ANY
+            // location permission prompt. If the result isn't in our
+            // supported catalog (rare locales, sanctioned codes,
+            // etc.), we fall through to USD.
+            //
+            // The detected value is written to the store immediately
+            // so the next cold start reads the saved value above and
+            // detection runs exactly once per install — matching the
+            // requirement that subsequent launches must NOT change
+            // the base currency on the user.
+            let detected = Self.detectInitialCurrency()
+            self.selectedCurrency = detected
+            self.store.set(detected, forKey: selectedCurrencyKey)
         }
         if let data = self.store.data(forKey: usdRatesKey),
            let decoded = try? JSONDecoder().decode([String: Double].self, from: data) {
@@ -30,6 +48,17 @@ class CurrencyStore: ObservableObject {
         }
         setupPersistence()
         fetchIfNeeded()
+    }
+
+    /// Resolves the device-locale currency to a code we support.
+    /// Returns USD if `Locale.current.currency` is nil or maps to a
+    /// code we don't have in `CurrencyInfo.catalog`.
+    private static func detectInitialCurrency() -> String {
+        if let code = Locale.current.currency?.identifier,
+           CurrencyInfo.byCode[code] != nil {
+            return code
+        }
+        return "USD"
     }
 
     // Сохранять selectedCurrency при изменении

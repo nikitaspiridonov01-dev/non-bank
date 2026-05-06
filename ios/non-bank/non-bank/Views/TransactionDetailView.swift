@@ -166,7 +166,7 @@ struct TransactionDetailView: View {
         if source.showsSplitBreakdown {
             switch SplitDebtService.userPosition(in: transaction) {
             case .lent(let amount), .borrowed(let amount): return amount
-            case .notInvolved: return 0
+            case .notInvolved, .settled: return 0
             }
         }
         return transaction.amount
@@ -188,19 +188,22 @@ struct TransactionDetailView: View {
             case .lent:        return "You lent"
             case .borrowed:    return "You borrow"
             case .notInvolved: return "You're not involved in this expense"
+            case .settled:     return "Your share is settled"
             }
         }
         return transaction.isIncome ? "Your income" : "Your expense"
     }
 
-    /// True when the amount row should render. Hidden on the debts card only
-    /// when the user isn't a participant (nothing lent or borrowed).
+    /// True when the amount row should render. Hidden on the debts card
+    /// when the user isn't a participant OR when they're a participant
+    /// whose contribution balances out — there's no lent/borrowed
+    /// number to show in either case.
     private var showsPrimaryAmount: Bool {
         guard source.showsSplitBreakdown else { return true }
-        if case .notInvolved = SplitDebtService.userPosition(in: transaction) {
-            return false
+        switch SplitDebtService.userPosition(in: transaction) {
+        case .notInvolved, .settled: return false
+        case .lent, .borrowed:       return true
         }
-        return true
     }
 
     /// Sign prefix ("+" / "-") in front of the amount. Only shown for the
@@ -255,14 +258,21 @@ struct TransactionDetailView: View {
                 VStack(alignment: .leading, spacing: AppSpacing.xxl) {
                     HStack(alignment: .center, spacing: AppSpacing.lg) {
                         ZStack {
-                            // Sub-app aware emoji tile background:
-                            // Reminders → warm cream, Debts → lavender,
-                            // standard → default chip cream.
+                            // Emoji tile: pick the same surface as the
+                            // sub-app's row pills so the tile and rows
+                            // read as one family. Reminders → translucent
+                            // white (matches reminder cards); Debts →
+                            // `splitCardFill` (matches "Debts to settle
+                            // up" friend rows); standard → the same
+                            // translucent white — sits on the same
+                            // cream `backgroundPrimary` page as
+                            // Reminders, and `backgroundChip` read as a
+                            // noticeably darker tan tile against it.
                             RoundedRectangle(cornerRadius: AppRadius.xlarge, style: .continuous)
                                 .fill(
-                                    source.isReminder ? AppColors.reminderEmojiBackground :
-                                    source == .debts ? AppColors.splitChipFill :
-                                    AppColors.backgroundChip
+                                    source == .debts
+                                        ? AppColors.splitCardFill
+                                        : AppColors.reminderEmojiBackground
                                 )
                                 .frame(width: 64, height: 64)
                             Text(displayEmoji)
@@ -446,6 +456,11 @@ struct TransactionDetailView: View {
                     } label: {
                         Label(source.isReminder ? "Delete from reminders" : "Delete transaction", systemImage: "trash")
                             .frame(maxWidth: .infinity)
+                            // `role: .destructive` forces the system-red
+                            // foreground on plain buttons regardless of
+                            // `.tint`, so we paint the Label directly to
+                            // match the swipe-action `AppColors.danger`.
+                            .foregroundStyle(AppColors.danger)
                     }
                     .padding(.top, AppSpacing.xxl)
                 }

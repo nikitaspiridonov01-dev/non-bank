@@ -414,20 +414,31 @@ struct CreateTransactionModal: View {
                             Text(String(parts.first ?? "0"))
                                 .font(.system(size: vm.amountFontSize, weight: .bold))
                                 .foregroundColor(vm.amount.isEmpty ? AppColors.textQuaternary : AppColors.textPrimary)
+                                // Faint placeholder zero — `textQuaternary`
+                                // alone reads as filled-in on the warm
+                                // cream background; halving alpha pushes
+                                // it into clear "placeholder" territory
+                                // without losing the warm hue.
+                                .opacity(vm.amount.isEmpty ? 0.5 : 1)
                             if parts.count > 1 {
                                 Text("." + (parts.count > 1 ? String(parts[1]) : "00"))
                                     .font(.system(size: vm.amountFontSize * 0.5, weight: .medium))
                                     .foregroundColor(AppColors.textSecondary)
                             }
-                            Menu {
-                                ForEach(currencyStore.currencyOptions, id: \.self) { code in
-                                    Button {
-                                        vm.selectedCurrency = code
-                                    } label: {
-                                        Text("\(code) \(CurrencyInfo.byCode[code]?.emoji ?? "💱")")
-                                    }
-                                }
-                            } label: {
+                            // Sets the transaction draft's currency
+                            // (NOT the global base). When user opens
+                            // "More currencies" from the dropdown,
+                            // `CurrencyRatesSheet` enters its
+                            // callback-driven mode via the shared
+                            // `onSelect` so the chosen code commits
+                            // here too — without that forwarding the
+                            // sheet would silently change `selectedCurrency`
+                            // on the store, which is the wrong target
+                            // for this surface.
+                            CurrencyDropdownButton(
+                                selected: vm.selectedCurrency,
+                                onSelect: { code in vm.selectedCurrency = code }
+                            ) {
                                 Text(vm.selectedCurrency)
                                     .font(.system(size: vm.amountFontSize * 0.5, weight: .semibold))
                                     .foregroundColor(AppColors.balanceCurrency)
@@ -902,6 +913,7 @@ extension CreateTransactionModal {
                         if youIncludedInSplit {
                             HStack(spacing: AppSpacing.xs) {
                                 PixelCatView(id: UserIDService.currentID(), size: 16, blackAndWhite: false)
+                                    .clipShape(Circle())
                                 Text("You")
                                     .font(AppFonts.metaText)
                                     .foregroundColor(AppColors.textPrimary)
@@ -922,6 +934,7 @@ extension CreateTransactionModal {
                                 // contacts. Same rule everywhere we
                                 // render an avatar.
                                 PixelCatView(id: friend.id, size: 16, blackAndWhite: !friend.isConnected)
+                                    .clipShape(Circle())
                                 Text(friend.name)
                                     .font(AppFonts.metaText)
                                     .foregroundColor(AppColors.textPrimary)
@@ -1002,6 +1015,7 @@ extension CreateTransactionModal {
         if vm.payers.count == 1 && vm.payers[0].id == "me" {
             HStack(spacing: AppSpacing.xs) {
                 PixelCatView(id: UserIDService.currentID(), size: 18, blackAndWhite: false)
+                    .clipShape(Circle())
                 if isZero {
                     Text("You pay")
                         .font(AppFonts.captionEmphasized)
@@ -1028,6 +1042,7 @@ extension CreateTransactionModal {
             let payerIsConnected = friendStore.friend(byID: payerId)?.isConnected ?? false
             HStack(spacing: AppSpacing.xs) {
                 PixelCatView(id: payerId, size: 18, blackAndWhite: !payerIsConnected)
+                    .clipShape(Circle())
                 if isZero {
                     Text("\(payerName) pays")
                         .font(AppFonts.captionEmphasized)

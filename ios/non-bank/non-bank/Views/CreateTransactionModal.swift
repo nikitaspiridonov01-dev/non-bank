@@ -136,6 +136,14 @@ private struct ReceiptScanFlowModifier: ViewModifier {
 struct CreateTransactionModal: View {
     @Binding var isPresented: Bool
     var editingTransaction: Transaction? = nil // Поддержка режима редактирования
+    /// Optional starting tab for create mode (ignored when editing). Lets
+    /// empty-state CTAs land directly in `.split` instead of forcing the
+    /// user to flip the segmented control after the modal opens.
+    var initialTab: TransactionTab? = nil
+    /// Friend IDs to pre-select as split participants when `initialTab`
+    /// is `.split`. Used by the friend-screen CTA so "you + this friend"
+    /// is wired up before the modal renders.
+    var prefilledFriendIDs: [String] = []
 
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var transactionStore: TransactionStore
@@ -393,9 +401,14 @@ struct CreateTransactionModal: View {
                                     .multilineTextAlignment(.center)
                                     .padding(.horizontal, AppSpacing.xl)
                                 if hasExtra {
+                                    // Match the placeholder zero's
+                                    // `textQuaternary` tone so the
+                                    // caption sits as a quiet hint
+                                    // below the title rather than a
+                                    // secondary call-to-action.
                                     Text("View all notes")
                                         .font(AppFonts.labelCaption)
-                                        .foregroundColor(AppColors.textSecondary)
+                                        .foregroundColor(AppColors.textQuaternary)
                                 }
                             }
                         }
@@ -788,6 +801,25 @@ struct CreateTransactionModal: View {
                             transactions: transactionStore.transactions,
                             categories: categoryStore.categories
                         )
+                    }
+                    // Apply CTA-driven prefill: pre-populate split participants
+                    // BEFORE flipping `selectedTab` so the onChange handler's
+                    // empty-friends auto-fill branch is skipped (otherwise it
+                    // would either auto-pick frequent friends or open the
+                    // picker, both of which fight the explicit prefill).
+                    if let initialTab = initialTab {
+                        if initialTab == .split && !prefilledFriendIDs.isEmpty {
+                            let resolved = prefilledFriendIDs.compactMap {
+                                friendStore.friend(byID: $0)
+                            }
+                            if !resolved.isEmpty {
+                                youIncludedInSplit = true
+                                vm.youIncludedInSplit = true
+                                vm.selectFriendsAndResolveSplitMode(resolved)
+                                vm.setDefaultPayer()
+                            }
+                        }
+                        selectedTab = initialTab
                     }
                 }
             }

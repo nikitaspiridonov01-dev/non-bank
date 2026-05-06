@@ -11,6 +11,10 @@ struct FriendDetailView: View {
     @State private var selectedTransaction: Transaction? = nil
     @State private var showTransactionDetail: Bool = false
     @State private var editingTransaction: Transaction? = nil
+    /// Drives the empty-state CTA's create-split sheet. Local to this
+    /// view so the participant prefill (you + this friend) flows
+    /// directly through `CreateTransactionModal`'s init parameters.
+    @State private var showCreateSplit: Bool = false
 
     private var convert: (Double, String, String) -> Double {
         { [currencyStore] amount, from, to in
@@ -54,6 +58,19 @@ struct FriendDetailView: View {
         // doesn't lose the "Split atmosphere" on push.
         .background(AppColors.splitBackgroundTint)
         .navigationBarTitleDisplayMode(.inline)
+        // Empty-state CTA target — pre-selects you + this friend as
+        // split participants so the user lands on the amount step.
+        .sheet(isPresented: $showCreateSplit) {
+            CreateTransactionModal(
+                isPresented: $showCreateSplit,
+                initialTab: .split,
+                prefilledFriendIDs: [friend.id]
+            )
+            .environmentObject(categoryStore)
+            .environmentObject(transactionStore)
+            .environmentObject(currencyStore)
+            .environmentObject(friendStore)
+        }
         .sheet(isPresented: Binding(
             get: { showTransactionDetail && selectedTransaction != nil },
             set: { newValue in
@@ -158,6 +175,17 @@ struct FriendDetailView: View {
                 Text("No split transactions")
                     .font(AppFonts.labelCaption)
                     .foregroundColor(AppColors.textSecondary)
+                // Lavender CTA — opens create-split with you + this
+                // friend pre-wired so the participant picker is skipped.
+                Button(action: { showCreateSplit = true }) {
+                    HStack(spacing: AppSpacing.xs) {
+                        Image(systemName: "person.2.fill")
+                            .font(AppFonts.captionEmphasized)
+                        Text("Split with \(friend.name)")
+                            .font(AppFonts.captionEmphasized)
+                    }
+                    .foregroundColor(AppColors.splitAccent)
+                }
             }
             .frame(maxWidth: .infinity)
         } else {

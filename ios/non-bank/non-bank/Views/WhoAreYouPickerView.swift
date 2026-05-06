@@ -35,7 +35,7 @@ struct WhoAreYouPickerView: View {
 
                     Text("Tap your name. The other people stay as they were.")
                         .font(AppFonts.metaRegular)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppColors.textSecondary)
                         .padding(.horizontal, AppSpacing.xl)
 
                     VStack(spacing: AppSpacing.sm) {
@@ -85,16 +85,16 @@ struct WhoAreYouPickerView: View {
             HStack(spacing: 6) {
                 Image(systemName: "person.fill")
                     .font(AppFonts.captionSmallStrong)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppColors.textSecondary)
                 Text("From a friend")
                     .font(AppFonts.metaRegular)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppColors.textSecondary)
                 Spacer()
                 Text(formatAmount(payload.ta))
                     .font(.system(size: 18, weight: .bold))
                 Text(payload.c)
                     .font(AppFonts.metaRegular)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppColors.textSecondary)
             }
         }
         .padding(14)

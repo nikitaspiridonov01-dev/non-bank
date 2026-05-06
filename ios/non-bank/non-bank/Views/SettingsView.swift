@@ -142,17 +142,17 @@ struct SettingsView: View {
                     if case .lastSynced(let date) = syncManager.syncStatus {
                         HStack {
                             Text("Last synced")
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppColors.textSecondary)
                             Spacer()
                             Text(date, style: .relative)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppColors.textSecondary)
                                 .font(.caption)
                         }
                     }
                     if case .error(let msg) = syncManager.syncStatus {
                         Text(msg)
                             .font(.caption)
-                            .foregroundColor(.red)
+                            .foregroundColor(AppColors.danger)
                     }
                 } header: {
                     Text("Sync")

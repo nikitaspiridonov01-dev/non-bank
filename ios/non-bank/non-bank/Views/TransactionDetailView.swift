@@ -283,7 +283,7 @@ struct TransactionDetailView: View {
                                 .font(.title2).bold()
                             Text(displayCategory)
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppColors.textSecondary)
                         }
                         Spacer(minLength: 8)
                         // Share button — only renders for split transactions
@@ -329,7 +329,7 @@ struct TransactionDetailView: View {
                         HStack(alignment: .firstTextBaseline, spacing: AppSpacing.sm) {
                             Text(detailTitle)
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppColors.textSecondary)
                             if let interval = resolvedRepeatInterval {
                                 if !source.isReminder {
                                     Button(action: {
@@ -365,17 +365,17 @@ struct TransactionDetailView: View {
                                 if showsAmountSign {
                                     Text(transaction.isIncome ? "+" : "-")
                                         .font(AppFonts.displayMedium)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(AppColors.textSecondary)
                                 }
                                 Text(formattedIntegerPart)
                                     .font(.system(size: 32, weight: .bold))
-                                    .foregroundColor(.primary)
+                                    .foregroundColor(AppColors.textPrimary)
                                 Text(formattedDecimalPart)
                                     .font(.system(size: 22, weight: .medium))
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(AppColors.textSecondary)
                                 Text(transaction.currency)
                                     .font(AppFonts.bodyLarge)
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(AppColors.textSecondary)
                             }
                         }
 
@@ -415,7 +415,7 @@ struct TransactionDetailView: View {
                         VStack(alignment: .leading, spacing: AppSpacing.md) {
                             Text(dateLabel)
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppColors.textSecondary)
                             Text(formattedDateTime(displayDate))
                                 .font(.body)
                         }
@@ -431,7 +431,7 @@ struct TransactionDetailView: View {
                         VStack(alignment: .leading, spacing: AppSpacing.sm) {
                             Text("Notes")
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppColors.textSecondary)
                             ZStack(alignment: .topLeading) {
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                                     .fill(source.isReminder ? AppColors.reminderNotesFill : AppColors.backgroundPrimary)
@@ -441,7 +441,7 @@ struct TransactionDetailView: View {
                                     )
                                 Text(notesContent)
                                     .font(.body)
-                                    .foregroundColor(.primary)
+                                    .foregroundColor(AppColors.textPrimary)
                                     .multilineTextAlignment(.leading)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .padding(14)
@@ -651,7 +651,7 @@ struct TransactionDetailView: View {
                 // single-item swap.
                 ProfileNameSheet(
                     initialName: initial,
-                    title: "What's your name?",
+                    title: "Your name",
                     subtitle: "This is shown to people you share split transactions with. You can change it anytime in Settings.",
                     saveButtonTitle: "Continue",
                     dismissOnSave: false
@@ -717,11 +717,11 @@ struct TransactionDetailView: View {
         HStack {
             VStack(alignment: .leading, spacing: AppSpacing.xs) {
                 (Text("of ")
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppColors.textSecondary)
                 + Text(formatAmountWithCents(split.totalAmount))
                     .foregroundColor(AppColors.textPrimary)
                 + Text(" \(transaction.currency)")
-                    .foregroundColor(.secondary))
+                    .foregroundColor(AppColors.textSecondary))
                     .font(AppFonts.metaText)
                 HStack(spacing: AppSpacing.xs) {
                     Image(systemName: "person.2.fill")
@@ -820,7 +820,7 @@ private struct SingleOccurrenceView: View {
                 .modifier(PulseModifier(active: true))
             Text(Self.shortDateLabel(date))
                 .font(.body)
-                .foregroundColor(.primary)
+                .foregroundColor(AppColors.textPrimary)
             Spacer()
             Text(Self.timeString(date))
                 .font(AppFonts.caption)
@@ -828,7 +828,7 @@ private struct SingleOccurrenceView: View {
                 .padding(.trailing, 6)
             Text("\(isIncome ? "+" : "–")\(NumberFormatting.integerPart(amount))\(NumberFormatting.decimalPartIfAny(amount)) \(currency)")
                 .font(AppFonts.captionEmphasized)
-                .foregroundColor(.secondary)
+                .foregroundColor(AppColors.textSecondary)
         }
         .padding(.vertical, 10)
         .padding(.horizontal, AppSpacing.md)
@@ -951,7 +951,7 @@ private struct OccurrenceTimelineView: View {
                     } label: {
                         Image(systemName: "arrow.uturn.backward")
                             .font(AppFonts.footnote)
-                            .foregroundColor(.primary)
+                            .foregroundColor(AppColors.textPrimary)
                             .frame(width: 32, height: 32)
                             .background(.ultraThinMaterial)
                             .clipShape(Circle())

@@ -281,7 +281,7 @@ struct FriendFormView: View {
                     if isDuplicateGroupName {
                         Text("This group already exists")
                             .font(AppFonts.metaRegular)
-                            .foregroundColor(.red)
+                            .foregroundColor(AppColors.danger)
                     }
                 } header: {
                     Text("Create New")

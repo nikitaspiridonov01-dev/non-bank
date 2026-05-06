@@ -13,6 +13,12 @@ struct DebtSummaryView: View {
     @State private var editingTransaction: Transaction? = nil
     /// Active group filter. `nil` = all groups.
     @State private var selectedGroup: String? = nil
+    /// Drives the empty-state CTA's create-split sheet. Stays local to
+    /// this view (instead of routing through `NavigationRouter`) because
+    /// the router's modal is presented at MainTabView level — stacking a
+    /// second sheet from this presented sheet is more reliable when the
+    /// trigger lives in the same hierarchy.
+    @State private var showCreateSplit: Bool = false
 
     private var convert: (Double, String, String) -> Double {
         { [currencyStore] amount, from, to in
@@ -105,6 +111,20 @@ struct DebtSummaryView: View {
                     // navigation page.
                     deletedFriendPlaceholder
                 }
+            }
+            // Empty-state CTA target: opens the create flow pre-set
+            // to the Split tab. No friends prefilled — the modal's
+            // existing "frequent friends" auto-fill / picker logic
+            // decides how to seed participants from there.
+            .sheet(isPresented: $showCreateSplit) {
+                CreateTransactionModal(
+                    isPresented: $showCreateSplit,
+                    initialTab: .split
+                )
+                .environmentObject(categoryStore)
+                .environmentObject(transactionStore)
+                .environmentObject(currencyStore)
+                .environmentObject(friendStore)
             }
             .sheet(isPresented: Binding(
                 get: { showTransactionDetail && selectedTransaction != nil },
@@ -355,6 +375,19 @@ struct DebtSummaryView: View {
                     .foregroundColor(AppColors.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, AppSpacing.xxxl)
+                // Lavender CTA to match the Split sub-palette this view
+                // lives in — `splitAccent` instead of the default warm
+                // accent so the link reads as part of the Split surface
+                // rather than borrowing the home-screen tint.
+                Button(action: { showCreateSplit = true }) {
+                    HStack(spacing: AppSpacing.xs) {
+                        Image(systemName: "person.2.fill")
+                            .font(AppFonts.captionEmphasized)
+                        Text("Split with a friend")
+                            .font(AppFonts.captionEmphasized)
+                    }
+                    .foregroundColor(AppColors.splitAccent)
+                }
                 Spacer()
             }
             .frame(maxWidth: .infinity)

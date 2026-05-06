@@ -179,9 +179,12 @@ private struct CustomRangeSheet: View {
             // row's baseline.
             //
             // `.tint(accentBold)` re-paints the compact pill with
-            // the warm app accent — the iOS-default `secondarySystemFill`
-            // pill on top of `backgroundElevated` was a low-contrast
-            // gray-on-cream stack.
+            // the warm app accent. The pill's *inactive* background
+            // is iOS's `secondarySystemFill` and isn't customisable
+            // per-instance through public SwiftUI API — we accept
+            // the system grey here in exchange for the native
+            // tap-to-popover interaction the user expects from a
+            // compact picker.
             Section {
                 // `listRowBackground(backgroundElevated)` overrides the
                 // default `secondarySystemBackground` (cool gray) that
@@ -234,3 +237,4 @@ private struct CustomRangeSheet: View {
         .presentationDetents([.medium])
     }
 }
+

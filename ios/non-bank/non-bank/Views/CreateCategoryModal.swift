@@ -73,11 +73,11 @@ struct CreateCategoryModal: View {
                         if emojiConflict && titleConflict {
                             Text("This emoji and title are already used for another category. Choose different ones.")
                                 .font(.footnote)
-                                .foregroundColor(.red)
+                                .foregroundColor(AppColors.danger)
                         } else if emojiConflict {
                             Text("This emoji is already used for another category. Choose a different one.")
                                 .font(.footnote)
-                                .foregroundColor(.red)
+                                .foregroundColor(AppColors.danger)
                         }
 
                         TextField("Category Name", text: $title)
@@ -94,7 +94,7 @@ struct CreateCategoryModal: View {
                         if titleConflict && !emojiConflict {
                             Text("This title is already used for another category. Choose a different one.")
                                 .font(.footnote)
-                                .foregroundColor(.red)
+                                .foregroundColor(AppColors.danger)
                         }
                     }
                 }

@@ -300,6 +300,10 @@ struct FriendCardView: View {
     @State private var selectedTransaction: Transaction? = nil
     @State private var showTransactionDetail: Bool = false
     @State private var editingTransaction: Transaction? = nil
+    /// Drives the empty-state CTA's create-split sheet (Profile-side
+    /// friend page). Mirrors `FriendDetailView`'s pattern so both
+    /// friend hero pages route into the same prefilled split flow.
+    @State private var showCreateSplit: Bool = false
 
     private var convert: (Double, String, String) -> Double {
         { [currencyStore] amount, from, to in
@@ -352,6 +356,19 @@ struct FriendCardView: View {
                         }
                     }
                 }
+            }
+            // Empty-state CTA target — pre-selects you + this friend
+            // as split participants.
+            .sheet(isPresented: $showCreateSplit) {
+                CreateTransactionModal(
+                    isPresented: $showCreateSplit,
+                    initialTab: .split,
+                    prefilledFriendIDs: [friend.id]
+                )
+                .environmentObject(categoryStore)
+                .environmentObject(transactionStore)
+                .environmentObject(currencyStore)
+                .environmentObject(friendStore)
             }
             .sheet(isPresented: Binding(
                 get: { showTransactionDetail && selectedTransaction != nil },
@@ -454,6 +471,15 @@ struct FriendCardView: View {
                     .foregroundColor(AppColors.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, AppSpacing.pageHorizontal)
+                Button(action: { showCreateSplit = true }) {
+                    HStack(spacing: AppSpacing.xs) {
+                        Image(systemName: "person.2.fill")
+                            .font(AppFonts.captionEmphasized)
+                        Text("Split with \(friend.name)")
+                            .font(AppFonts.captionEmphasized)
+                    }
+                    .foregroundColor(AppColors.splitAccent)
+                }
             }
             .frame(maxWidth: .infinity)
         } else {

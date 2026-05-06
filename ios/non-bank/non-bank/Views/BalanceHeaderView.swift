@@ -45,7 +45,7 @@ struct BalanceHeaderView: View {
             HStack(spacing: AppSpacing.sm) {
                 Text("Net total")
                     .font(AppFonts.labelPrimary)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppColors.textSecondary)
 
                 DebtBadgeView(
                     summary: debtSummary,
@@ -159,7 +159,7 @@ struct BalanceHeaderView: View {
                     // Date label (visible only when hovering a bar)
                     Text(hoveredBarIdx != nil && hoveredBarIdx! < trendBars.count ? trendBars[hoveredBarIdx!].label : "\u{00a0}")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppColors.textSecondary)
                         .frame(maxWidth: .infinity)
                         .opacity(isHoveringBar ? 1 : 0)
 

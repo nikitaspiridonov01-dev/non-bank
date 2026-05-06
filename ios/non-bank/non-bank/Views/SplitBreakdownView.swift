@@ -189,7 +189,7 @@ struct SplitBreakdownView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Debts to settle up")
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppColors.textSecondary)
 
                 VStack(spacing: AppSpacing.sm) {
                     ForEach(rows) { row in

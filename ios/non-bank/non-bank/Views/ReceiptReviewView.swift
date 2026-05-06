@@ -104,7 +104,7 @@ struct ReceiptReviewView: View {
                 if let date = parseResult.parsedReceipt.date, !date.isEmpty {
                     Text(date)
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppColors.textSecondary)
                 }
                 Text("\(items.count) \(items.count == 1 ? "item" : "items")")
                     .font(.caption)
@@ -150,7 +150,7 @@ struct ReceiptReviewView: View {
                     .foregroundColor(AppColors.textPrimary)
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppColors.textSecondary)
             }
             Spacer()
         }
@@ -174,7 +174,7 @@ struct ReceiptReviewView: View {
                     .foregroundColor(AppColors.textTertiary)
                 Text("No items detected")
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppColors.textSecondary)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 40)
@@ -239,7 +239,7 @@ struct ReceiptReviewView: View {
             HStack {
                 Text("Items total")
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppColors.textSecondary)
                 Spacer()
                 amountText(itemsTotal, primary: true)
             }
@@ -247,7 +247,7 @@ struct ReceiptReviewView: View {
                 HStack {
                     Text("Receipt total")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppColors.textSecondary)
                     Spacer()
                     amountText(grand, primary: false)
                 }

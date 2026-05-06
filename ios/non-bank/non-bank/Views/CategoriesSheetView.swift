@@ -64,7 +64,12 @@ struct CategoriesSheetView: View {
                         }
                     }
                     .padding(.vertical, AppSpacing.xxs)
-                    .listRowBackground(AppColors.backgroundElevated)
+                    // `Color.clear` so rows sit directly on the
+                    // brighter `backgroundPrimary` page instead of
+                    // the darker `backgroundElevated` beige — matches
+                    // the `FriendPickerView` pattern ("Who to split
+                    // with") so both pickers feel like one family.
+                    .listRowBackground(Color.clear)
                     // Custom swipe action so the destructive button picks
                     // up `AppColors.danger` (wine/rose) instead of iOS's
                     // `systemRed`. Reserved category is blocked entirely
@@ -85,7 +90,12 @@ struct CategoriesSheetView: View {
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
             .background(AppColors.backgroundPrimary)
-            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search categories")
+            // No explicit `placement:` — matches `FriendPickerView`
+            // ("Who to split with"). On iOS 26 the default places the
+            // search bar at the bottom integrated with the toolbar
+            // glass instead of pinning it under the title, which felt
+            // visually heavier than the rest of the picker family.
+            .searchable(text: $searchText, prompt: "Search categories")
             .navigationTitle("Categories")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {

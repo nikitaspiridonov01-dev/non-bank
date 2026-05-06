@@ -26,7 +26,7 @@ struct RemindersView: View {
                     Button("Close") { dismiss() }
                 }
             }
-            .background(AppColors.reminderBackgroundTint)
+            .background(ReminderPageBackground())
         }
         // Declares the entire Reminders screen as living in the
         // `.reminders` colour context — descendants that read
@@ -74,7 +74,7 @@ struct RemindersView: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(16)
-        .presentationBackground(AppColors.reminderBackgroundTint)
+        .presentationBackground { ReminderPageBackground() }
         .onAppear { vm.refresh(from: transactionStore.transactions) }
         .onChange(of: transactionStore.transactions.count) { _ in
             vm.refresh(from: transactionStore.transactions)
@@ -117,17 +117,35 @@ struct RemindersView: View {
                             .padding(.top, AppSpacing.xxl)
                             .padding(.bottom, AppSpacing.sm)
 
-                        ForEach(Array(group.reminders.enumerated()), id: \.element.id) { idx, tx in
-                            let emoji = categoryStore.validatedCategory(for: tx.category).emoji
-                            ReminderRowView(
-                                transaction: tx,
-                                emoji: emoji,
-                                nextDateLabel: vm.formattedNextDate(for: tx),
-                                isLast: idx == group.reminders.count - 1,
-                                onTap: { selectedTransaction = tx },
-                                onDelete: { transactionStore.delete(id: tx.id) }
-                            )
+                        // Per-group iOS 26 Liquid Glass container —
+                        // matches the timeline-list pattern in
+                        // `TransactionDetailView`. Rows inside stay
+                        // transparent text + dividers; the group as a
+                        // whole reads as one frosted card lifting off
+                        // the warm-cream gradient page.
+                        //
+                        // `.clipShape` after the glass effect — the
+                        // SwipeToDeleteRow's UIKit red layer extends
+                        // the full row width and would otherwise spill
+                        // past the rounded corners on swipe. Clipping
+                        // the container to the same shape as the
+                        // glass keeps the swipe layer inside the pill.
+                        VStack(spacing: 0) {
+                            ForEach(Array(group.reminders.enumerated()), id: \.element.id) { idx, tx in
+                                let emoji = categoryStore.validatedCategory(for: tx.category).emoji
+                                ReminderRowView(
+                                    transaction: tx,
+                                    emoji: emoji,
+                                    nextDateLabel: vm.formattedNextDate(for: tx),
+                                    isLast: idx == group.reminders.count - 1,
+                                    onTap: { selectedTransaction = tx },
+                                    onDelete: { transactionStore.delete(id: tx.id) }
+                                )
+                            }
                         }
+                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                        .padding(.horizontal, AppSpacing.pageHorizontal)
                     }
                 }
             }

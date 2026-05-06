@@ -77,11 +77,13 @@ struct ReminderRowView: View {
                         .padding(.leading, AppSizes.dividerLeading)
                 }
             }
-            // Match the Reminders screen's warm tint so rows blend in with
-            // the surrounding background instead of appearing as white cards.
-            // An opaque fill is still required so the red swipe-delete layer
-            // stays hidden behind the row content.
-            .background(AppColors.reminderBackgroundTint)
+            // Transparent — the parent group wraps its rows in a
+            // `.glassEffect(...)` container so each row sits on shared
+            // iOS 26 Liquid Glass instead of carrying its own opaque
+            // tint. (The danger swipe-delete layer is positioned
+            // beside the row content, not behind it, so transparent
+            // rows don't reveal it when not swiped.)
+            .background(Color.clear)
         }
         .frame(maxWidth: .infinity)
     }

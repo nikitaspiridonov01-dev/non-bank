@@ -50,9 +50,9 @@ struct PaidUpfrontView: View {
             .padding(.top, AppSpacing.lg)
         }
         // Pushed from `SplitBreakdownView` inside the Split context;
-        // matches that sub-palette's surface tint so the screen stays
+        // matches that sub-palette's gradient so the screen stays
         // in the "Split atmosphere" on push.
-        .background(AppColors.splitBackgroundTint)
+        .background(SplitPageBackground())
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -129,7 +129,8 @@ struct PaidUpfrontView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
-        .background(AppColors.splitCardFill)
-        .clipShape(RoundedRectangle(cornerRadius: AppRadius.large))
+        // `.glassEffect(.regular, in:)` — same iOS 26 Liquid Glass
+        // pill as friend rows on the debt summary.
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous))
     }
 }

@@ -56,7 +56,7 @@ struct FriendDetailView: View {
         // NavigationStack via `.colorContext(.split)`. Background
         // matches that sub-palette's surface tint so the screen
         // doesn't lose the "Split atmosphere" on push.
-        .background(AppColors.splitBackgroundTint)
+        .background(FriendDetailPageBackground())
         .navigationBarTitleDisplayMode(.inline)
         // Empty-state CTA target — pre-selects you + this friend as
         // split participants so the user lands on the amount step.
@@ -200,20 +200,29 @@ struct FriendDetailView: View {
                             .padding(.top, AppSpacing.xxl)
                             .padding(.bottom, AppSpacing.sm)
 
-                        ForEach(Array(group.transactions.enumerated()), id: \.element.id) { idx, tx in
-                            DebtTransactionRowView(
-                                transaction: tx,
-                                emoji: categoryStore.validatedCategory(for: tx.category).emoji,
-                                isLast: idx == group.transactions.count - 1,
-                                onTap: {
-                                    selectedTransaction = tx
-                                    showTransactionDetail = true
-                                },
-                                onDelete: {
-                                    transactionStore.delete(id: tx.id)
-                                }
-                            )
+                        // Per-group iOS 26 Liquid Glass container —
+                        // matches the debt summary pattern.
+                        // `.clipShape` keeps the swipe-delete red layer
+                        // inside the rounded corners.
+                        VStack(spacing: 0) {
+                            ForEach(Array(group.transactions.enumerated()), id: \.element.id) { idx, tx in
+                                DebtTransactionRowView(
+                                    transaction: tx,
+                                    emoji: categoryStore.validatedCategory(for: tx.category).emoji,
+                                    isLast: idx == group.transactions.count - 1,
+                                    onTap: {
+                                        selectedTransaction = tx
+                                        showTransactionDetail = true
+                                    },
+                                    onDelete: {
+                                        transactionStore.delete(id: tx.id)
+                                    }
+                                )
+                            }
                         }
+                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                        .padding(.horizontal, AppSpacing.pageHorizontal)
                     }
                 }
             }

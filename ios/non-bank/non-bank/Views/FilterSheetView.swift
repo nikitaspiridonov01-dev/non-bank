@@ -183,17 +183,17 @@ struct FilterSheetView: View {
                                         Text("\(dayNum)")
                                             .font(.system(size: 16, weight: isSelected ? .bold : .regular))
                                             .foregroundColor(
-                                                isFuture ? Color(.systemGray4) :
+                                                isFuture ? AppColors.controlDisabled :
                                                 isSelected ? .white :
                                                 hasData ? .primary :
-                                                Color(.systemGray3)
+                                                AppColors.iconInactive
                                             )
                                             .frame(width: 40, height: 40)
                                             .background(
                                                 isSelected && hasData
                                                     ? Circle().fill(Color.accentColor)
                                                     : isSelected
-                                                        ? Circle().fill(Color(.systemGray4))
+                                                        ? Circle().fill(AppColors.controlDisabled)
                                                         : nil
                                             )
                                     }

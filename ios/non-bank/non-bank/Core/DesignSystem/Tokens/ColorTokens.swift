@@ -101,7 +101,20 @@ enum AppColors {
         )
     }
 
-    static var textDisabled: Color { Color(.placeholderText) }
+    /// Disabled / placeholder text. Was `Color(.placeholderText)`,
+    /// which iOS resolves to a cool blue-grey (~`rgb(60, 60, 67, 0.3)`).
+    /// Against the warm-cream surfaces the cool placeholder read as
+    /// "alien" — most visible on the title-field placeholder ("My
+    /// Food") in `CreateTransactionModal`. Replaced with a warm light
+    /// grey (`#B8A695`) sitting in the same family as `textTertiary`
+    /// / `textQuaternary` so all faded text shares one warm tone.
+    /// Dark mode keeps the system semantic — already tuned right.
+    static var textDisabled: Color {
+        dynamic(
+            UIColor(red: 0.72, green: 0.65, blue: 0.58, alpha: 1.0),  // ~#B8A695 warm light grey
+            UIColor.placeholderText
+        )
+    }
 
     // Text intended to be placed on top of the accent gradient / filled buttons
     static var textOnAccent: Color { Color.white }
@@ -296,35 +309,38 @@ enum AppColors {
         )
     }
 
-    /// Emoji icon background on reminder card
-    static var reminderEmojiBackground: Color {
+    /// Card fill on Reminder screens — **mirror of `splitCardFill`**.
+    /// Distinctly more bright/warm than `reminderBackgroundTint` so cards
+    /// clearly "lift" off the warm-cream reminder page (~5% brightness
+    /// diff with matching warm bias — same lift `splitCardFill` gets
+    /// against `splitBackgroundTint`). Used as the underlying surface
+    /// for `reminderEmojiBackground`, `reminderNotesFill`, and
+    /// `reminderTimelineBackground` so the entire Reminders sub-app
+    /// has one consistent "card on warm-cream page" vocabulary.
+    static var reminderCardFill: Color {
         dynamic(
-            UIColor(white: 1.0, alpha: 0.85),
-            UIColor.white.withAlphaComponent(0.08)
+            UIColor(red: 1.00, green: 0.98, blue: 0.96, alpha: 1.0),  // ~#FFFAF5 warm-cream near-white
+            UIColor.white.withAlphaComponent(0.06)
         )
     }
 
-    /// Notes card fill on reminder card
-    static var reminderNotesFill: Color {
-        dynamic(
-            UIColor.white,
-            UIColor.white.withAlphaComponent(0.05)
-        )
-    }
+    /// Emoji icon background on reminder card. Aliases `reminderCardFill`
+    /// so the tile inherits the warm-cream surface vocabulary.
+    static var reminderEmojiBackground: Color { reminderCardFill }
 
-    /// Notes card border on reminder card
+    /// Notes card fill on reminder card. Aliases `reminderCardFill`.
+    static var reminderNotesFill: Color { reminderCardFill }
+
+    /// Timeline / occurrence block background on reminder card.
+    /// Aliases `reminderCardFill`.
+    static var reminderTimelineBackground: Color { reminderCardFill }
+
+    /// Notes card border on reminder card — subtle warm separator
+    /// in the same family as the main `border` token.
     static var reminderNotesBorder: Color {
         dynamic(
-            UIColor(white: 0.85, alpha: 1.0),
+            UIColor(red: 0.93, green: 0.88, blue: 0.83, alpha: 1.0),  // ~#EDE0D4 warm separator
             UIColor.white.withAlphaComponent(0.08)
-        )
-    }
-
-    /// Timeline/occurrence block background on reminder card
-    static var reminderTimelineBackground: Color {
-        dynamic(
-            UIColor(white: 1.0, alpha: 0.75),
-            UIColor.white.withAlphaComponent(0.06)
         )
     }
 
@@ -399,6 +415,43 @@ enum AppColors {
         dynamic(
             UIColor(red: 0.84, green: 0.80, blue: 0.76, alpha: 1.0),  // ~#D7CCC2 warm separator
             UIColor.separator
+        )
+    }
+
+    // MARK: - Inactive / Disabled
+    //
+    // System `Color.secondary` and `systemGray3/4` are tuned with a
+    // **cool blue-grey** bias which fights the warm-cream surface
+    // palette — inactive tab icons looked alien against the page.
+    // The two tokens below provide warm-tinted equivalents:
+    //
+    //   - `iconInactive` — tab bar icons in unselected state,
+    //     placeholders, glyph tints that should "sit back" against
+    //     warm surfaces. Replaces `Color.secondary`.
+    //   - `controlDisabled` — disabled CTA fills, future-date filter
+    //     chips. Replaces `Color(.systemGray3 / .systemGray4)`.
+    //
+    // Dark mode falls back to the system semantics — they're already
+    // tuned correctly against the dark backgrounds, and re-creating
+    // warm equivalents in dark would overshoot.
+
+    /// Inactive icon / glyph tint — warm equivalent of `Color.secondary`.
+    /// Use for tab bar items in unselected state, decorative glyphs
+    /// that should fade into the warm-cream page.
+    static var iconInactive: Color {
+        dynamic(
+            UIColor(red: 0.55, green: 0.48, blue: 0.41, alpha: 1.0),  // ~#8C7B69 warm grey
+            UIColor.secondaryLabel
+        )
+    }
+
+    /// Disabled control fill — warm equivalent of `systemGray3/4`.
+    /// Use for the background of disabled bordered-prominent buttons,
+    /// chips in unreachable states (future dates, etc.).
+    static var controlDisabled: Color {
+        dynamic(
+            UIColor(red: 0.85, green: 0.81, blue: 0.77, alpha: 1.0),  // ~#D9CFC4 warm beige
+            UIColor.systemGray4
         )
     }
 

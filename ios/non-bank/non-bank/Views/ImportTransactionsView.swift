@@ -522,8 +522,8 @@ struct FieldMappingView: View {
                         .font(AppFonts.bodyEmphasized)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(continueEnabled ? Color.accentColor : Color(.systemGray4))
-                        .foregroundColor(continueEnabled ? .white : .secondary)
+                        .background(continueEnabled ? Color.accentColor : AppColors.controlDisabled)
+                        .foregroundColor(continueEnabled ? .white : AppColors.iconInactive)
                         .cornerRadius(12)
                 }
                 .disabled(!continueEnabled)
@@ -537,8 +537,8 @@ struct FieldMappingView: View {
                         .font(AppFonts.bodyEmphasized)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(continueEnabled ? Color.accentColor : Color(.systemGray4))
-                        .foregroundColor(continueEnabled ? .white : .secondary)
+                        .background(continueEnabled ? Color.accentColor : AppColors.controlDisabled)
+                        .foregroundColor(continueEnabled ? .white : AppColors.iconInactive)
                         .cornerRadius(12)
                 }
                 .disabled(!continueEnabled)

@@ -50,10 +50,10 @@ struct MainTabView: View {
                     VStack(spacing: AppSpacing.xs) {
                         Image(systemName: "house.fill")
                             .font(AppFonts.tabIcon)
-                            .foregroundColor(router.selectedTab == 0 ? Color.accentColor : Color.secondary)
+                            .foregroundColor(router.selectedTab == 0 ? Color.accentColor : AppColors.iconInactive)
                         Text("Home")
                             .font(AppFonts.tabLabel)
-                            .foregroundColor(router.selectedTab == 0 ? Color.accentColor : Color.secondary)
+                            .foregroundColor(router.selectedTab == 0 ? Color.accentColor : AppColors.iconInactive)
                     }
                 }
                 Spacer(minLength: AppSizes.tabBarCenterSpacing)
@@ -76,10 +76,10 @@ struct MainTabView: View {
                     VStack(spacing: AppSpacing.xs) {
                         Image(systemName: "person.crop.circle")
                             .font(AppFonts.tabIcon)
-                            .foregroundColor(router.selectedTab == 1 ? Color.accentColor : Color.secondary)
+                            .foregroundColor(router.selectedTab == 1 ? Color.accentColor : AppColors.iconInactive)
                         Text("Profile")
                             .font(AppFonts.tabLabel)
-                            .foregroundColor(router.selectedTab == 1 ? Color.accentColor : Color.secondary)
+                            .foregroundColor(router.selectedTab == 1 ? Color.accentColor : AppColors.iconInactive)
                     }
                 }
                 Spacer()

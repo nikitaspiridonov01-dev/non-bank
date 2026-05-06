@@ -342,7 +342,7 @@ struct FriendCardView: View {
                     Spacer().frame(height: 40)
                 }
             }
-            .background(AppColors.splitBackgroundTint)
+            .background(SplitPageBackground())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

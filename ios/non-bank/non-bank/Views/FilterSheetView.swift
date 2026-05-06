@@ -107,11 +107,11 @@ struct FilterSheetView: View {
                             Text("Pick a date")
                             Spacer()
                             Image(systemName: "chevron.right")
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppColors.textSecondary)
                                 .font(AppFonts.caption)
                         }
                     }
-                    .foregroundColor(.primary)
+                    .foregroundColor(AppColors.textPrimary)
                     .sheet(isPresented: $showDatePicker) {
                         VStack(spacing: 0) {
                             // Month navigation
@@ -151,7 +151,7 @@ struct FilterSheetView: View {
                                 ForEach(0..<7, id: \.self) { i in
                                     Text(weekdaySymbols[i])
                                         .font(AppFonts.metaText)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(AppColors.textSecondary)
                                         .frame(maxWidth: .infinity)
                                 }
                             }
@@ -265,11 +265,11 @@ struct FilterSheetView: View {
                                         .foregroundColor(.accentColor)
                                 } else {
                                     Image(systemName: "circle")
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(AppColors.textSecondary)
                                 }
                             }
                         }
-                        .foregroundColor(.primary)
+                        .foregroundColor(AppColors.textPrimary)
                     }
                 }
 
@@ -307,6 +307,6 @@ struct MultipleSelectionRow: View {
                 }
             }
         }
-        .foregroundColor(.primary)
+        .foregroundColor(AppColors.textPrimary)
     }
 }

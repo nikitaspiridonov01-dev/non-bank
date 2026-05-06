@@ -39,7 +39,7 @@ struct CategoriesSheetView_Select: View {
                         }
                         .padding(.vertical, AppSpacing.xxs)
                     }
-                    .foregroundColor(.primary)
+                    .foregroundColor(AppColors.textPrimary)
                 }
             }
             .listStyle(.insetGrouped)

@@ -11,7 +11,7 @@ struct ExportSheetView: View {
                 .font(.title2)
                 .padding(.top)
             Text("Здесь будет экспорт данных приложения.")
-                .foregroundColor(.secondary)
+                .foregroundColor(AppColors.textSecondary)
             Button("Close") {
                 isPresented = false
             }
@@ -35,14 +35,14 @@ struct ImportSheetView: View {
                 .font(.title2)
                 .padding(.top)
             Text("Импортируйте JSON-файл с транзакциями. Формат см. в документации.")
-                .foregroundColor(.secondary)
+                .foregroundColor(AppColors.textSecondary)
             Button("Выбрать файл для импорта") {
                 isImporterPresented = true
             }
             .padding(.top, AppSpacing.sm)
             if let importError = importError {
                 Text(importError)
-                    .foregroundColor(.red)
+                    .foregroundColor(AppColors.danger)
             }
             Button("Close") {
                 isPresented = false

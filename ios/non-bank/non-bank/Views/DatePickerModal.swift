@@ -47,7 +47,7 @@ struct DatePickerModal: View {
                         HStack {
                             Text(dateLabel)
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppColors.textSecondary)
                             Spacer()
                             DatePicker("", selection: $date, displayedComponents: [.hourAndMinute])
                                 .labelsHidden()
@@ -109,7 +109,7 @@ struct DatePickerModal: View {
             HStack(alignment: .firstTextBaseline) {
                 Label("Repeat", systemImage: "repeat")
                     .font(.subheadline)
-                    .foregroundColor(.primary)
+                    .foregroundColor(AppColors.textPrimary)
                 Spacer(minLength: 8)
                 // Native .menu picker: iOS renders the selected option + a
                 // chevron in its own button, so the label's intrinsic width
@@ -128,7 +128,7 @@ struct DatePickerModal: View {
             if let detail = repeatDetailDescription {
                 Text(detail)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppColors.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }

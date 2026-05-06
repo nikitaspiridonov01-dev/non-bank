@@ -18,6 +18,12 @@ import SwiftUI
 // keeping the same layout means we know the centering still works.
 
 struct EmptyTransactionsView: View {
+    /// Optional CTA tap-handler. When supplied, an "Add transaction"
+    /// affordance renders below the headline so the user has a direct
+    /// path into the create flow without hunting for the tab-bar `+`.
+    /// Pattern mirrors `FriendsView.emptyState`'s "Add new friend" link.
+    var onAdd: (() -> Void)? = nil
+
     var body: some View {
         GeometryReader { geo in
             VStack(spacing: AppSpacing.lg) {
@@ -32,6 +38,18 @@ struct EmptyTransactionsView: View {
                     .foregroundColor(AppColors.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, AppSpacing.xxxl)
+
+                if let onAdd {
+                    Button(action: onAdd) {
+                        HStack(spacing: AppSpacing.xs) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(AppFonts.captionEmphasized)
+                            Text("Add transaction")
+                                .font(AppFonts.captionEmphasized)
+                        }
+                        .foregroundColor(.accentColor)
+                    }
+                }
             }
             .frame(maxWidth: .infinity)
             .position(x: geo.size.width / 2, y: geo.size.height / 2)

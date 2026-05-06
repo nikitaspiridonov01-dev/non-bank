@@ -51,10 +51,11 @@ struct CategoriesSheetView: View {
                         VStack(alignment: .leading, spacing: AppSpacing.xxs) {
                             Text(category.title)
                                 .font(AppFonts.labelPrimary)
+                                .foregroundColor(AppColors.textPrimary)
                             if category.title == CategoryStore.uncategorized.title {
                                 Text("Reserved")
                                     .font(AppFonts.captionSmall)
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(AppColors.textSecondary)
                             } else if maxUsageCount > 0 && usageCount(for: category.title) == maxUsageCount {
                                 Text("Most often used")
                                     .font(AppFonts.captionSmall)
@@ -63,10 +64,23 @@ struct CategoriesSheetView: View {
                         }
                     }
                     .padding(.vertical, AppSpacing.xxs)
-                    // Block swipe-to-delete for reserved category
-                    .deleteDisabled(category.title == CategoryStore.uncategorized.title)
+                    .listRowBackground(AppColors.backgroundElevated)
+                    // Custom swipe action so the destructive button picks
+                    // up `AppColors.danger` (wine/rose) instead of iOS's
+                    // `systemRed`. Reserved category is blocked entirely
+                    // by gating the action on the title check — `.onDelete`
+                    // + `.deleteDisabled` couldn't carry a custom tint.
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        if category.title != CategoryStore.uncategorized.title {
+                            Button(role: .destructive) {
+                                categoryStore.removeCategory(category)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                            .tint(AppColors.danger)
+                        }
+                    }
                 }
-                .onDelete(perform: deleteCategory)
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)

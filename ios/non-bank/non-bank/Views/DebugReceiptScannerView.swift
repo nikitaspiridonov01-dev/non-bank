@@ -35,7 +35,7 @@ struct DebugReceiptScannerView: View {
 
                 if let error = errorMessage {
                     Text(error)
-                        .foregroundColor(.red)
+                        .foregroundColor(AppColors.danger)
                         .font(.caption)
                         .padding(.horizontal)
                 }

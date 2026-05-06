@@ -47,7 +47,7 @@ struct ImportTransactionsView: View {
                 } footer: {
                     Text("Select a JSON file containing an array of transactions.")
                         .font(AppFonts.metaRegular)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppColors.textSecondary)
                 }
 
                 // Status
@@ -61,7 +61,7 @@ struct ImportTransactionsView: View {
                             ProgressView()
                                 .padding(.trailing, AppSpacing.sm)
                             Text("Reading file…")
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppColors.textSecondary)
                         }
                     }
 
@@ -70,7 +70,7 @@ struct ImportTransactionsView: View {
                         if !fileName.isEmpty {
                             HStack {
                                 Text("File")
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(AppColors.textSecondary)
                                 Spacer()
                                 Text(fileName)
                                     .lineLimit(1)
@@ -79,14 +79,14 @@ struct ImportTransactionsView: View {
                         }
                         HStack {
                             Text("Transactions detected")
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppColors.textSecondary)
                             Spacer()
                             Text("\(records.count)")
                                 .fontWeight(.medium)
                         }
                         HStack {
                             Text("Fields found")
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppColors.textSecondary)
                             Spacer()
                             Text("\(fields.count)")
                                 .fontWeight(.medium)
@@ -104,11 +104,11 @@ struct ImportTransactionsView: View {
                     Section {
                         VStack(alignment: .leading, spacing: AppSpacing.sm) {
                             Label("Import Error", systemImage: "exclamationmark.triangle.fill")
-                                .foregroundColor(.red)
+                                .foregroundColor(AppColors.danger)
                                 .font(AppFonts.body)
                             Text(message)
                                 .font(AppFonts.emojiSmall)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppColors.textSecondary)
                         }
                         .padding(.vertical, AppSpacing.xs)
                     }
@@ -314,7 +314,7 @@ struct FieldMappingView: View {
                             .font(AppFonts.displayMedium)
                         Text(copyText(for: currentField))
                             .font(AppFonts.emojiSmall)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppColors.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if [.amount, .currency, .date, .type].contains(currentField) {
                             Button {
@@ -350,10 +350,10 @@ struct FieldMappingView: View {
                                 VStack(alignment: .leading, spacing: AppSpacing.xxs) {
                                     Text("Not mapped")
                                         .font(.system(size: 16, weight: .medium))
-                                        .foregroundColor(.primary)
+                                        .foregroundColor(AppColors.textPrimary)
                                     Text(currentField.fallbackDescription)
                                         .font(AppFonts.metaRegular)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(AppColors.textSecondary)
                                 }
                                 Spacer()
                                 if mapping[currentField] == nil {
@@ -376,11 +376,11 @@ struct FieldMappingView: View {
                                 VStack(alignment: .leading, spacing: AppSpacing.xxs) {
                                     Text(jsonField)
                                         .font(.system(size: 16, weight: .medium))
-                                        .foregroundColor(.primary)
+                                        .foregroundColor(AppColors.textPrimary)
                                     if let sample = sampleValues(for: jsonField) {
                                         Text("e.g. \(sample)")
                                             .font(.system(size: 13, design: .monospaced))
-                                            .foregroundColor(.secondary)
+                                            .foregroundColor(AppColors.textSecondary)
                                             .lineLimit(1)
                                             .truncationMode(.tail)
                                     }
@@ -479,7 +479,7 @@ struct FieldMappingView: View {
         VStack(spacing: 6) {
             Text("Step \(currentStep + 1) of \(totalSteps)")
                 .font(AppFonts.metaText)
-                .foregroundColor(.secondary)
+                .foregroundColor(AppColors.textSecondary)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
@@ -750,68 +750,78 @@ struct ImportSummaryView: View {
                         ProgressView()
                             .padding(.trailing, AppSpacing.sm)
                         Text("Parsing transactions…")
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppColors.textSecondary)
                     }
+                    .listRowBackground(AppColors.backgroundElevated)
                 }
             } else {
                 // Summary
-                Section(header: Text("Summary")) {
+                Section(header: Text("Summary").foregroundColor(AppColors.textSecondary)) {
                     HStack {
                         Text("Transactions to import")
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppColors.textSecondary)
                         Spacer()
                         Text("\(parsedRows.count)")
                             .fontWeight(.medium)
+                            .foregroundColor(AppColors.textPrimary)
                     }
+                    .listRowBackground(AppColors.backgroundElevated)
                     if !newCategoriesWithEmojis.isEmpty {
                         HStack {
                             Text("New categories to create")
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppColors.textSecondary)
                             Spacer()
                             Text("\(newCategoriesWithEmojis.count)")
                                 .fontWeight(.medium)
+                                .foregroundColor(AppColors.textPrimary)
                         }
+                        .listRowBackground(AppColors.backgroundElevated)
                     }
                 }
 
                 // New categories detail
                 if !newCategoriesWithEmojis.isEmpty {
-                    Section(header: Text("New Categories")) {
+                    Section(header: Text("New Categories").foregroundColor(AppColors.textSecondary)) {
                         ForEach(newCategoriesWithEmojis, id: \.name) { item in
                             HStack(spacing: 10) {
                                 Text(item.emoji)
                                     .font(AppFonts.emojiMedium)
                                 Text(item.name)
                                     .font(AppFonts.emojiSmall)
+                                    .foregroundColor(AppColors.textPrimary)
                             }
+                            .listRowBackground(AppColors.backgroundElevated)
                         }
                     }
                 }
 
                 // Warnings
                 if !warnings.isEmpty {
-                    Section(header: Text("Warnings")) {
+                    Section(header: Text("Warnings").foregroundColor(AppColors.textSecondary)) {
                         ForEach(warnings, id: \.self) { warning in
                             Label(warning, systemImage: "exclamationmark.triangle.fill")
-                                .foregroundColor(.orange)
+                                .foregroundColor(AppColors.warning)
                                 .font(AppFonts.emojiSmall)
+                                .listRowBackground(AppColors.backgroundElevated)
                         }
                     }
                 }
 
                 // Import mode
                 if !parsedRows.isEmpty {
-                    Section(header: Text("Import Mode")) {
+                    Section(header: Text("Import Mode").foregroundColor(AppColors.textSecondary)) {
                         Picker("Mode", selection: $importMode) {
                             ForEach(ImportMode.allCases, id: \.self) { mode in
                                 Text(mode.rawValue).tag(mode)
                             }
                         }
                         .pickerStyle(.segmented)
+                        .listRowBackground(AppColors.backgroundElevated)
                         if importMode == .replace {
                             Text("All existing transactions will be deleted before import.")
                                 .font(AppFonts.metaRegular)
-                                .foregroundColor(.orange)
+                                .foregroundColor(AppColors.warning)
+                                .listRowBackground(AppColors.backgroundElevated)
                         }
                     }
                 }
@@ -821,9 +831,10 @@ struct ImportSummaryView: View {
                     Section {
                         Text("No valid transactions found.")
                             .font(AppFonts.emojiSmall)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppColors.textSecondary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, AppSpacing.xs)
+                            .listRowBackground(AppColors.backgroundElevated)
                     }
                 } else {
                     Section {
@@ -837,19 +848,24 @@ struct ImportSummaryView: View {
                                         .padding(.trailing, AppSpacing.sm)
                                     Text("Importing…")
                                         .font(AppFonts.bodyEmphasized)
+                                        .foregroundColor(AppColors.accentBold)
                                 } else {
                                     Label("Import \(parsedRows.count) Transactions", systemImage: "square.and.arrow.down")
                                         .font(AppFonts.bodyEmphasized)
+                                        .foregroundColor(AppColors.accentBold)
                                 }
                                 Spacer()
                             }
                         }
                         .disabled(isImporting)
+                        .listRowBackground(AppColors.backgroundElevated)
                     }
                 }
             }
         }
         .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(AppColors.backgroundPrimary)
         .navigationTitle("Review Import")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
@@ -1109,7 +1125,7 @@ struct ImportSuccessScreen: View {
                     .font(AppFonts.heading)
                 Text("\(count) transactions imported successfully.")
                     .font(AppFonts.bodyRegular)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppColors.textSecondary)
                     .multilineTextAlignment(.center)
                 Spacer()
                 Button {

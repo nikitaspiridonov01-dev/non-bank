@@ -54,7 +54,7 @@ struct ActiveFilterChip: View {
                 .foregroundColor(AppColors.textPrimary)
             Image(systemName: "xmark")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.secondary)
+                .foregroundColor(AppColors.textSecondary)
         }
         .padding(.horizontal, AppSizes.chipHorizontalPadding)
         .padding(.vertical, AppSizes.chipVerticalPadding)

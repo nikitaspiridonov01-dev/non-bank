@@ -77,7 +77,7 @@ struct ReceiptHighlighterView: View {
                     if groups.isEmpty {
                         Text("No items detected so far")
                             .font(.subheadline)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppColors.textSecondary)
                         Spacer()
                         Button {} label: {
                             Label("Confirm", systemImage: "checkmark")
@@ -93,7 +93,7 @@ struct ReceiptHighlighterView: View {
                         VStack(alignment: .leading, spacing: AppSpacing.xxs) {
                             Text("\(groups.count) item\(groups.count == 1 ? "" : "s")")
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(AppColors.textSecondary)
                             Text(String(format: "%.2f", total))
                                 .font(.title2.bold())
                         }
@@ -117,7 +117,7 @@ struct ReceiptHighlighterView: View {
                             .font(.subheadline)
                         Text("✌️ Two fingers to scroll")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppColors.textSecondary)
                     }
                     Spacer()
                 }
@@ -763,7 +763,7 @@ struct ItemPreviewSheet: View {
                                 if item.quantity > 1 {
                                     Text("×\(Int(item.quantity)) @ \(String(format: "%.2f", item.unitPrice))")
                                         .font(.caption)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(AppColors.textSecondary)
                                 }
                             }
                             Spacer()

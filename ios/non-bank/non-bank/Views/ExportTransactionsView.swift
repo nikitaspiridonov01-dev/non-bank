@@ -89,13 +89,13 @@ struct ExportTransactionsView: View {
                             .font(AppFonts.body)
                         Text("Estimated file size: \(estimatedFileSize)")
                             .font(AppFonts.emojiSmall)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(AppColors.textSecondary)
                     }
                     .padding(.vertical, AppSpacing.xs)
                 } else {
                     Text("No transactions found for this period. Nothing to export.")
                         .font(AppFonts.emojiSmall)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppColors.textSecondary)
                         .padding(.vertical, AppSpacing.xs)
                 }
             }

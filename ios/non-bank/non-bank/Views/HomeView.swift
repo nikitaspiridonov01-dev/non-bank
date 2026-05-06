@@ -241,7 +241,7 @@ struct HomeView: View {
             // Reminders stay reachable via the top-left toolbar
             // button — the empty state can claim the centre.
             if transactionStore.homeTransactions.isEmpty {
-                EmptyTransactionsView()
+                EmptyTransactionsView(onAdd: { router.showCreateTransaction() })
                     .zIndex(0)
             }
         }
@@ -405,7 +405,7 @@ struct HomeView: View {
             VStack {
                 Spacer().frame(height: 50)
                 Text("No transactions match the selected filters")
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppColors.textSecondary)
             }
             .frame(maxWidth: .infinity)
         } else if !transactionStore.homeTransactions.isEmpty {

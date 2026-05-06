@@ -106,7 +106,9 @@ struct MainTabView: View {
         }) {
             CreateTransactionModal(
                 isPresented: $router.showTransactionEditor,
-                editingTransaction: router.editingTransaction
+                editingTransaction: router.editingTransaction,
+                initialTab: router.initialCreateTab,
+                prefilledFriendIDs: router.prefilledFriendIDs
             )
             .environmentObject(categoryStore)
             .environmentObject(transactionStore)

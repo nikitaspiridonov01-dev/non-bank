@@ -752,10 +752,6 @@ struct TransactionDetailView: View {
                 .environmentObject(receiptItemStore)
                 .sheet(item: $editingFromLinkedReminder) { editTx in
                     CreateTransactionModal(
-                        isPresented: Binding(
-                            get: { true },
-                            set: { if !$0 { editingFromLinkedReminder = nil } }
-                        ),
                         editingTransaction: editTx
                     )
                     .environmentObject(categoryStore)
@@ -796,10 +792,6 @@ struct TransactionDetailView: View {
                     .environmentObject(receiptItemStore)
                     .sheet(item: $editingFromBreakdown) { editTx in
                         CreateTransactionModal(
-                            isPresented: Binding(
-                                get: { true },
-                                set: { if !$0 { editingFromBreakdown = nil } }
-                            ),
                             editingTransaction: editTx
                         )
                         .environmentObject(categoryStore)

@@ -103,10 +103,6 @@ struct BigPurchaseCard: View {
             .environmentObject(receiptItemStore)
             .sheet(item: $editingTransaction) { tx in
                 CreateTransactionModal(
-                    isPresented: Binding(
-                        get: { true },
-                        set: { if !$0 { editingTransaction = nil } }
-                    ),
                     editingTransaction: tx
                 )
                 .environmentObject(transactionStore)

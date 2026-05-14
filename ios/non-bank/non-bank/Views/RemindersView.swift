@@ -62,10 +62,6 @@ struct RemindersView: View {
         }
         .sheet(item: $editingTransaction) { editTx in
             CreateTransactionModal(
-                isPresented: Binding(
-                    get: { true },
-                    set: { if !$0 { editingTransaction = nil } }
-                ),
                 editingTransaction: editTx
             )
             .environmentObject(categoryStore)

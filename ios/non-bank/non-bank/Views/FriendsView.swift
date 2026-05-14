@@ -413,7 +413,6 @@ struct FriendCardView: View {
             // as split participants.
             .sheet(isPresented: $showCreateSplit) {
                 CreateTransactionModal(
-                    isPresented: $showCreateSplit,
                     autoOpenSplitFlow: true,
                     prefilledFriendIDs: [friend.id]
                 )
@@ -426,10 +425,6 @@ struct FriendCardView: View {
             // the Debts-side `FriendDetailView`.
             .sheet(item: $pendingSettleUp) { prefill in
                 CreateTransactionModal(
-                    isPresented: Binding(
-                        get: { pendingSettleUp != nil },
-                        set: { if !$0 { pendingSettleUp = nil } }
-                    ),
                     settleUpPrefill: prefill
                 )
                 .environmentObject(categoryStore)
@@ -470,10 +465,6 @@ struct FriendCardView: View {
                     .environmentObject(receiptItemStore)
                     .sheet(item: $editingTransaction) { editTx in
                         CreateTransactionModal(
-                            isPresented: Binding(
-                                get: { true },
-                                set: { if !$0 { editingTransaction = nil } }
-                            ),
                             editingTransaction: editTx
                         )
                         .environmentObject(categoryStore)

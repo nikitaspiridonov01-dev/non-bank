@@ -220,7 +220,17 @@ struct CreateTransactionModal: View {
         return String(format: "%.2f", rounded)
     }
 
-    @Binding var isPresented: Bool
+    /// Canonical SwiftUI dismiss handle. Replaces the legacy
+    /// `@Binding var isPresented` parameter: setting an external
+    /// binding to `false` while the modal's containing `NavigationStack`
+    /// is mid-render produced a brief blank/gray sheet because the
+    /// dismiss animation raced with the synchronous store mutation
+    /// that precedes it. `dismiss()` is queued through SwiftUI's own
+    /// dismissal coordinator and stays in sync with the sheet's
+    /// transition, regardless of whether the parent used
+    /// `.sheet(isPresented:)` or `.sheet(item:)`.
+    @Environment(\.dismiss) private var dismiss
+
     var editingTransaction: Transaction? = nil // Поддержка режима редактирования
     /// Optional starting tab for create mode (ignored when editing). Lets
     /// empty-state CTAs land directly in `.split` instead of forcing the
@@ -447,7 +457,7 @@ struct CreateTransactionModal: View {
                     await receiptItemStore.saveItems(pendingItems, for: tx.id)
                 }
             }
-            isPresented = false
+            dismiss()
             return
         }
 
@@ -455,7 +465,7 @@ struct CreateTransactionModal: View {
             // Fast path — no scan, keep the original fire-and-forget add to
             // preserve existing behavior on devices without camera/AI.
             transactionStore.add(tx)
-            isPresented = false
+            dismiss()
             promptShareIfSplit(tx)
             return
         }
@@ -469,7 +479,7 @@ struct CreateTransactionModal: View {
                 await receiptItemStore.saveItems(pendingItems, for: newID)
             }
             await MainActor.run {
-                isPresented = false
+                dismiss()
                 promptShareIfSplit(tx)
             }
         }
@@ -496,7 +506,7 @@ struct CreateTransactionModal: View {
         transactionStore.add(replacement)
         pendingRecurringReplacement = nil
         showRecurringReplaceAlert = false
-        isPresented = false
+        dismiss()
     }
 
     // MARK: - Receipt Scan Flow Handlers
@@ -1138,7 +1148,7 @@ struct CreateTransactionModal: View {
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(action: { isPresented = false }) {
+                    Button(action: { dismiss() }) {
                         Image(systemName: "xmark")
                     }
                 }

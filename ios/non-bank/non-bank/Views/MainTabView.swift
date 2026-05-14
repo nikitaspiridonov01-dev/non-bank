@@ -123,7 +123,6 @@ struct MainTabView: View {
             router.dismissTransactionEditor()
         }) {
             CreateTransactionModal(
-                isPresented: $router.showTransactionEditor,
                 editingTransaction: router.editingTransaction,
                 autoOpenSplitFlow: router.autoOpenSplitFlow,
                 autoOpenScanFlow: router.autoOpenScanFlow,
@@ -167,34 +166,36 @@ struct MainTabView: View {
             }
         }
         .sheet(item: $notificationOpenedTransaction) { tx in
-            // Use the freshest version from the store — the snapshot we
+            // Prefer the freshest version from the store — the snapshot we
             // matched by syncID could have stale fields if the user edited
             // while the notification was being processed. Resolve by
             // `syncID` (not `id`) so Replace-reminder, which rotates the
             // autoincrement id, doesn't strand this sheet on a deleted row.
-            if let fresh = transactionStore.transactions.first(where: { $0.syncID == tx.syncID }) {
-                TransactionDetailView(
-                    transaction: fresh,
-                    onEdit: {
-                        let txToEdit = fresh
-                        notificationOpenedTransaction = nil
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            router.showEditTransaction(txToEdit)
-                        }
-                    },
-                    onDelete: {
-                        transactionStore.delete(id: fresh.id)
-                        notificationOpenedTransaction = nil
-                    },
-                    onClose: { notificationOpenedTransaction = nil },
-                    source: fresh.isSplit ? .debts : .home
-                )
-                .environmentObject(categoryStore)
-                .environmentObject(transactionStore)
-                .environmentObject(friendStore)
-                .environmentObject(currencyStore)
-                .environmentObject(receiptItemStore)
-            }
+            // Falls back to the bound `tx` so the sheet never renders an
+            // empty body (which appears as a blank gray sheet) if the
+            // store hasn't reloaded yet.
+            let fresh = transactionStore.transactions.first(where: { $0.syncID == tx.syncID }) ?? tx
+            TransactionDetailView(
+                transaction: fresh,
+                onEdit: {
+                    let txToEdit = fresh
+                    notificationOpenedTransaction = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        router.showEditTransaction(txToEdit)
+                    }
+                },
+                onDelete: {
+                    transactionStore.delete(id: fresh.id)
+                    notificationOpenedTransaction = nil
+                },
+                onClose: { notificationOpenedTransaction = nil },
+                source: fresh.isSplit ? .debts : .home
+            )
+            .environmentObject(categoryStore)
+            .environmentObject(transactionStore)
+            .environmentObject(friendStore)
+            .environmentObject(currencyStore)
+            .environmentObject(receiptItemStore)
         }
         .onChange(of: notificationCoordinator.pendingTransactionSyncID) { _ in
             handlePendingNotification()
@@ -355,29 +356,31 @@ struct MainTabView: View {
         // pattern as `notificationOpenedTransaction` — resolve by
         // `syncID` so Replace-reminder doesn't break this binding.
         .sheet(item: $shareLinkOpenedTransaction) { tx in
-            if let fresh = transactionStore.transactions.first(where: { $0.syncID == tx.syncID }) {
-                TransactionDetailView(
-                    transaction: fresh,
-                    onEdit: {
-                        let txToEdit = fresh
-                        shareLinkOpenedTransaction = nil
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            router.showEditTransaction(txToEdit)
-                        }
-                    },
-                    onDelete: {
-                        transactionStore.delete(id: fresh.id)
-                        shareLinkOpenedTransaction = nil
-                    },
-                    onClose: { shareLinkOpenedTransaction = nil },
-                    source: fresh.isSplit ? .debts : .home
-                )
-                .environmentObject(categoryStore)
-                .environmentObject(transactionStore)
-                .environmentObject(friendStore)
-                .environmentObject(currencyStore)
-                .environmentObject(receiptItemStore)
-            }
+            // Fall back to the bound `tx` so the sheet never renders an
+            // empty body if the store hasn't reloaded yet (same defensive
+            // pattern as `notificationOpenedTransaction`).
+            let fresh = transactionStore.transactions.first(where: { $0.syncID == tx.syncID }) ?? tx
+            TransactionDetailView(
+                transaction: fresh,
+                onEdit: {
+                    let txToEdit = fresh
+                    shareLinkOpenedTransaction = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        router.showEditTransaction(txToEdit)
+                    }
+                },
+                onDelete: {
+                    transactionStore.delete(id: fresh.id)
+                    shareLinkOpenedTransaction = nil
+                },
+                onClose: { shareLinkOpenedTransaction = nil },
+                source: fresh.isSplit ? .debts : .home
+            )
+            .environmentObject(categoryStore)
+            .environmentObject(transactionStore)
+            .environmentObject(friendStore)
+            .environmentObject(currencyStore)
+            .environmentObject(receiptItemStore)
         }
     }
 

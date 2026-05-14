@@ -158,7 +158,6 @@ struct DebtSummaryView: View {
             // decides how to seed participants from there.
             .sheet(isPresented: $showCreateSplit) {
                 CreateTransactionModal(
-                    isPresented: $showCreateSplit,
                     autoOpenSplitFlow: true
                 )
                 .environmentObject(categoryStore)
@@ -200,10 +199,6 @@ struct DebtSummaryView: View {
                     .environmentObject(receiptItemStore)
                     .sheet(item: $editingTransaction) { editTx in
                         CreateTransactionModal(
-                            isPresented: Binding(
-                                get: { true },
-                                set: { if !$0 { editingTransaction = nil } }
-                            ),
                             editingTransaction: editTx
                         )
                         .environmentObject(categoryStore)

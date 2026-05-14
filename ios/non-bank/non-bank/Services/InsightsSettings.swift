@@ -61,6 +61,17 @@ final class InsightsSettings: ObservableObject {
         )
     }
 
+    // Singletons are normally kept alive for the app lifetime, but a
+    // shared instance can still be deallocated under memory pressure
+    // or on process tear-down. Without an explicit `removeObserver`
+    // NotificationCenter would fire `handleCloudChange(_:)` against a
+    // dead pointer on the next iCloud key-value change and crash the
+    // app. The call is safe from any context — `NotificationCenter`
+    // is thread-safe and doesn't require main-actor isolation.
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     /// Fires when the iCloud key-value store gets an update from
     /// another device. We only republish for the keys we own, and we
     /// avoid the didSet write-back loop by writing through the same

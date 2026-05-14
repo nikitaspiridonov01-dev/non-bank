@@ -692,11 +692,40 @@ class SyncManager: ObservableObject {
 
     // MARK: - Reload stores
 
+    /// Refreshes each in-memory store from SQLite after a CloudKit
+    /// pull. Stores are held weakly (wired in `MainTabView.onAppear`)
+    /// so an unmount during onboarding or scene tear-down can race
+    /// with a sync completion and leave one (or all) refs nil.
+    ///
+    /// Previously this was a chain of `await transactionStore?.load()`
+    /// expressions: nil refs were silently skipped and the device
+    /// would stay out of sync until the next foreground cycle, with
+    /// no logs to point at the cause. The branches below preserve
+    /// that fail-soft behavior (the sync push already succeeded;
+    /// crashing here would only lose diagnostics) but emit a warning
+    /// for every store that wasn't reloaded so the situation is
+    /// observable in Console.app and TestFlight crash reports.
     private func reloadStores() async {
-        await transactionStore?.load()
-        await categoryStore?.reloadFromDB()
-        await friendStore?.load()
-        await receiptItemStore?.load()
+        if let transactionStore {
+            await transactionStore.load()
+        } else {
+            print("SyncManager.reloadStores: transactionStore is nil — local cache not refreshed; next foreground will reconcile")
+        }
+        if let categoryStore {
+            await categoryStore.reloadFromDB()
+        } else {
+            print("SyncManager.reloadStores: categoryStore is nil — local cache not refreshed; next foreground will reconcile")
+        }
+        if let friendStore {
+            await friendStore.load()
+        } else {
+            print("SyncManager.reloadStores: friendStore is nil — local cache not refreshed; next foreground will reconcile")
+        }
+        if let receiptItemStore {
+            await receiptItemStore.load()
+        } else {
+            print("SyncManager.reloadStores: receiptItemStore is nil — local cache not refreshed; next foreground will reconcile")
+        }
     }
 }
 

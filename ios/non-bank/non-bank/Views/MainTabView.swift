@@ -250,11 +250,32 @@ struct MainTabView: View {
             }
         }
         // ─── Share-link routing ─────────────────────────────────────
-        // Coordinator parks decoded payloads in `pendingPayload`. When
-        // the transaction store finishes loading (so we have data to
-        // classify against), kick off routing.
-        .onChange(of: shareLinkCoordinator.pendingPayload) { newValue in
-            if let payload = newValue {
+        // `.onOpenURL` on the app root fires very early — typically
+        // while `RootView` is still on the splash screen (1.5 s) and
+        // MainTabView hasn't mounted yet. A plain `.onChange(of:
+        // pendingPayload)` observer would miss this because SwiftUI's
+        // `onChange` only fires on subsequent transitions, never on
+        // the initial value at attach time. Friends opening a link
+        // from a cold start would see the app launch but the
+        // transaction would never save.
+        //
+        // `.task(id:)` covers both cases:
+        //   • On mount, runs the body with the current `pendingPayload.id`
+        //     — catches cold-start where the payload was already parked.
+        //   • Re-runs when the id rotates — covers warm-start re-taps
+        //     and a second link arriving while one is mid-route.
+        //
+        // The body waits for `transactionStore.hasLoadedOnce` before
+        // classifying so the receiver's full history is in scope. A
+        // cold-start re-import of an already-known `syncID` would
+        // otherwise misclassify as "new create" and duplicate the row.
+        .task(id: shareLinkCoordinator.pendingPayload?.id) {
+            guard shareLinkCoordinator.pendingPayload != nil else { return }
+            while !transactionStore.hasLoadedOnce {
+                try? await Task.sleep(for: .milliseconds(50))
+                if Task.isCancelled { return }
+            }
+            if let payload = shareLinkCoordinator.pendingPayload {
                 shareLinkCoordinator.startRouting(payload, in: transactionStore.transactions)
             }
         }

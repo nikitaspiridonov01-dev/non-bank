@@ -7,10 +7,28 @@ struct DebtSummaryView: View {
     @EnvironmentObject var currencyStore: CurrencyStore
     @EnvironmentObject var friendStore: FriendStore
     @EnvironmentObject var categoryStore: CategoryStore
+    @EnvironmentObject var receiptItemStore: ReceiptItemStore
 
     @State private var selectedTransaction: Transaction? = nil
     @State private var showTransactionDetail: Bool = false
     @State private var editingTransaction: Transaction? = nil
+
+    /// True when the currently-presented detail sheet has a backing
+    /// transaction that's still a split. Goes false when the user
+    /// edits the transaction to remove its split (Pay for yourself /
+    /// any non-split mode) and saves — used as a trigger to close
+    /// the `.debts` detail sheet, since the breakdown-heavy layout
+    /// has nothing left to show without `splitInfo`. The view falls
+    /// back to the parent list (where the row also disappears because
+    /// it's no longer a split) and the user can find the regular
+    /// card in Home.
+    private var selectedTransactionIsSplit: Bool {
+        guard let selected = selectedTransaction,
+              let tx = transactionStore.transactions.first(where: { $0.id == selected.id }) else {
+            return false
+        }
+        return tx.splitInfo != nil
+    }
     /// Active group filter. `nil` = all groups.
     @State private var selectedGroup: String? = nil
     /// Drives the empty-state CTA's create-split sheet. Stays local to
@@ -74,15 +92,36 @@ struct DebtSummaryView: View {
         TransactionFilterService.groupByDay(pastSplitTransactions)
     }
 
+    /// True when the user has no past splits at all and no
+    /// outstanding debts — the whole page is empty and we should
+    /// show a centred empty state instead of an almost-blank
+    /// ScrollView with a top-pinned cat.
+    private var isFullyEmpty: Bool {
+        groupedTransactions.isEmpty && summary.rows.isEmpty
+    }
+
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    headerTitle
-                    groupsChipBar
-                    debtsSection
-                    transactionsSection
-                    Spacer().frame(height: 40)
+            Group {
+                if !transactionStore.hasLoadedOnce && isFullyEmpty {
+                    // Cold-launch skeleton instead of the empty
+                    // "no splits yet" placeholder. The all-debts
+                    // sheet is sometimes opened immediately after
+                    // a fresh launch (deep link from a notification);
+                    // showing the skeleton bridges the SQLite fetch.
+                    SkeletonTransactionList(rowCount: 4)
+                } else if isFullyEmpty {
+                    emptyPlaceholder
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            headerTitle
+                            groupsChipBar
+                            debtsSection
+                            transactionsSection
+                            Spacer().frame(height: 40)
+                        }
+                    }
                 }
             }
             .background(SplitPageBackground())
@@ -103,6 +142,7 @@ struct DebtSummaryView: View {
                         .environmentObject(currencyStore)
                         .environmentObject(friendStore)
                         .environmentObject(categoryStore)
+                        .environmentObject(receiptItemStore)
                 } else {
                     // Defensive: friend record is gone from FriendStore
                     // but transactions still reference the ID (legacy
@@ -119,7 +159,7 @@ struct DebtSummaryView: View {
             .sheet(isPresented: $showCreateSplit) {
                 CreateTransactionModal(
                     isPresented: $showCreateSplit,
-                    initialTab: .split
+                    autoOpenSplitFlow: true
                 )
                 .environmentObject(categoryStore)
                 .environmentObject(transactionStore)
@@ -157,6 +197,7 @@ struct DebtSummaryView: View {
                     .environmentObject(transactionStore)
                     .environmentObject(friendStore)
                     .environmentObject(currencyStore)
+                    .environmentObject(receiptItemStore)
                     .sheet(item: $editingTransaction) { editTx in
                         CreateTransactionModal(
                             isPresented: Binding(
@@ -178,6 +219,18 @@ struct DebtSummaryView: View {
         // FriendDetailView is pushed onto this NavigationStack and
         // inherits the same context.
         .colorContext(.split)
+        // Close the detail sheet when its backing transaction stops
+        // being a split (most often: user edited it to "Pay for
+        // yourself" and saved). Without this, `TransactionDetailView`
+        // with `source: .debts` re-renders with `splitInfo == nil`,
+        // hiding the breakdown / split card and leaving an almost-
+        // empty sheet on screen.
+        .onChange(of: selectedTransactionIsSplit) { isSplit in
+            if !isSplit && showTransactionDetail {
+                showTransactionDetail = false
+                selectedTransaction = nil
+            }
+        }
     }
 
     // MARK: - Header
@@ -357,22 +410,20 @@ struct DebtSummaryView: View {
 
     // MARK: - Transactions Section
 
-    @ViewBuilder
-    private var transactionsSection: some View {
-        if groupedTransactions.isEmpty {
-            // Whole DebtSummary is empty (no debts, no transactions).
-            // Sleeping cat in the Split (lavender) tint anchors it to
-            // the Split sub-palette; copy explains what would land
-            // here once the user splits something.
+    /// Centred empty placeholder for when the page has no debts and no
+    /// past splits. Matches the Reminders / Home empty-state pattern:
+    /// `.standard` size figure, GeometryReader + `.position` for
+    /// reliable visual centring inside a NavigationStack child.
+    private var emptyPlaceholder: some View {
+        GeometryReader { geo in
             VStack(spacing: AppSpacing.md) {
-                Spacer().frame(height: 60)
-                SleepingCatIllustration(tint: .split, size: .hero)
+                SleepingCatIllustration(tint: .split, size: .standard)
                 Text("Nothing to settle yet")
-                    .font(AppFonts.subhead)
-                    .foregroundColor(AppColors.textPrimary)
+                    .font(AppFonts.labelPrimary)
+                    .foregroundColor(AppColors.textSecondary)
                 Text("Split a transaction with a friend and it will appear here.")
                     .font(AppFonts.caption)
-                    .foregroundColor(AppColors.textSecondary)
+                    .foregroundColor(AppColors.textTertiary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, AppSpacing.xxxl)
                 // Lavender CTA to match the Split sub-palette this view
@@ -388,9 +439,21 @@ struct DebtSummaryView: View {
                     }
                     .foregroundColor(AppColors.splitAccent)
                 }
-                Spacer()
             }
             .frame(maxWidth: .infinity)
+            .position(x: geo.size.width / 2, y: geo.size.height / 2)
+        }
+    }
+
+    @ViewBuilder
+    private var transactionsSection: some View {
+        if groupedTransactions.isEmpty {
+            // Reachable when the user has zero past splits but still
+            // has open debts (rare — a transaction would normally show
+            // both). The fully-empty branch is handled at body level
+            // by `emptyPlaceholder`; this branch only renders when
+            // `summary.rows` is non-empty above.
+            EmptyView()
         } else {
             LazyVStack(spacing: 0, pinnedViews: []) {
                 ForEach(groupedTransactions, id: \.date) { group in
@@ -562,15 +625,31 @@ struct GroupChip: View {
 
     var body: some View {
         Button(action: action) {
-            Text(label)
-                .font(AppFonts.labelCaption)
-                .foregroundColor(isActive ? AppColors.textOnAccent : AppColors.textPrimary)
-                .padding(.horizontal, AppSpacing.md)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule().fill(isActive ? colorContext.accent : AppColors.backgroundChip)
-                )
+            chipContent
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var chipContent: some View {
+        let labelText = Text(label)
+            .font(AppFonts.labelCaption)
+            .foregroundColor(isActive ? AppColors.textOnAccent : colorContext.accent)
+            .padding(.horizontal, AppSpacing.md)
+            .padding(.vertical, 6)
+
+        if isActive {
+            labelText.background(Capsule().fill(colorContext.accent))
+        } else {
+            // Borderless tinted capsule — matches the chip styling on
+            // the Profile / Friends list (which uses fill-only, no
+            // outline) so both surfaces feel like the same component.
+            // Earlier `.glassEffect` and `.stroke` variants both added
+            // their own visual edge that didn't fit the rest of the
+            // design system.
+            labelText.background(
+                Capsule().fill(colorContext.accent.opacity(0.15))
+            )
+        }
     }
 }

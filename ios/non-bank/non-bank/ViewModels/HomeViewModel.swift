@@ -48,8 +48,16 @@ class HomeViewModel: ObservableObject {
         from allTransactions: [Transaction],
         resolveCategory: @escaping (Transaction) -> String
     ) -> [Transaction] {
+        // Defensive double-filter: callers should already be passing
+        // `transactionStore.homeTransactions` (past + non-parent), but
+        // we re-apply the future cut here so any future-dated row that
+        // slips through an import / sync / share path can't surface on
+        // Home — it stays out of sight until its `date` becomes the
+        // present, at which point the same filter lets it through.
+        let now = Date()
+        let pastOnly = allTransactions.filter { $0.date <= now }
         let dateFiltered = TransactionFilterService.filterByDate(
-            transactions: allTransactions, filter: activeDateFilter
+            transactions: pastOnly, filter: activeDateFilter
         )
         let criteria = TransactionFilterService.FilterCriteria(
             searchText: searchText,

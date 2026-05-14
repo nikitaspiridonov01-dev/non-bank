@@ -24,7 +24,21 @@ struct TransactionDetailView: View {
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var friendStore: FriendStore
     @EnvironmentObject var currencyStore: CurrencyStore
+    @EnvironmentObject var receiptItemStore: ReceiptItemStore
+    /// Needed so we can consume the queued post-create share prompt
+    /// when the user opens the share sheet from this view first. See
+    /// `consumeQueuedSharePromptIfMatching()` for the rationale.
+    @EnvironmentObject var router: NavigationRouter
+
+    /// Observed so the primary amount + title + include/exclude row
+    /// react live to the global "include potential expenses" toggle
+    /// and to the per-tx flag (which itself flips the row only after
+    /// the transaction reloads from the store, but the toggle row's
+    /// label needs the live setting to decide "what would this
+    /// transaction count for in insights?").
+    @ObservedObject private var insightsSettings = InsightsSettings.shared
     @State private var showDeleteAlert: Bool = false
+    @State private var showAllItems: Bool = false
     @State private var linkedReminder: Transaction? = nil
     /// Set when the user taps the "purchase in split" block on the home version
     /// of the card — opens the same transaction with the debts breakdown.
@@ -65,7 +79,24 @@ struct TransactionDetailView: View {
         }
     }
 
-    var transaction: Transaction
+    /// Snapshot captured at present time. Used solely as the syncID
+    /// anchor for `transaction` below — and as the fallback when the
+    /// store lookup misses (e.g. mid-delete). Don't read other fields
+    /// off this directly; they go stale the moment the user edits.
+    private let initialTransaction: Transaction
+
+    /// The live transaction. Resolved from the store on every render
+    /// so that an edit committed in `CreateTransactionModal` (which
+    /// writes to `transactionStore`) immediately propagates into this
+    /// card without the parent needing to re-present the sheet. Lookup
+    /// is by `syncID`, not `id`: `id` rotates through the Replace-
+    /// reminder flow's delete-then-insert, while `syncID` is preserved
+    /// as the logical-identity anchor.
+    private var transaction: Transaction {
+        transactionStore.transactions.first { $0.syncID == initialTransaction.syncID }
+            ?? initialTransaction
+    }
+
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
     var onClose: (() -> Void)?
@@ -108,8 +139,41 @@ struct TransactionDetailView: View {
             sharerID: UserIDService.currentID(),
             sharerName: UserProfileService.displayName(),
             friends: friendStore.friends,
-            category: category
+            category: category,
+            // Walk to the parent reminder so child-occurrences ship
+            // their parent's recurring rule. Without this, every spawn
+            // looks like a one-off on the recipient and the recurring
+            // badge silently disappears.
+            repeatInterval: resolvedRepeatInterval
         )
+    }
+
+    /// Builds the `UIActivityItemSource` the share sheet will see.
+    /// Bundles the URL + a pre-rendered human summary (title, items,
+    /// recurring info, total) so messenger destinations get rich text
+    /// while plain destinations (AirDrop/Copy/Files) get just the URL.
+    /// All inputs resolved up-front from the same env stores the rest
+    /// of this view uses — receipt items in particular live outside
+    /// the URL (variant D), so this is the only path by which the
+    /// receiver sees the line-item breakdown at all.
+    private func shareItemSource(for url: URL) -> TransactionShareItemSource {
+        let context = TransactionShareSummary.Context(
+            title: transaction.title,
+            categoryEmoji: displayEmoji,
+            totalAmount: transaction.splitInfo?.totalAmount ?? transaction.amount,
+            currency: transaction.currency,
+            isExpense: transaction.type != .income,
+            date: transaction.date,
+            sharerName: UserProfileService.displayName(),
+            items: receiptItems,
+            // Same parent-walking trick as `buildShareURL` — children
+            // of a recurring reminder don't carry the rule themselves,
+            // we pull it from their parent so the share text labels
+            // them as recurring just like the URL preview does.
+            recurring: resolvedRepeatInterval
+        )
+        let summary = TransactionShareSummary.build(context)
+        return TransactionShareItemSource(url: url, summaryText: summary)
     }
 
     /// Tap handler for the Share button. Decides whether to ask for the
@@ -118,6 +182,7 @@ struct TransactionDetailView: View {
         if UserProfileService.isNameSet {
             if let url = buildShareURL() {
                 shareFlow = .share(url)
+                consumeQueuedSharePromptIfMatching()
             }
         } else {
             shareFlow = .askName(initial: "")
@@ -140,6 +205,33 @@ struct TransactionDetailView: View {
         // SwiftUI sees a single-item swap (askName → share) and
         // smoothly transitions instead of double-presenting.
         shareFlow = .share(url)
+        consumeQueuedSharePromptIfMatching()
+    }
+
+    /// Clears the queued post-create `ShareSplitPromptSheet` if it's
+    /// queued for *this* transaction.
+    ///
+    /// Why this exists: `CreateTransactionModal` queues a share-prompt
+    /// nudge (`router.promptSplitShare(syncID:)`) after saving a new
+    /// split. It fires from `MainTabView` once the modal animation
+    /// completes. But if the user happens to be quick — opens the
+    /// freshly-saved transaction's detail card and taps Share from
+    /// there before the nudge presents (or while it's still queued
+    /// behind the detail sheet) — they'll see the "Split saved"
+    /// prompt redundantly the moment they leave the detail screen,
+    /// even though they already shared. Consuming the queue once the
+    /// share-activity sheet is actually about to present avoids that
+    /// double-prompt without affecting anyone who *doesn't* share
+    /// from detail (the queued nudge still fires for them normally).
+    ///
+    /// We deliberately call this only on the transition to
+    /// `.share(url)` — not on `.askName`. If the user opens the name
+    /// gate and then cancels, they haven't actually shared, so the
+    /// queued nudge is still valuable.
+    private func consumeQueuedSharePromptIfMatching() {
+        if router.pendingSplitShareSyncID == transaction.syncID {
+            router.dismissSplitSharePrompt()
+        }
     }
 
     /// Symmetric to `onTapSplitInstead`: when the parent is a reminder card and
@@ -148,6 +240,39 @@ struct TransactionDetailView: View {
     /// user taps the recurring badge.
     var onTapRecurringInstead: (() -> Void)? = nil
     @State private var isCollapsedTitleVisible: Bool = false
+
+    init(
+        transaction: Transaction,
+        onEdit: (() -> Void)? = nil,
+        onDelete: (() -> Void)? = nil,
+        onClose: (() -> Void)? = nil,
+        source: TransactionDetailSource = .home,
+        onTapSplitInstead: (() -> Void)? = nil,
+        onTapRecurringInstead: (() -> Void)? = nil
+    ) {
+        self.initialTransaction = transaction
+        self.onEdit = onEdit
+        self.onDelete = onDelete
+        self.onClose = onClose
+        self.source = source
+        self.onTapSplitInstead = onTapSplitInstead
+        self.onTapRecurringInstead = onTapRecurringInstead
+    }
+
+    /// Whether the nested split-breakdown sheet's transaction is still
+    /// a split. When the user edits via `editingFromBreakdown` and
+    /// switches to "Pay for yourself" (or otherwise drops `splitInfo`),
+    /// the breakdown-style detail has no shares / settlement to show —
+    /// the body gates out into a near-empty card. Mirrors the same
+    /// auto-close guard that `DebtSummaryView` and `FriendDetailView`
+    /// already apply to their own `.debts` detail sheets.
+    private var splitBreakdownTransactionIsSplit: Bool {
+        guard let selected = splitBreakdownTransaction,
+              let tx = transactionStore.transactions.first(where: { $0.syncID == selected.syncID }) else {
+            return false
+        }
+        return tx.splitInfo != nil
+    }
 
     /// Safe emoji lookup — falls back to transaction emoji if categoryStore isn't ready
     private var displayEmoji: String {
@@ -169,7 +294,10 @@ struct TransactionDetailView: View {
             case .notInvolved, .settled: return 0
             }
         }
-        return transaction.amount
+        // Same rule the row + reminder views use: include-potential mode
+        // pushes split rows to render their `myShare`; legacy mode shows
+        // the stored amount (== `paidByMe`).
+        return transaction.displayPrimaryAmount(includePotentialExpenses: insightsSettings.includePotentialExpenses)
     }
 
     private var formattedIntegerPart: String {
@@ -190,6 +318,15 @@ struct TransactionDetailView: View {
             case .notInvolved: return "You're not involved in this expense"
             case .settled:     return "Your share is settled"
             }
+        }
+        // In include-potential mode the primary amount is the user's
+        // share, so the label switches to "Your share" — same word the
+        // row's subtitle uses. Income splits don't exist per the spec,
+        // but if they ever do, fall through to the generic income copy.
+        if insightsSettings.includePotentialExpenses,
+           transaction.isSplit,
+           !transaction.isIncome {
+            return "Your share"
         }
         return transaction.isIncome ? "Your income" : "Your expense"
     }
@@ -251,7 +388,22 @@ struct TransactionDetailView: View {
         }
         return transaction.date
     }
-    
+
+    private var receiptItems: [ReceiptItem] {
+        receiptItemStore.items(forTransactionID: transaction.id)
+    }
+
+    /// Sub-app palette to forward into the items sheet. Mirrors the
+    /// branching this view's own `presentationBackground` already does
+    /// (lines ~632-647) so the sheet matches the parent atmosphere
+    /// rather than landing as a dark slab on a lavender / warm-red
+    /// detail card.
+    private var receiptSheetContext: ColorContext {
+        if source.isReminder { return .reminders }
+        if source == .debts { return .split }
+        return .standard
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -369,6 +521,29 @@ struct TransactionDetailView: View {
                                     .font(AppFonts.bodyLarge)
                                     .foregroundColor(AppColors.textSecondary)
                             }
+                            // Long-press the hero amount → native
+                            // copy menu. The clipboard payload is
+                            // the unsigned "<value> <currency>"
+                            // string ("100.50 AMD") rather than the
+                            // signed form: the sign is implicit from
+                            // the income/expense type on this view,
+                            // and pasting back into the create
+                            // screen's amount field stays clean
+                            // (the parser strips currency codes
+                            // either way). `contentShape` ensures
+                            // the press registers even on the gaps
+                            // between glyphs.
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button {
+                                    let int = NumberFormatting.integerPart(primaryDisplayAmount)
+                                    let dec = NumberFormatting.decimalPartIfAny(primaryDisplayAmount)
+                                    UIPasteboard.general.string =
+                                        "\(int)\(dec) \(transaction.currency)"
+                                } label: {
+                                    Label("Copy amount", systemImage: "doc.on.doc")
+                                }
+                            }
                         }
 
                         // Split card: "of X USD / purchase in split →"
@@ -412,6 +587,27 @@ struct TransactionDetailView: View {
                                 .font(.body)
                         }
                     }
+                    // Insights toggle sits directly under whichever
+                    // timing block was rendered above — the
+                    // occurrences timeline for reminders, the
+                    // "Counted on" date for past transactions. The
+                    // user just reasoned about "when this row counts"
+                    // while reading the dates, so the toggle that
+                    // controls *whether* it counts belongs adjacent.
+                    // Was previously split into two placements
+                    // (reminders here, past-tx down by Delete); the
+                    // past-tx placement felt disconnected — the user
+                    // had to scroll past Notes to find a control that
+                    // semantically belonged with the date. Negative
+                    // top padding tightens the default VStack `xxl`
+                    // (24pt) to ~12pt so the block reads as
+                    // "attached to" the timing block above rather
+                    // than as a standalone section.
+                    if showsInsightsToggleRow {
+                        insightsStatusBlock
+                            .padding(.top, -AppSpacing.md)
+                    }
+                    receiptItemsSection
                     if let desc = transaction.description, !desc.isEmpty {
                         let notesContent: AttributedString = {
                             if let parsed = try? AttributedString(markdown: desc) {
@@ -553,6 +749,7 @@ struct TransactionDetailView: View {
                 .environmentObject(transactionStore)
                 .environmentObject(friendStore)
                 .environmentObject(currencyStore)
+                .environmentObject(receiptItemStore)
                 .sheet(item: $editingFromLinkedReminder) { editTx in
                     CreateTransactionModal(
                         isPresented: Binding(
@@ -596,6 +793,7 @@ struct TransactionDetailView: View {
                     .environmentObject(transactionStore)
                     .environmentObject(friendStore)
                     .environmentObject(currencyStore)
+                    .environmentObject(receiptItemStore)
                     .sheet(item: $editingFromBreakdown) { editTx in
                         CreateTransactionModal(
                             isPresented: Binding(
@@ -610,6 +808,31 @@ struct TransactionDetailView: View {
                         .environmentObject(friendStore)
                     }
                 }
+            }
+            // Auto-close the nested split-breakdown sheet the moment its
+            // backing transaction stops being a split (most often: user
+            // edited via `editingFromBreakdown` and switched to "Pay for
+            // yourself"). Without this the `source: .debts` detail
+            // re-renders with `splitInfo == nil` and all breakdown
+            // sections gate out, leaving a near-empty card stranded on
+            // top of the home detail.
+            .onChange(of: splitBreakdownTransactionIsSplit) { isSplit in
+                if !isSplit && splitBreakdownTransaction != nil {
+                    splitBreakdownTransaction = nil
+                }
+            }
+            .sheet(isPresented: $showAllItems) {
+                ReceiptItemsReadOnlySheet(
+                    items: receiptItems,
+                    currency: transaction.currency,
+                    // Carry this view's sub-app palette through to the
+                    // sheet — `.sheet(isPresented:)` content doesn't
+                    // inherit `.colorContext` from the env, and a
+                    // dark-grey tray landing on top of the lavender or
+                    // warm-red detail card is the dissonance the user
+                    // pointed out.
+                    colorContext: receiptSheetContext
+                )
             }
         }
         .presentationDragIndicator(.visible)
@@ -671,7 +894,16 @@ struct TransactionDetailView: View {
                     handleProfileNameSaved(newName)
                 }
             case .share(let url):
-                ShareActivityView(items: [url])
+                // Use a `UIActivityItemSource` so messengers / mail
+                // get a rich human summary (title, items list,
+                // recurring info) appended to the URL, while
+                // AirDrop / Copy / Files keep receiving just the
+                // bare URL. The summary is built from the same
+                // stores the rest of this view reads — items are
+                // not in the URL itself (variant D), so this share
+                // text is the only path by which the receiver sees
+                // them at all.
+                ShareActivityView(items: [shareItemSource(for: url)])
             }
         }
     }
@@ -703,6 +935,91 @@ struct TransactionDetailView: View {
         return "This action cannot be undone."
     }
     
+    // MARK: - Insights toggle
+
+    /// Hide on the debts breakdown card — that surface is focused on
+    /// the split settlement, not the kind of meta-toggle this row
+    /// represents. Every other entry point (home, reminders, linked
+    /// reminder) shows it.
+    private var showsInsightsToggleRow: Bool {
+        source != .debts
+    }
+
+    /// Bordered insights status card — uniform shape for both past
+    /// transactions and reminders. Eye glyph on the leading edge,
+    /// state title (`Counted in insights` / `Hidden from insights`),
+    /// and a context-aware description that adapts copy to past-tx,
+    /// recurring parent, or one-off future. Whole card is tappable.
+    @ViewBuilder
+    private var insightsStatusBlock: some View {
+        let excluded = transaction.excludedFromInsights
+        Button(action: handleInsightsToggle) {
+            HStack(alignment: .top, spacing: AppSpacing.sm) {
+                Image(systemName: excluded ? "eye.slash" : "eye")
+                    .font(AppFonts.body)
+                    .foregroundColor(excluded ? AppColors.textTertiary : AppColors.textPrimary)
+                    // Lock both dimensions — `eye` and `eye.slash`
+                    // have different intrinsic sizes (the slash adds
+                    // visual height), so without a fixed frame the
+                    // icon would jump on swap. The 22×22 box matches
+                    // the body-font cap height comfortably.
+                    .frame(width: 22, height: 22)
+                    .contentTransition(.symbolEffect(.replace))
+                    .animation(.easeInOut(duration: 0.18), value: excluded)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(excluded ? "Hidden from insights" : "Counted in insights")
+                        .font(AppFonts.bodySmall)
+                        .foregroundColor(AppColors.textPrimary)
+                    Text(insightsStatusDescription)
+                        .font(AppFonts.metaText)
+                        .foregroundColor(AppColors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: AppRadius.medium)
+                    .stroke(AppColors.border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Description text under the status title. Copy adapts to:
+    ///   - Past tx: a "tap to flip" action hint (since flipping has
+    ///     an immediate, observable effect on totals).
+    ///   - Recurring parent reminder: short note that the flag only
+    ///     touches new entries.
+    ///   - One-off future reminder: short note that the flag takes
+    ///     effect when the transaction is recorded.
+    private var insightsStatusDescription: String {
+        if source.isReminder {
+            if transaction.isRecurringParent {
+                return "Affects future records only."
+            }
+            return "Takes effect when recorded."
+        }
+        return transaction.excludedFromInsights
+            ? "Hidden from totals and insights calculation. Tap to show."
+            : "Shows in your totals and insights calculation. Tap to hide."
+    }
+
+    /// Flip the flag, persist via `transactionStore.update`, fire a
+    /// light haptic so the user feels the change. The detail view's
+    /// `transaction` accessor resolves the latest record from the
+    /// store on every render, so the row re-renders with the updated
+    /// label once the write lands.
+    private func handleInsightsToggle() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let next = !transaction.excludedFromInsights
+        transactionStore.update(transaction.settingExcludedFromInsights(next))
+    }
+
     // MARK: - Split Section
 
     @ViewBuilder
@@ -778,7 +1095,92 @@ struct TransactionDetailView: View {
         return "\(intPart).\(String(format: "%02d", cents))"
     }
 
+    // MARK: - Receipt items section
 
+    @ViewBuilder
+    private var receiptItemsSection: some View {
+        if !receiptItems.isEmpty {
+            // When there's a "Show all" affordance the whole block — header,
+            // preview rows, and the link itself — acts as one tap target so
+            // the user doesn't have to thread the needle on the small text
+            // link. The threshold is `>= 2` rather than `> 2`: even when
+            // both items are already visible inline, the sheet's per-row
+            // detail (qty × unit price, kind icon variants) gives the
+            // tap-through value beyond "see more rows". The single-item
+            // case stays non-interactive — there's literally nothing more
+            // to reveal there.
+            if receiptItems.count >= 2 {
+                Button {
+                    showAllItems = true
+                } label: {
+                    receiptItemsContent
+                }
+                .buttonStyle(.plain)
+            } else {
+                receiptItemsContent
+            }
+        }
+    }
+
+    private var receiptItemsContent: some View {
+        VStack(alignment: .leading, spacing: AppSpacing.md) {
+            // Header row: "Items" on the left, "Show all (N)" on the
+            // right when there's something to tap through to. The
+            // whole VStack is wrapped in a Button outside, so tapping
+            // anywhere on the block opens the full sheet — the
+            // right-side affordance is just a visual hint, not a
+            // separate tap target.
+            HStack(alignment: .firstTextBaseline) {
+                Text("Items")
+                    .font(.subheadline)
+                    .foregroundColor(AppColors.textSecondary)
+                Spacer()
+                if receiptItems.count >= 2 {
+                    HStack(spacing: 3) {
+                        Text("Show all")
+                            .font(AppFonts.metaText)
+                        Image(systemName: "arrow.up.right")
+                            .font(AppFonts.iconSmall)
+                    }
+                    .foregroundColor(AppColors.textPrimary)
+                }
+            }
+            VStack(spacing: AppSpacing.xs) {
+                ForEach(Array(receiptItems.prefix(2))) { item in
+                    receiptItemRow(item)
+                }
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func receiptItemRow(_ item: ReceiptItem) -> some View {
+        let kind = item.kind
+        let isDiscount = kind == .discount
+        return HStack(spacing: AppSpacing.md) {
+            ReceiptItemKindIcon(kind: kind)
+            Text(item.name)
+                .font(AppFonts.body)
+                .foregroundColor(AppColors.textPrimary)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: AppSpacing.xxs) {
+                ReceiptItemAmountText(
+                    amount: item.lineTotal,
+                    currency: transaction.currency,
+                    isDiscount: isDiscount
+                )
+                if let qty = item.quantity, qty > 1, let price = item.price {
+                    Text("\(ReceiptItem.formatQuantity(qty)) × \(ReceiptItem.formatAmount(price)) \(transaction.currency)")
+                        .font(.caption)
+                        .foregroundColor(AppColors.textTertiary)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, AppSpacing.rowVertical)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+    }
 
     private func formattedDateTime(_ date: Date) -> String {
         let calendar = Calendar.current
@@ -1105,6 +1507,7 @@ struct TransactionDetailView_Previews: PreviewProvider {
         .environmentObject(TransactionStore())
         .environmentObject(FriendStore())
         .environmentObject(CurrencyStore())
+        .environmentObject(ReceiptItemStore())
     }
 }
 

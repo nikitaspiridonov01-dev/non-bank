@@ -28,6 +28,13 @@ import SwiftUI
 struct CategoryAmountRow: View {
     let row: CategoryAnalyticsService.CategoryTotal
     let currency: String
+    /// Pill background. Defaults to `insightRowFill` (the brighter
+    /// cream that pops above the `insightCard` surface inside cards).
+    /// On the detail screen there's no card wrapper, so the row sits
+    /// directly on `backgroundPrimary` — callers there pass
+    /// `backgroundElevated` so the pill reads as elevated against
+    /// the brighter page rather than blending into it.
+    var fill: Color = AppColors.insightRowFill
 
     var body: some View {
         HStack(alignment: .center, spacing: AppSpacing.md) {
@@ -50,7 +57,7 @@ struct CategoryAmountRow: View {
             .layoutPriority(1)
             .fixedSize(horizontal: true, vertical: false)
         }
-        .rowPill()
+        .rowPill(fill: fill)
     }
 
     // MARK: - Emoji tile

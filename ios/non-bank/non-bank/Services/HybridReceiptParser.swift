@@ -1,30 +1,46 @@
 import UIKit
 
-/// Combines the two on-device parsing strategies into a single flow with a
-/// confidence signal:
+/// Two-tier receipt parser, cloud-first by default:
 ///
-///  1. **Foundation Models** (Apple Intelligence) via `ReceiptParserService` —
-///     the high-quality path on supported devices.
-///  2. **OCR + regex line parser** (`ReceiptOCRService` + `ReceiptLineParser`)
-///     — deterministic fallback when Apple Intelligence is unavailable. Works
-///     on every device that runs Vision, but extracts only items (no store
-///     name / total / date).
+///  1. **Cloud** (`CloudReceiptParser`) — uploads image to our Cloudflare
+///     Worker which routes across 4 vision-LLM providers (Gemini, Groq,
+///     Cloudflare Workers AI, OpenRouter). Highest quality, also returns
+///     `suggestedCategory` and richer metadata.
+///  2. **OCR + regex** (`ReceiptOCRService` + `ReceiptColumnDetector`) —
+///     deterministic fallback. Works on every device, no network. Extracts
+///     items only — no store name / total / category.
 ///
-/// After Foundation Models succeeds we cross-check that the sum of item line
-/// totals matches the LLM's grand total within 1% (or 0.50, whichever is
-/// larger). A mismatch lowers confidence so the UI can surface the parsed
-/// items for review instead of silently saving them.
+/// Cloud is skipped automatically when (a) the user disabled it in Settings,
+/// (b) no backend URL is configured, or (c) the call site didn't construct a
+/// `CloudParseConfig`. In any of these cases we go straight to OCR — the
+/// caller doesn't have to branch.
+///
+/// On cloud success we cross-check `Σitems ≈ grandTotal` within 1%/0.50€.
+/// A mismatch downgrades confidence to `.medium` so the UI surfaces items
+/// for review instead of silently saving them.
+///
+/// Note: an earlier on-device tier using Apple Foundation Models lives in
+/// `ReceiptParserService.swift` but is no longer wired into this flow. The
+/// file is kept intact so the integration can be reinstated as an offline
+/// option later (e.g. for users who turn off the cloud toggle).
 actor HybridReceiptParser {
 
     enum Confidence: String, Sendable {
-        /// Foundation Models returned items AND `Σitems ≈ grandTotal`.
+        /// Cloud succeeded AND `Σitems ≈ grandTotal`.
         case high
-        /// Foundation Models returned items but totals diverge — needs
-        /// human review.
+        /// Cloud succeeded but totals diverge — needs human review.
         case medium
-        /// Foundation Models unavailable; used the regex fallback. Item
+        /// Cloud unavailable / disabled; used the regex fallback. Item
         /// extraction worked but there's no grand total to cross-check.
         case low
+    }
+
+    /// Where the items came from — surfaced in the review sheet so the user
+    /// knows whether they're looking at LLM output (worth scrutinising) or
+    /// deterministic OCR (already trustworthy at the line-item level).
+    enum Source: Sendable, Equatable {
+        case cloud(provider: String)
+        case ocrFallback
     }
 
     struct Result: Sendable {
@@ -33,55 +49,93 @@ actor HybridReceiptParser {
         /// True when `Σitems ≈ grandTotal` — only meaningful for `.high` /
         /// `.medium`. For `.low` (no grand total) defaults to `true`.
         let totalsMatch: Bool
+        let source: Source
     }
 
-    private let foundationModelsParser: ReceiptParserService
+    /// Built on the main actor by the caller (where `AISettings` and
+    /// `CategoryStore` live), then handed to the parse actor as an immutable
+    /// `Sendable` payload.
+    struct CloudParseConfig: Sendable {
+        let backendURL: URL
+        let categories: [CategoryHint]
+        let localeIdentifier: String?
+
+        struct CategoryHint: Sendable {
+            let name: String
+            let emoji: String?
+        }
+    }
+
+    private let cloud: CloudReceiptParser
     private let ocr: ReceiptOCRService
 
     init(
-        foundationModelsParser: ReceiptParserService = ReceiptParserService(),
+        cloud: CloudReceiptParser = CloudReceiptParser(),
         ocr: ReceiptOCRService = ReceiptOCRService()
     ) {
-        self.foundationModelsParser = foundationModelsParser
+        self.cloud = cloud
         self.ocr = ocr
     }
 
-    func parse(image: UIImage) async throws -> Result {
-        do {
-            let raw = try await foundationModelsParser.parseReceipt(from: image)
-            let cleaned = Self.postProcess(raw)
-            Self.logFMResult(raw: raw, cleaned: cleaned)
-            let match = Self.totalsMatch(in: cleaned)
-            return Result(
-                parsedReceipt: cleaned,
-                confidence: match ? .high : .medium,
-                totalsMatch: match
-            )
-        } catch ReceiptParserError.modelUnavailable {
-            return try await fallbackParse(image: image)
-        }
-    }
-
-    /// Surfaces *what FM emitted vs. what postProcess kept* so we can tell
-    /// whether a "no items detected" failure is FM hallucinating empty
-    /// output, or our keyword filter eating legitimate lines.
-    private static func logFMResult(raw: ParsedReceipt, cleaned: ParsedReceipt) {
-        #if DEBUG
-        let dropped = raw.items.count - cleaned.items.count
-        print("[HybridReceiptParser] FM: \(raw.items.count) raw items → \(cleaned.items.count) after postProcess (\(dropped) dropped)")
-        if dropped > 0 {
-            let keptNames = Set(cleaned.items.map(\.name))
-            for item in raw.items where !keptNames.contains(item.name) {
-                let verdict = ReceiptLineFilter.classify(item.name)
-                print("  ✗ dropped \"\(item.name)\" (\(item.lineTotal)) — \(verdict)")
+    func parse(
+        image: UIImage,
+        cloudConfig: CloudParseConfig? = nil
+    ) async throws -> Result {
+        let started = Date()
+        if let config = cloudConfig {
+            do {
+                return try await cloudParse(image: image, config: config, started: started)
+            } catch {
+                #if DEBUG
+                print("[HybridReceiptParser] cloud failed (\(error.localizedDescription)) — falling back to local OCR")
+                #endif
+                await Self.recordCloudError(error.localizedDescription)
+                // Don't rethrow — fall through to OCR. The Settings UI / pool
+                // hint surfaces the cloud-side error to the user separately.
             }
         }
-        #endif
+        return try await fallbackParse(image: image, started: started)
     }
 
-    // MARK: - Fallback (OCR + regex)
+    // MARK: - Cloud (Tier 0)
 
-    private func fallbackParse(image: UIImage) async throws -> Result {
+    private func cloudParse(
+        image: UIImage,
+        config: CloudParseConfig,
+        started: Date
+    ) async throws -> Result {
+        let cloudResult = try await cloud.parse(
+            image: image,
+            backendURL: config.backendURL,
+            categories: config.categories.map { ($0.name, $0.emoji) },
+            localeIdentifier: config.localeIdentifier
+        )
+
+        let cleaned = Self.postProcess(cloudResult.receipt)
+        let match = Self.totalsMatch(in: cleaned)
+
+        await Self.recordPoolStats(
+            remaining: cloudResult.poolRemaining,
+            low: cloudResult.poolLow
+        )
+        await Self.recordTelemetry(
+            tier: .cloud,
+            provider: cloudResult.provider,
+            receipt: cleaned,
+            startedAt: started
+        )
+
+        return Result(
+            parsedReceipt: cleaned,
+            confidence: match ? .high : .medium,
+            totalsMatch: match,
+            source: .cloud(provider: cloudResult.provider)
+        )
+    }
+
+    // MARK: - Fallback (Tier 1: OCR + regex)
+
+    private func fallbackParse(image: UIImage, started: Date) async throws -> Result {
         // Discard Vision lines below 0.3 confidence — they're typically
         // hallucinations on dirty receipts (smudges, low-contrast paper)
         // and just feed false positives to the parser downstream.
@@ -105,14 +159,28 @@ actor HybridReceiptParser {
             date: nil,
             items: receiptItems,
             totalAmount: nil,
-            currency: nil
+            currency: nil,
+            suggestedCategory: nil
         )
         // postProcess is a defence-in-depth: ColumnDetector already filters
         // most non-product rows, but the keyword filter catches anything
         // that slipped through (e.g. an item line that happens to contain
         // a discount keyword).
         let cleaned = Self.postProcess(receipt)
-        return Result(parsedReceipt: cleaned, confidence: .low, totalsMatch: true)
+
+        await Self.recordTelemetry(
+            tier: .ocrFallback,
+            provider: nil,
+            receipt: cleaned,
+            startedAt: started
+        )
+
+        return Result(
+            parsedReceipt: cleaned,
+            confidence: .low,
+            totalsMatch: true,
+            source: .ocrFallback
+        )
     }
 
     // MARK: - Diagnostics
@@ -156,6 +224,38 @@ actor HybridReceiptParser {
     }
     #endif
 
+    // MARK: - Telemetry & pool-stats hops
+
+    /// Hops to the main actor to write the pool snapshot. We do this in a
+    /// helper so callers can `await` once with no other ceremony.
+    @MainActor
+    private static func recordPoolStats(remaining: Int, low: Bool) {
+        AISettings.shared.recordPoolStats(remaining: remaining, low: low)
+    }
+
+    @MainActor
+    private static func recordCloudError(_ message: String) {
+        AISettings.shared.recordCloudError(message)
+    }
+
+    @MainActor
+    private static func recordTelemetry(
+        tier: ParseTelemetry.Tier,
+        provider: String?,
+        receipt: ParsedReceipt,
+        startedAt: Date
+    ) {
+        let latencyMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+        let event = ParseTelemetry.Event(
+            tier: tier,
+            provider: provider,
+            itemCount: receipt.items.count,
+            hadTotal: (receipt.totalAmount ?? 0) > 0,
+            latencyMs: latencyMs
+        )
+        ParseTelemetry.shared.record(event)
+    }
+
     // MARK: - Cross-check
 
     /// True when the sum of `items[].lineTotal` matches `grandTotal` within
@@ -173,17 +273,17 @@ actor HybridReceiptParser {
 
     // MARK: - Post-processing
 
-    /// Apply Phase-3.5 cleaning passes that work the same on Foundation
-    /// Models output and on the regex fallback path:
+    /// Apply Phase-3.5 cleaning passes that work the same on cloud LLM
+    /// output and on the regex fallback path:
     ///
     /// 1. **Filter** items whose name matches the multi-language non-product
     ///    blacklist (`Total`, `VAT`, `Card *1234`, `Tip`, `Service charge`,
-    ///    etc.). LLM still hallucinates these on long receipts; regex parser
+    ///    etc.). LLMs still hallucinate these on long receipts; regex parser
     ///    also picks them up because they look item-shaped.
     ///
     /// 2. **Normalize discounts** — items whose name matches a discount
     ///    keyword are forced negative (`-|lineTotal|`) regardless of which
-    ///    sign FM emitted. This is so when a model outputs `Discount: 5.00`
+    ///    sign the model emitted. So when a model outputs `Discount: 5.00`
     ///    we still subtract from the sum.
     ///
     /// 3. **Prune** items that push `Σitems` above `grandTotal`. We greedily
@@ -194,7 +294,13 @@ actor HybridReceiptParser {
     static func postProcess(_ parsed: ParsedReceipt) -> ParsedReceipt {
         let filteredItems = parsed.items.compactMap { item -> ReceiptItem? in
             switch ReceiptLineFilter.classify(item.name) {
-            case .keep:
+            case .keep, .fee, .tax, .tip:
+                // Fee / tax / tip rows are kept (positive sign — they
+                // ADD to the total) so the split-by-items calculator can
+                // distribute them proportionally. `ReceiptItem.kind`
+                // re-derives the classification via the same
+                // `ReceiptLineFilter.classify` call, so we don't need to
+                // stash the verdict on the row itself.
                 return item
             case .discount:
                 return Self.normalizeDiscount(item)
@@ -202,8 +308,15 @@ actor HybridReceiptParser {
                 return nil
             }
         }
+        // Defense-in-depth: even with backend `sanitizeDiscountSemantics`
+        // and the prompt's "single line is never a discount" rule, the LLM
+        // very occasionally still emits a one-line subscription receipt
+        // with a negative total (e.g. OPENAI *CHATGPT SUBSCR as -20 USD).
+        // Flip such cases here so the iOS UI never shows the nonsense
+        // state regardless of which provider answered.
+        let signCorrected = correctNonsensicalDiscounts(filteredItems)
         let prunedItems = pruneOverstuffedItems(
-            filteredItems,
+            signCorrected,
             grandTotal: parsed.totalAmount
         )
         return ParsedReceipt(
@@ -211,18 +324,58 @@ actor HybridReceiptParser {
             date: parsed.date,
             items: prunedItems,
             totalAmount: parsed.totalAmount,
-            currency: parsed.currency
+            currency: parsed.currency,
+            suggestedCategory: parsed.suggestedCategory
+        )
+    }
+
+    /// Mirrors the backend's `sanitizeDiscountSemantics`: enforces the
+    /// invariant "a receipt where every line is negative cannot be all
+    /// discount". Two cases handled:
+    ///
+    ///   • single item with negative total → flip to positive
+    ///   • all items negative → flip every line
+    ///
+    /// We don't touch a multi-item receipt that has at least one positive
+    /// line: there a negative item is a legitimate deduction (the prompt's
+    /// keyword filter already classified it correctly upstream).
+    private static func correctNonsensicalDiscounts(_ items: [ReceiptItem]) -> [ReceiptItem] {
+        guard !items.isEmpty else { return items }
+        if items.count == 1 {
+            return items[0].lineTotal < 0 ? [flipSign(items[0])] : items
+        }
+        let allNegative = items.allSatisfy { $0.lineTotal < 0 }
+        if allNegative {
+            return items.map(flipSign)
+        }
+        return items
+    }
+
+    /// Returns the item with `total` and `price` flipped to their absolute
+    /// values, preserving every persistence field. Used by the discount-
+    /// sanity guard above.
+    private static func flipSign(_ item: ReceiptItem) -> ReceiptItem {
+        ReceiptItem(
+            name: item.name,
+            quantity: item.quantity,
+            price: item.price.map(abs),
+            total: item.total.map(abs),
+            persistedID: item.persistedID,
+            transactionID: item.transactionID,
+            syncID: item.syncID,
+            position: item.position,
+            lastModified: item.lastModified
         )
     }
 
     /// Returns the item with its `total` and `price` forced negative so the
-    /// downstream prune/sum maths treats it as a deduction. FM models often
+    /// downstream prune/sum maths treats it as a deduction. LLM models often
     /// emit discounts with a positive sign and a `-` prefix in the name —
     /// we don't trust the sign, only the keyword.
     private static func normalizeDiscount(_ item: ReceiptItem) -> ReceiptItem {
         let absTotal = abs(item.total ?? 0)
         let absPrice = abs(item.price ?? 0)
-        // If both are zero (e.g., FM gave only a name) we still keep the
+        // If both are zero (e.g., model gave only a name) we still keep the
         // item but with zero values — the user can fix it in review.
         return ReceiptItem(
             name: item.name,
@@ -274,5 +427,31 @@ actor HybridReceiptParser {
             remaining.remove(at: victimIndex)
         }
         return remaining
+    }
+}
+
+// MARK: - Convenience
+
+extension HybridReceiptParser.CloudParseConfig {
+    /// Pulls the URL from `AISettings`, the categories from the supplied
+    /// store, and the locale from `Locale.current`. Returns `nil` when cloud
+    /// is disabled or unconfigured — callers pass that `nil` straight into
+    /// `parse(image:cloudConfig:)` for the local-only path.
+    @MainActor
+    static func current(categoryStore: CategoryStore) -> HybridReceiptParser.CloudParseConfig? {
+        guard let url = AISettings.shared.resolvedBackendURL else { return nil }
+        // Send only the reserved category set (General + 18 defaults).
+        // The LLM picks from this stable baseline so receipt scans
+        // never auto-tag transactions with the user's niche custom
+        // categories; the user's "most frequent" default logic still
+        // takes over for the manual flow.
+        let categories = categoryStore.reservedCategories.map {
+            CategoryHint(name: $0.title, emoji: $0.emoji)
+        }
+        return HybridReceiptParser.CloudParseConfig(
+            backendURL: url,
+            categories: categories,
+            localeIdentifier: Locale.current.identifier
+        )
     }
 }

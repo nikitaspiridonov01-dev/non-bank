@@ -1,16 +1,17 @@
 import SwiftUI
 
 /// Sheet shown when the user taps "Take a look at these N expenses"
-/// on the `SmallPurchasesCard`. Lists every small purchase that
-/// fell into the savings analysis (qualifying-month purchases
-/// only — same scope as the N count on the card).
+/// on the `SmallPurchasesCard`. Lists every small purchase that fell
+/// into the savings analysis (qualifying-month purchases only — same
+/// scope as the N count on the card).
 ///
-/// **Layout** mirrors the home transaction list: rows grouped under
-/// a per-day section header (`WED, APR 29`), each row showing
-/// emoji + title + amount. The category name is intentionally
-/// omitted from the row — the emoji already encodes the category,
-/// and the date now lives in the section header instead of the
-/// row's subtitle.
+/// **Layout** mirrors the home transaction list verbatim — same
+/// `ScrollView` + `LazyVStack` skeleton, same uppercase day section
+/// headers, same `TransactionRowView` for each row (emoji tile +
+/// title + description + per-row divider + native swipe-to-delete +
+/// amount in the transaction's own currency). Reusing the row
+/// component keeps the small-expenses surface visually identical to
+/// the main feed and avoids drift between two near-identical layouts.
 ///
 /// Tapping a row pushes `TransactionDetailView` as a sub-sheet so
 /// the user can drill into individual purchases without losing the
@@ -23,6 +24,7 @@ struct SmallExpensesListView: View {
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var currencyStore: CurrencyStore
     @EnvironmentObject var friendStore: FriendStore
+    @EnvironmentObject var receiptItemStore: ReceiptItemStore
 
     /// Pre-sorted by date desc upstream — we re-bucket by day for
     /// section headers but trust the parent ordering otherwise.
@@ -32,80 +34,27 @@ struct SmallExpensesListView: View {
     /// `.sheet(item:)` binding works directly without a wrapper.
     @State private var selectedTransaction: Transaction?
 
+    /// Stacks `CreateTransactionModal` *on top* of the detail sheet
+    /// when the user taps Edit. Routing through the global
+    /// `NavigationRouter` would present the editor from
+    /// `MainTabView`, which sits behind the Insights sheet — the
+    /// editor wouldn't appear until Insights was manually
+    /// dismissed. Local state lets the editor stack above
+    /// Insights for the "tap → edit immediately" flow.
+    @State private var editingTransaction: Transaction? = nil
+
     // MARK: - Derived
 
-    /// Groups purchases by start-of-day, sorted newest-first.
-    /// Each section in the list = one day of small purchases.
-    private var groupedByDay: [(date: Date, purchases: [Transaction])] {
-        let calendar = Calendar.current
-        let groups = Dictionary(grouping: purchases) { tx in
-            calendar.startOfDay(for: tx.date)
-        }
-        return groups.keys.sorted(by: >).map { date in
-            // Within a day, keep the original sort (newest moments
-            // first — same as the home list's intra-day ordering).
-            (date, groups[date]!.sorted { $0.date > $1.date })
-        }
+    /// Day-grouped buckets, newest day first. Matches the order the
+    /// home feed uses for its sections.
+    private var grouped: [(date: Date, transactions: [Transaction])] {
+        TransactionFilterService.groupByDay(purchases)
     }
 
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(groupedByDay, id: \.date) { group in
-                        sectionHeader(date: group.date)
-                        VStack(spacing: AppSpacing.sm) {
-                            ForEach(group.purchases) { tx in
-                                Button {
-                                    selectedTransaction = tx
-                                } label: {
-                                    row(for: tx)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.bottom, AppSpacing.sm)
-                    }
-                }
-                .padding(.horizontal, AppSpacing.pageHorizontal)
-                .padding(.bottom, AppSpacing.xxl)
-            }
-            .background(AppColors.backgroundPrimary)
-            .navigationTitle("Small expenses")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                }
-            }
-            // Sub-sheet for individual transaction detail. Same
-            // env-object plumbing as the parent — sheets don't
-            // auto-inherit so we forward explicitly.
-            .sheet(item: $selectedTransaction) { tx in
-                TransactionDetailView(transaction: tx)
-                    .environmentObject(transactionStore)
-                    .environmentObject(categoryStore)
-                    .environmentObject(currencyStore)
-                    .environmentObject(friendStore)
-            }
-        }
-    }
-
-    // MARK: - Section header
-
-    /// `WED, APR 29` style header that visually separates day
-    /// groups — same vocabulary the home transaction list uses for
-    /// its sticky date headers (`AppFonts.sectionHeader` etc.).
-    private func sectionHeader(date: Date) -> some View {
-        SectionHeader(text: formatSectionDate(date))
-            .padding(.top, AppSpacing.lg)
-            .padding(.bottom, AppSpacing.sm)
-    }
-
-    /// "WED, APR 29" or "WED, APR 29, 2024" depending on whether
-    /// the date is in the current calendar year. Year-suppression
-    /// matches what the home screen does for its sticky headers.
-    private func formatSectionDate(_ date: Date) -> String {
+    /// `WED, APR 29` (or `WED, APR 29, 2024` cross-year). Same
+    /// formatting `HomeViewModel.formattedSectionDate` produces, so
+    /// the headers read identically to the home feed.
+    private func sectionLabel(for date: Date) -> String {
         let calendar = Calendar.current
         let isCurrentYear = calendar.component(.year, from: date)
             == calendar.component(.year, from: Date())
@@ -113,40 +62,6 @@ struct SmallExpensesListView: View {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = isCurrentYear ? "EEE, MMM d" : "EEE, MMM d, yyyy"
         return formatter.string(from: date).uppercased()
-    }
-
-    // MARK: - Row
-
-    /// Compact row: emoji + title + amount on a single line. No
-    /// category subtitle (the emoji encodes the category already);
-    /// no date subtitle (it's in the section header above).
-    private func row(for tx: Transaction) -> some View {
-        HStack(spacing: AppSpacing.md) {
-            emojiTile(emoji(for: tx))
-
-            Text(tx.title.isEmpty ? tx.category : tx.title)
-                .font(AppFonts.labelPrimary)
-                .foregroundColor(AppColors.textPrimary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-
-            Spacer(minLength: 8)
-
-            amountText(for: tx)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-        }
-        .rowPill()
-    }
-
-    private func emojiTile(_ emoji: String) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 9)
-                .fill(AppColors.backgroundChip)
-            Text(emoji)
-                .font(AppFonts.emojiMedium)
-        }
-        .frame(width: 40, height: 40)
     }
 
     /// Live emoji from `CategoryStore` so a renamed/recoloured
@@ -157,22 +72,102 @@ struct SmallExpensesListView: View {
         categoryStore.findCategory(byTitle: tx.category)?.emoji ?? tx.emoji
     }
 
-    /// Single-Text concat — same pattern the rest of Insights
-    /// uses so the natural width is measured atomically.
-    private func amountText(for tx: Transaction) -> Text {
-        let amount = currencyStore.convert(
-            amount: tx.amount,
-            from: tx.currency,
-            to: currencyStore.selectedCurrency
-        )
-        return Text(NumberFormatting.integerPart(amount))
-            .font(AppFonts.rowAmountInteger)
-            .foregroundColor(AppColors.textPrimary)
-        + Text(NumberFormatting.decimalPartIfAny(amount))
-            .font(AppFonts.rowAmountCurrency)
-            .foregroundColor(AppColors.textSecondary)
-        + Text(" \(currencyStore.selectedCurrency)")
-            .font(AppFonts.rowAmountCurrency)
-            .foregroundColor(AppColors.textSecondary)
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(spacing: 0, pinnedViews: []) {
+                    ForEach(grouped, id: \.date) { group in
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(sectionLabel(for: group.date))
+                                .font(AppFonts.sectionHeader)
+                                .foregroundColor(AppColors.textSecondary)
+                                .tracking(AppFonts.sectionHeaderTracking)
+                                .padding(.horizontal, AppSpacing.pageHorizontal)
+                                .padding(.top, AppSpacing.xxl)
+                                .padding(.bottom, AppSpacing.sm)
+
+                            ForEach(Array(group.transactions.enumerated()), id: \.element.id) { idx, tx in
+                                TransactionRowView(
+                                    transaction: tx,
+                                    emoji: emoji(for: tx),
+                                    isLast: idx == group.transactions.count - 1,
+                                    onTap: {
+                                        selectedTransaction = tx
+                                    },
+                                    onDelete: {
+                                        transactionStore.delete(id: tx.id)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                .padding(.bottom, AppSpacing.xxxl)
+            }
+            .background(AppColors.backgroundPrimary)
+            .navigationTitle("Small expenses")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+            // Detail sheet hosts a *nested* edit sheet — same
+            // pattern `TransactionDetailView` uses for its
+            // `splitBreakdownTransaction` → `editingFromBreakdown`
+            // chain. Two-`.sheet`-modifiers-on-the-same-view variant
+            // hung the sheet stack when both states changed in one
+            // tick (binding setter trying to dismiss two sheets at
+            // once); nesting lets iOS handle stacking gracefully.
+            .sheet(item: $selectedTransaction) { tx in
+                TransactionDetailView(
+                    transaction: tx,
+                    onEdit: {
+                        // Stack edit on top of detail instantly.
+                        editingTransaction = tx
+                    },
+                    onDelete: {
+                        transactionStore.delete(id: tx.id)
+                        selectedTransaction = nil
+                    },
+                    onClose: {
+                        selectedTransaction = nil
+                    }
+                )
+                .environmentObject(transactionStore)
+                .environmentObject(categoryStore)
+                .environmentObject(currencyStore)
+                .environmentObject(friendStore)
+                .environmentObject(receiptItemStore)
+                .sheet(item: $editingTransaction) { editTx in
+                    CreateTransactionModal(
+                        isPresented: Binding(
+                            get: { true },
+                            set: { if !$0 { editingTransaction = nil } }
+                        ),
+                        editingTransaction: editTx
+                    )
+                    .environmentObject(transactionStore)
+                    .environmentObject(categoryStore)
+                    .environmentObject(currencyStore)
+                    .environmentObject(friendStore)
+                    .environmentObject(receiptItemStore)
+                }
+            }
+            // After the editor dismisses (binding setter has
+            // already zeroed `editingTransaction`), close the
+            // detail sheet beneath it so the user lands back on
+            // the small-expenses list. Small delay lets iOS finish
+            // the editor's dismiss animation before tearing down
+            // the parent — collapsing both simultaneously had
+            // previously hung the sheet stack.
+            .onChange(of: editingTransaction) { oldValue, newValue in
+                if oldValue != nil && newValue == nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        selectedTransaction = nil
+                    }
+                }
+            }
+        }
     }
 }

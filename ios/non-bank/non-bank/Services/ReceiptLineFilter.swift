@@ -14,21 +14,29 @@ struct ReceiptLineFilter {
 
     enum Verdict: Equatable {
         case keep                  // probably an item line
-        case skipNonProduct        // tax / subtotal / payment / change / etc.
+        case skipNonProduct        // subtotal / payment / change / loyalty / admin
         case anchorTotal           // the grand-total line — strong section anchor
         case discount              // a discount line — kept as a negative item
+        case fee                   // a service / delivery / handling fee line
+        case tax                   // a VAT / sales-tax line
+        case tip                   // a tip / gratuity / service-charge line
     }
 
     /// Classifies a single line of receipt text. Order of checks matters:
-    /// 1. **Discount** runs first — a line like "Скидка 10%" must NOT fall
-    ///    through to nonProduct (which would silently drop it) and must NOT
-    ///    be promoted to anchor by an embedded `total` token (e.g., German
-    ///    "Rabatt total" hypothetically — never seen, but cheap insurance).
-    /// 2. **Non-product** runs before anchor so `Sub-total`, `Subtotale`,
-    ///    etc. don't get promoted to anchor by the embedded `total` token.
-    /// 3. **Pattern-based** (dates, masked cards, phones) runs after the
+    /// 1. **Discount** runs first so a line like "Total discount: -5,00"
+    ///    doesn't get promoted to `.anchorTotal` by the embedded `total`
+    ///    token.
+    /// 2. **Non-product keywords** runs next so admin compound stop-words
+    ///    (`tax id`, `vat id`, etc.) win over the `.tax` regex — those
+    ///    contain "tax" but are administrative metadata, not tax-charge
+    ///    lines that the split calculator would distribute.
+    /// 3. **Tip / tax / fee** then route to their respective keep-with-kind
+    ///    verdicts. Order between these three is mostly cosmetic (they're
+    ///    nearly always disjoint); `.tip` precedes `.tax` so a "service
+    ///    charge tax" hypothetical would lean `.tip`.
+    /// 4. **Pattern-based** (dates, masked cards, phones) runs after the
     ///    keyword regexes since it's a stricter check.
-    /// 4. **Anchor** runs last — only fires when nothing more specific did.
+    /// 5. **Anchor** runs last — only fires when nothing more specific did.
     static func classify(_ text: String) -> Verdict {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .skipNonProduct }
@@ -38,6 +46,15 @@ struct ReceiptLineFilter {
         }
         if Self.nonProductRegex.matches(in: trimmed) {
             return .skipNonProduct
+        }
+        if Self.tipRegex.matches(in: trimmed) {
+            return .tip
+        }
+        if Self.taxRegex.matches(in: trimmed) {
+            return .tax
+        }
+        if Self.feeRegex.matches(in: trimmed) {
+            return .fee
         }
         if Self.matchesNonProductPattern(trimmed) {
             return .skipNonProduct
@@ -78,16 +95,18 @@ struct ReceiptLineFilter {
     /// / footer / payment noise. The bare word `total` is intentionally NOT
     /// here — it's reserved for `anchorTotalWords` so a one-off `Total` line
     /// is treated as the body terminator, not as a skipped non-product.
+    ///
+    /// NOTE: Tax / tip / fee keywords USED TO live here. They moved to
+    /// dedicated lists below (`taxWords`, `tipWords`, `feeWords`) so the
+    /// "by items" split mode can keep those rows as semantically tagged
+    /// items and distribute them proportionally to each participant's
+    /// item subtotal — rather than dropping them silently the way a true
+    /// admin / payment line is dropped.
     private static let nonProductWords: [String] = [
         // Subtotals
         "subtotal", "sub-total", "sub total", "sous-total", "subtotale",
         "промежуточная", "промежуточный итог", "tussentotaal", "zwischensumme",
         "międzysuma", "miedzysuma",
-
-        // Taxes
-        "vat", "tax", "taxes", "tva", "iva", "mwst", "ust", "umsatzsteuer",
-        "ндс", "nds", "налог", "nalog", "podatek", "pdv", "porez",
-        "impôt", "impot", "impuesto",
 
         // Payment methods
         "cash", "credit", "debit", "card", "visa", "mastercard", "amex",
@@ -104,16 +123,6 @@ struct ReceiptLineFilter {
         // Change / refund
         "change", "сдача", "rückgeld", "ruckgeld", "rendu",
         "monnaie", "vuelto", "troco", "kusur", "reszta", "resto",
-
-        // NOTE: Discount-related keywords (`discount`, `скидка`, `rabat`,
-        // etc.) USED TO live here but were silently dropped. They moved to
-        // `discountWords` below so a `Скидка -5,00` row survives as a
-        // negative item in the parsed receipt instead of vanishing.
-
-        // Tips / service
-        "tip", "tips", "чаевые", "trinkgeld", "pourboire",
-        "propina", "gorjeta", "mancia", "napojnica", "napiwek",
-        "service charge", "gratuity", "obsługa", "obsluga",
 
         // Loyalty / points
         "loyalty", "points", "бонусы", "punti", "pontos",
@@ -159,8 +168,6 @@ struct ReceiptLineFilter {
     private static let nonProductCyrillicStems: [String] = [
         "касир",   // Serbian Cyrillic: cashier (касира, касиру, касиром)
         "конобар", // Serbian Cyrillic: waiter
-        "пореск",  // Serbian Cyrillic: tax-related (порески, порескa)
-        "порез",   // Serbian Cyrillic: tax (пореза, порезу, порезом, порезе, порези)
         "промет",  // Serbian Cyrillic: turnover header
         "артикл",  // Serbian Cyrillic: articles (артикли, артикала, артиклима)
         "назив",   // Serbian Cyrillic: name header
@@ -175,6 +182,99 @@ struct ReceiptLineFilter {
         words: nonProductWords,
         stems: nonProductCyrillicStems
     )
+
+    // MARK: - Tax keywords
+
+    /// Words that identify a tax line (VAT, sales tax, etc.). Kept in the
+    /// items list as `.tax`-kinded rows so the "by items" split-share
+    /// calculator can distribute them proportionally to each participant's
+    /// item subtotal.
+    private static let taxWords: [String] = [
+        "vat", "tax", "taxes", "tva", "iva", "mwst", "ust", "umsatzsteuer",
+        "ндс", "nds", "налог", "nalog", "podatek", "pdv", "porez",
+        "impôt", "impot", "impuesto"
+    ]
+
+    /// Serbian Cyrillic tax stems (нумерация: пореска, порези, etc.).
+    /// Same `\p{L}*` suffix-greedy approach as `nonProductCyrillicStems`.
+    private static let taxCyrillicStems: [String] = [
+        "пореск",  // tax-related (порески, порескa)
+        "порез"    // tax (пореза, порезу, порезом, порезе, порези)
+    ]
+
+    private static let taxRegex = WordRegex(words: taxWords, stems: taxCyrillicStems)
+
+    // MARK: - Tip keywords
+
+    /// Words that identify a tip / gratuity / service-charge line. Kept
+    /// in the items list as `.tip`-kinded rows so the "by items" split
+    /// distributes them proportionally. Service charge sits here (rather
+    /// than in fees) because it usually scales like a tip — a percentage
+    /// of the subtotal — and gets bundled with `gratuity`/`obsługa` in
+    /// receipt language.
+    private static let tipWords: [String] = [
+        "tip", "tips", "чаевые", "trinkgeld", "pourboire",
+        "propina", "gorjeta", "mancia", "napojnica", "napiwek",
+        "service charge", "gratuity", "obsługa", "obsluga"
+    ]
+
+    private static let tipRegex = WordRegex(words: tipWords)
+
+    // MARK: - Fee keywords
+
+    /// Words that identify a fee / surcharge line (delivery, booking,
+    /// handling, processing, convenience, etc.). Kept as `.fee`-kinded
+    /// rows so the "by items" split distributes them proportionally to
+    /// each participant's item subtotal.
+    ///
+    /// Generic words like `fee` and `frais` match alone; compound forms
+    /// like `service fee`, `delivery fee` will hit the bare `fee` token
+    /// without needing every variant listed. The `... charge` family
+    /// (cover/booking/extra/minimum/svc) is enumerated explicitly
+    /// because bare `charge` is too risky a token to add globally —
+    /// real items occasionally contain it ("Charge cable", "Charging
+    /// pad"), and false-positives on those would silently demote
+    /// product lines into the proportional-distribution bucket.
+    private static let feeWords: [String] = [
+        // English — bare tokens (match any line containing them)
+        "fee", "fees", "surcharge",
+        // English — compound "X charge" phrases. Each requires the
+        // qualifier so we don't over-match on items whose names
+        // happen to contain "charge".
+        "service charge", "service fee", "delivery fee", "handling fee",
+        "booking fee", "processing fee", "convenience fee",
+        "cover charge", "booking charge", "extra charge", "minimum charge",
+        // Common OCR / receipt abbreviations
+        "svc charge", "svc fee", "svc. charge", "svc. fee",
+        // Russian
+        "сбор", "сервисный сбор", "комиссия", "доставка",
+        // German
+        "gebühr", "gebuehr", "servicegebühr", "lieferung",
+        // French
+        "frais", "frais de service", "frais de livraison", "supplément",
+        // Spanish
+        "tarifa de servicio", "cargo por servicio", "envío", "envio",
+        // Italian
+        "supplemento", "coperto", "consegna",
+        // Portuguese
+        "taxa de serviço", "taxa de entrega",
+        // Polish
+        "opłata", "oplata", "dostawa",
+        // Serbian (Latin) / Croatian
+        "naknada", "dostava"
+    ]
+
+    /// Cyrillic stems for fee detection. `обслуживан` covers all case
+    /// forms of "service" on Russian receipts (обслуживание, обслуживания,
+    /// обслуживанию, etc.) — caught two ways now: this stem and the
+    /// `сбор` / `доставка` literals above. Empirically every Russian
+    /// non-bank receipt seen so far prints the service-fee row as one
+    /// of these three.
+    private static let feeCyrillicStems: [String] = [
+        "обслуживан"
+    ]
+
+    private static let feeRegex = WordRegex(words: feeWords, stems: feeCyrillicStems)
 
     // MARK: - Discount keywords
 
@@ -191,22 +291,25 @@ struct ReceiptLineFilter {
         // English
         "discount", "promo", "promotion", "rebate", "off",
         "voucher", "coupon", "loyalty discount",
+        "savings", "saved", "save", "markdown", "marked down",
+        "clearance", "deal", "% off", "%off",
         // Russian
         "скидка", "скидки", "скидку", "акция", "промо",
+        "скидочка", "распродажа",
         // German
-        "rabatt", "nachlass",
+        "rabatt", "nachlass", "ermäßigung", "preisnachlass",
         // French
-        "remise", "réduction", "reduction", "ristourne",
+        "remise", "réduction", "reduction", "ristourne", "promotion",
         // Spanish
-        "descuento", "rebaja",
+        "descuento", "rebaja", "oferta",
         // Italian
-        "sconto", "ribasso",
+        "sconto", "ribasso", "saldo",
         // Portuguese
         "desconto",
         // Polish
-        "rabat", "zniżka", "znizka",
+        "rabat", "zniżka", "znizka", "obniżka", "obnizka",
         // Serbian (Latin) / Croatian
-        "popust", "akcija"
+        "popust", "akcija", "sniženje", "snizenje"
     ]
 
     private static let discountRegex = WordRegex(words: discountWords)
@@ -280,7 +383,17 @@ struct ReceiptLineFilter {
             var alternatives: [String] = words.map {
                 // `escapedPattern` covers special regex chars; we lowercase
                 // here so the match itself is plain literal text.
-                NSRegularExpression.escapedPattern(for: $0.lowercased())
+                let escaped = NSRegularExpression.escapedPattern(for: $0.lowercased())
+                // Multi-word phrases need flexible separator matching —
+                // OCR routinely emits double-space, tab, or hyphen
+                // between words (e.g. "Service  Charge" / "Service-Charge"
+                // / "Frais\tde service"). Replacing the literal space
+                // in the compiled pattern with `[\s\-]+` keeps every
+                // single-spaced match working while picking up the
+                // mangled variants. Bare single-word entries (`fee`,
+                // `surcharge`, …) are unaffected because they contain
+                // no space to substitute.
+                return escaped.replacingOccurrences(of: " ", with: #"[\s\-]+"#)
             }
             for stem in stems {
                 let escaped = NSRegularExpression.escapedPattern(for: stem.lowercased())

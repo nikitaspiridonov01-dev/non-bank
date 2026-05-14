@@ -5,6 +5,14 @@ import SwiftUI
 @MainActor
 class TransactionStore: ObservableObject {
     @Published private(set) var transactions: [Transaction] = []
+    /// Flips to `true` the first time `load()` finishes — including
+    /// the very first load that's kicked off in `init` before any view
+    /// has subscribed. View code observes this so it can show a
+    /// skeleton placeholder during cold-launch instead of flashing
+    /// the empty state at the user while SQLite is still fetching.
+    /// Stays `true` for the rest of the session even when subsequent
+    /// `load()` calls (sync push-back, edits) mutate `transactions`.
+    @Published private(set) var hasLoadedOnce: Bool = false
     private let repo: TransactionRepositoryProtocol
     private let receiptItemRepo: ReceiptItemRepositoryProtocol
     weak var syncManager: SyncManager?
@@ -26,6 +34,10 @@ class TransactionStore: ObservableObject {
 
     func load() async {
         transactions = await repo.fetchAll()
+        // Flag set AFTER the assignment so views that observe both
+        // `transactions` and `hasLoadedOnce` together see consistent
+        // state on the same frame.
+        hasLoadedOnce = true
         if !hasCleanedStaleNotifications {
             hasCleanedStaleNotifications = true
             NotificationService.cleanupStale(transactions: transactions)
@@ -70,6 +82,26 @@ class TransactionStore: ObservableObject {
         }
     }
 
+    /// Awaitable batch insert that returns a `syncID → new autoincrement id`
+    /// map. Used by the native non-bank import path so the caller can
+    /// stamp receipt items with the right `transactionID` after the rows
+    /// land in SQLite — local IDs aren't part of the export format.
+    func addBatchAndReturnSyncIDMap(_ transactions: [Transaction]) async -> [String: Int] {
+        await repo.insertBatch(transactions)
+        await load()
+        for tx in transactions {
+            NotificationService.schedule(for: tx)
+        }
+        processRecurringSpawns()
+        await syncManager?.pushTransactionBatch(transactions)
+        let importedSyncIDs = Set(transactions.map { $0.syncID })
+        var map: [String: Int] = [:]
+        for tx in self.transactions where importedSyncIDs.contains(tx.syncID) {
+            map[tx.syncID] = tx.id
+        }
+        return map
+    }
+
     func update(_ transaction: Transaction) {
         Task {
             await repo.update(transaction)
@@ -78,6 +110,54 @@ class TransactionStore: ObservableObject {
             processRecurringSpawns()
             await syncManager?.pushTransaction(transaction, action: .save)
         }
+    }
+
+    /// Rewrite every transaction whose category title matches `oldTitle`
+    /// so that it points at `newTitle` with `newEmoji`. Used by the
+    /// category editor — `Transaction.category` is a text reference,
+    /// not a foreign key, so a rename has to walk the table itself.
+    /// `lastModified` is bumped on each touched row so CloudKit and any
+    /// other devices treat the rewrite as the latest edit.
+    func renameCategory(from oldTitle: String, to newTitle: String, newEmoji: String) {
+        let affected = transactions.filter { $0.category == oldTitle }
+        guard !affected.isEmpty else { return }
+        Task {
+            var rewritten: [Transaction] = []
+            for tx in affected {
+                let updated = Transaction(
+                    id: tx.id, syncID: tx.syncID,
+                    emoji: newEmoji, category: newTitle,
+                    title: tx.title, description: tx.description,
+                    amount: tx.amount, currency: tx.currency,
+                    date: tx.date, type: tx.type,
+                    tags: tx.tags, lastModified: Date(),
+                    repeatInterval: tx.repeatInterval,
+                    parentReminderID: tx.parentReminderID,
+                    splitInfo: tx.splitInfo,
+                    payloadChecksum: tx.payloadChecksum,
+                    excludedFromInsights: tx.excludedFromInsights
+                )
+                await repo.update(updated)
+                rewritten.append(updated)
+            }
+            await load()
+            await syncManager?.pushTransactionBatch(rewritten)
+        }
+    }
+
+    /// Awaitable update — same as `update(_:)` but the caller can
+    /// `await` until the DB write + `load()` finishes. Used by the
+    /// share-link receiver: without this, the coordinator transitioned
+    /// to `.completed` while the underlying Task was still in flight,
+    /// so the UI's `transactions.first(where:)` lookup would either
+    /// see stale data or — when paired with id-based lookup — miss
+    /// the row entirely.
+    func updateAndWait(_ transaction: Transaction) async {
+        await repo.update(transaction)
+        await load()
+        NotificationService.schedule(for: transaction)
+        processRecurringSpawns()
+        await syncManager?.pushTransaction(transaction, action: .save)
     }
 
     /// Rewrite every transaction's split-info friend list, replacing
@@ -128,7 +208,8 @@ class TransactionStore: ObservableObject {
                 repeatInterval: tx.repeatInterval,
                 parentReminderID: tx.parentReminderID,
                 splitInfo: newSplit,
-                payloadChecksum: tx.payloadChecksum
+                payloadChecksum: tx.payloadChecksum,
+                excludedFromInsights: tx.excludedFromInsights
             )
             await repo.update(updated)
         }
@@ -140,6 +221,12 @@ class TransactionStore: ObservableObject {
     func delete(id: Int) {
         let tx = transactions.first { $0.id == id }
         Task {
+            // Snapshot the receipt items BEFORE deleting them locally —
+            // we need their syncIDs to cascade the delete to CloudKit,
+            // otherwise the records linger as orphans (they never come
+            // back to other devices because their parent is gone, but
+            // they keep taking up zone storage forever).
+            let cascadingItems = await receiptItemRepo.fetch(transactionID: id)
             await repo.delete(id: id)
             // Cascade-delete any receipt items belonging to this transaction —
             // SQLite foreign-key cascades aren't enabled on the connection,
@@ -169,25 +256,59 @@ class TransactionStore: ObservableObject {
                     }
                 }
                 await syncManager?.pushTransaction(tx, action: .delete)
+                if !cascadingItems.isEmpty {
+                    await syncManager?.reconcileReceiptItems(
+                        newItems: [],
+                        priorSyncIDs: cascadingItems.map { $0.syncID },
+                        transactionSyncID: tx.syncID
+                    )
+                }
             }
         }
     }
 
     func deleteAll() {
+        Task { await deleteAllAndWait() }
+    }
+
+    /// Awaitable variant of `deleteAll()`. Use this when sequencing
+    /// a wipe with a follow-up batch operation — e.g. the replace-mode
+    /// import path needs the wipe to *finish* before the new batch
+    /// inserts, otherwise the two fire-and-forget Tasks race on the
+    /// SQLite queue and the late delete eats the freshly-inserted
+    /// rows. Body is identical to the original `deleteAll()` Task
+    /// closure, just hoisted into a callable async function.
+    func deleteAllAndWait() async {
         let allTx = transactions
-        Task {
-            await repo.deleteAll()
-            // Cascade-delete every transaction's receipt items.
-            for tx in allTx {
-                await receiptItemRepo.deleteAll(transactionID: tx.id)
+        // Snapshot receipt items per transaction BEFORE the wipe.
+        // Same reason as the single-delete path: orphans on CloudKit
+        // are functionally invisible to other devices but consume
+        // zone storage indefinitely.
+        var priorItemSyncIDsByTxSyncID: [String: [String]] = [:]
+        for tx in allTx {
+            let items = await receiptItemRepo.fetch(transactionID: tx.id)
+            if !items.isEmpty {
+                priorItemSyncIDsByTxSyncID[tx.syncID] = items.map { $0.syncID }
             }
-            await load()
-            for tx in allTx {
-                NotificationService.cancel(for: tx)
-                if tx.isRecurringParent {
-                    SpawnTracker.clear(parentSyncID: tx.syncID)
-                }
-                await syncManager?.pushTransaction(tx, action: .delete)
+        }
+        await repo.deleteAll()
+        // Cascade-delete every transaction's receipt items.
+        for tx in allTx {
+            await receiptItemRepo.deleteAll(transactionID: tx.id)
+        }
+        await load()
+        for tx in allTx {
+            NotificationService.cancel(for: tx)
+            if tx.isRecurringParent {
+                SpawnTracker.clear(parentSyncID: tx.syncID)
+            }
+            await syncManager?.pushTransaction(tx, action: .delete)
+            if let priorSyncIDs = priorItemSyncIDsByTxSyncID[tx.syncID] {
+                await syncManager?.reconcileReceiptItems(
+                    newItems: [],
+                    priorSyncIDs: priorSyncIDs,
+                    transactionSyncID: tx.syncID
+                )
             }
         }
     }
@@ -197,6 +318,20 @@ class TransactionStore: ObservableObject {
     /// Transactions eligible for the Home screen (past-dated, non-parent).
     var homeTransactions: [Transaction] {
         ReminderService.homeTransactions(from: transactions)
+    }
+
+    /// `homeTransactions` normalised for analytics / balance / trend
+    /// aggregation: rows the user hid (`excludedFromInsights`) are
+    /// dropped, and split-transaction amounts are rewritten to
+    /// `myShare` when the global "include potential expenses" setting
+    /// is ON. Use this for any sum/aggregate on Home or Insights; keep
+    /// the raw `homeTransactions` for the list view itself so the user
+    /// can still see and unhide excluded rows.
+    var homeTransactionsForInsights: [Transaction] {
+        AnalyticsContext.normaliseForInsights(
+            homeTransactions,
+            includePotentialExpenses: InsightsSettings.shared.includePotentialExpenses
+        )
     }
 
     /// Transactions eligible for the Reminders screen.

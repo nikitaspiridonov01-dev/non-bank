@@ -1,0 +1,26 @@
+{
+  "name": "non-bank-receipt-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Worker that proxies receipt-image parsing across multiple free vision-LLM providers with smart routing and quota tracking.",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "db:create": "wrangler d1 create non-bank-receipts",
+    "db:migrate:local": "wrangler d1 migrations apply non-bank-receipts --local",
+    "db:migrate:remote": "wrangler d1 migrations apply non-bank-receipts --remote",
+    "db:console:local": "wrangler d1 execute non-bank-receipts --local --command",
+    "db:console:remote": "wrangler d1 execute non-bank-receipts --remote --command",
+    "types": "wrangler types",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.5.0",
+    "@cloudflare/workers-types": "^4.20250101.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "wrangler": "^3.90.0"
+  }
+}

@@ -228,6 +228,20 @@ enum ReceivedTransactionMapper {
         let txCategory = existingTransaction?.category ?? resolvedCategory.title
         let txEmoji = existingTransaction?.emoji ?? resolvedCategory.emoji
 
+        // Recurring rule — preserve so an imported recurring split
+        // continues spawning child occurrences on the receiver's
+        // device the same way it does on the sharer's. `r` is
+        // optional in the payload (older shares omit it), and
+        // `toRepeatInterval()` returns nil for unknown kinds —
+        // either case yields a non-recurring import, which is the
+        // safer fallback.
+        let receivedRepeatInterval = payload.r?.toRepeatInterval()
+
+        // `excludedFromInsights` is deliberately omitted — the receiver
+        // makes their own include/exclude decision in their own app,
+        // and the share-link payload does not transport this flag. The
+        // default `false` (counted in insights) applies until the
+        // receiver flips it via the detail view or a swipe action.
         let transaction = Transaction(
             id: nextTransactionID,
             syncID: payload.id,
@@ -240,6 +254,7 @@ enum ReceivedTransactionMapper {
             date: Date(timeIntervalSince1970: payload.d),
             type: payload.k == "inc" ? .income : .expenses,
             tags: nil,
+            repeatInterval: receivedRepeatInterval,
             splitInfo: receiverSplit
         )
 

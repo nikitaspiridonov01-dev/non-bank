@@ -34,6 +34,12 @@ struct InsightsView: View {
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var currencyStore: CurrencyStore
 
+    /// Observed so the cards rebuild when the user changes the
+    /// "include potential expenses" switch in Settings — the
+    /// AnalyticsContext re-derivation reads this on every render and
+    /// the switch needs to propagate live.
+    @ObservedObject private var insightsSettings = InsightsSettings.shared
+
     /// Initialised on first body evaluation by the closure default —
     /// picks "previous full month" relative to whatever `Date()` is
     /// when the sheet opens.
@@ -273,17 +279,19 @@ struct InsightsView: View {
 
     // MARK: - Palette
 
-    /// Primary Maple-orange accent — Insights is a main-app screen, so
-    /// it should pick up the global `accent` rather than the
-    /// `reminderAccent` (calendar-red) which belongs to the Reminders
-    /// sub-app and read as "wrong sub-app theme" here.
+    /// Both Insights cards (spending + earning) tint their *clickable*
+    /// elements (period selector, "See all" link) with the warm
+    /// `accent`. Earlier the earning card used green to telegraph
+    /// "money in" — but the two-colour Insights vocabulary reserves
+    /// colour exclusively for clickable affordances (orange) and
+    /// neutral text for emphasized non-clickable elements, so the
+    /// green was retired. Income vs expense is already clear from
+    /// the headline ("Where did you earn the most…?").
     private var spendingAccent: Color {
         AppColors.accent
     }
 
-    /// Mint green that pairs with the "money in" semantic. Using the
-    /// system green keeps it dynamic across light / dark mode.
     private var earningAccent: Color {
-        Color.green
+        AppColors.accent
     }
 }

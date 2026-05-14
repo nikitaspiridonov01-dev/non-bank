@@ -1,30 +1,54 @@
 import SwiftUI
 
 /// Review screen shown after `HybridReceiptParser` returns structured items.
-/// User can drop unwanted lines via swipe-delete and confirm to push the
-/// items + computed total back to the create-transaction flow.
+/// Items are read-only here — to remove or tweak a line the user opens the
+/// `ReceiptItemEditorSheet` via the inline "Edit items" button.
 struct ReceiptReviewView: View {
     let parseResult: HybridReceiptParser.Result
     let sourceImage: UIImage?
-    var onConfirm: (_ items: [ReceiptItem], _ total: Double) -> Void
+    /// Final-confirm callback. The currency is passed through here (not
+    /// inferred from `parseResult` at the call site) so a user-correction
+    /// inside the editor — typical when OCR/AI guessed the wrong code or
+    /// emitted nothing — actually reaches the transaction draft.
+    var onConfirm: (_ items: [ReceiptItem], _ total: Double, _ currency: String) -> Void
     var onCancel: () -> Void
+    /// When true (default), wraps the body in its own `NavigationStack`
+    /// and dismisses the surrounding sheet on Cancel/Save. Use `false`
+    /// to render the content as a push step inside an existing
+    /// NavigationStack (e.g. the byItems flow inside
+    /// `TransactionModeFlowSheet`) — Cancel/Save then defer all
+    /// navigation routing to the parent's callbacks.
+    var wrapInNavigationStack: Bool = true
 
     @Environment(\.dismiss) private var dismiss
+    /// Forwarded into the editor sheet so its `CurrencyDropdownButton`
+    /// (which reads these from its own environment) keeps working —
+    /// `.sheet(item:)` inherits the parent's env, but only when the
+    /// objects are actually declared on the parent.
+    @EnvironmentObject private var currencyStore: CurrencyStore
+    @EnvironmentObject private var transactionStore: TransactionStore
     @State private var items: [ReceiptItem]
     @State private var currency: String
+    @State private var showEditor: Bool = false
 
     init(
         parseResult: HybridReceiptParser.Result,
         sourceImage: UIImage?,
-        onConfirm: @escaping (_ items: [ReceiptItem], _ total: Double) -> Void,
-        onCancel: @escaping () -> Void
+        onConfirm: @escaping (_ items: [ReceiptItem], _ total: Double, _ currency: String) -> Void,
+        onCancel: @escaping () -> Void,
+        wrapInNavigationStack: Bool = true
     ) {
         self.parseResult = parseResult
         self.sourceImage = sourceImage
         self.onConfirm = onConfirm
         self.onCancel = onCancel
+        self.wrapInNavigationStack = wrapInNavigationStack
         _items = State(initialValue: parseResult.parsedReceipt.items)
-        _currency = State(initialValue: parseResult.parsedReceipt.currency ?? "USD")
+        // Init with whatever the parser produced; an empty string here is
+        // intentional and gets backfilled from the user's base currency
+        // in `.task` below — `@EnvironmentObject` isn't accessible from
+        // an init, so the fallback can't run synchronously.
+        _currency = State(initialValue: parseResult.parsedReceipt.currency ?? "")
     }
 
     private var itemsTotal: Double {
@@ -36,83 +60,128 @@ struct ReceiptReviewView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: AppSpacing.xl) {
-                    headerBlock
-                    confidenceBannerIfNeeded
-                    itemsList
-                    totalsSummary
-                    Spacer().frame(height: 40)
-                }
-                .padding(.top, AppSpacing.lg)
+        if wrapInNavigationStack {
+            NavigationStack { contentBody }
+        } else {
+            contentBody
+        }
+    }
+
+    private var contentBody: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppSpacing.xl) {
+                receiptHeader
+                itemsList
+                itemsCountLabel
+                totalsSummary
+                editItemsButton
+                Spacer().frame(height: 40)
             }
-            .background(AppColors.backgroundPrimary)
-            .navigationTitle("Receipt items")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        onCancel()
-                        dismiss()
-                    }
+            .padding(.top, AppSpacing.lg)
+        }
+        .background(AppColors.backgroundPrimary)
+        .navigationTitle("Receipt items")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    onCancel()
+                    // Embedded mode (push step inside an existing
+                    // NavigationStack): the parent's `onCancel` owns
+                    // the routing decision (close the orchestrator,
+                    // pop a step, etc.) — calling `dismiss()` here
+                    // would either no-op or close the wrong layer.
+                    if wrapInNavigationStack { dismiss() }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Use") {
-                        onConfirm(items, itemsTotal)
-                        dismiss()
-                    }
-                    .disabled(items.isEmpty)
-                    .fontWeight(.semibold)
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    onConfirm(items, itemsTotal, currency)
+                    if wrapInNavigationStack { dismiss() }
                 }
+                .disabled(items.isEmpty)
+                .fontWeight(.semibold)
+            }
+        }
+        .sheet(isPresented: $showEditor) {
+            ReceiptItemEditorSheet(
+                initialItems: items,
+                // Anchor to the items sum the user sees in the "Total"
+                // row above (not the raw parser-detected `grandTotal`).
+                // The user reads the prominent Total as the agreed
+                // amount; the editor should treat it the same way so
+                // it opens balanced and only flags divergence the user
+                // *introduces* by editing.
+                receiptTotal: itemsTotal,
+                currency: currency,
+                onSave: { newItems, _, newCurrency in
+                    // Replace local items; itemsTotal is recomputed
+                    // from the new array. Currency comes back so a
+                    // user-correction inside the editor (typical when
+                    // OCR guessed wrong) carries through to the final
+                    // commit.
+                    items = newItems
+                    currency = newCurrency
+                },
+                onCancel: {}
+            )
+            .environmentObject(currencyStore)
+            .environmentObject(transactionStore)
+        }
+        .task {
+            // Backfill currency from the user's base when the parser
+            // produced nothing — better default than hardcoded "USD"
+            // because the rest of the app reasons in the user's chosen
+            // base. Runs only on first appearance; an explicit user pick
+            // in the editor (or anywhere else) takes precedence forever.
+            if currency.isEmpty {
+                currency = currencyStore.selectedCurrency
             }
         }
     }
 
     // MARK: - Header
 
+    /// Store name + optional warning banner. The items counter used to live
+    /// here as a subtitle but now sits between the list and the Total row
+    /// so it reads as a footer for the items section.
     @ViewBuilder
-    private var headerBlock: some View {
-        HStack(alignment: .center, spacing: 14) {
-            if let image = sourceImage {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 64, height: 80)
-                    .clipShape(RoundedRectangle(cornerRadius: AppRadius.small))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: AppRadius.small)
-                            .stroke(AppColors.border, lineWidth: 1)
-                    )
-            } else {
-                RoundedRectangle(cornerRadius: AppRadius.small)
-                    .fill(AppColors.backgroundChip)
-                    .frame(width: 64, height: 80)
-                    .overlay(
-                        Image(systemName: "doc.text.image")
-                            .font(AppFonts.emojiMedium)
-                            .foregroundColor(AppColors.textTertiary)
-                    )
+    private var receiptHeader: some View {
+        if parseResult.confidence == .high {
+            storeNameBlock
+        } else {
+            VStack(alignment: .leading, spacing: AppSpacing.lg) {
+                storeNameBlock
+                confidenceBannerIfNeeded
             }
-            VStack(alignment: .leading, spacing: AppSpacing.xxs) {
-                if let store = parseResult.parsedReceipt.storeName, !store.isEmpty {
-                    Text(store)
-                        .font(AppFonts.subhead)
-                        .foregroundColor(AppColors.textPrimary)
-                        .lineLimit(1)
-                }
-                if let date = parseResult.parsedReceipt.date, !date.isEmpty {
-                    Text(date)
-                        .font(.subheadline)
-                        .foregroundColor(AppColors.textSecondary)
-                }
-                Text("\(items.count) \(items.count == 1 ? "item" : "items")")
-                    .font(.caption)
-                    .foregroundColor(AppColors.textTertiary)
-            }
-            Spacer()
         }
-        .padding(.horizontal, AppSpacing.pageHorizontal)
+    }
+
+    /// Just the store name — splits off from the items counter so the
+    /// confidence banner can sit *between* them when the parser flagged
+    /// something the user should double-check.
+    @ViewBuilder
+    private var storeNameBlock: some View {
+        if let store = parseResult.parsedReceipt.storeName, !store.isEmpty {
+            Text(store)
+                .font(AppFonts.subhead)
+                .foregroundColor(AppColors.textPrimary)
+                .lineLimit(1)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, AppSpacing.pageHorizontal)
+        }
+    }
+
+    /// Items counter, rendered separately so it can sit just above the
+    /// list (under any banner that fires).
+    private var itemsCountLabel: some View {
+        Text("\(items.count) \(items.count == 1 ? "item" : "items")")
+            .font(.caption)
+            .foregroundColor(AppColors.textTertiary)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, AppSpacing.pageHorizontal)
     }
 
     // MARK: - Confidence banner
@@ -123,18 +192,21 @@ struct ReceiptReviewView: View {
         case .high:
             EmptyView()
         case .medium:
+            // Same warning treatment as `.low` — the user doesn't need
+            // to know "totals divergence" vs "no AI was used", they just
+            // need the same prompt: please double-check.
             banner(
                 icon: "exclamationmark.triangle.fill",
                 tint: AppColors.warning,
-                title: "Totals don't match",
-                subtitle: "The sum of items doesn't match the receipt total. Please review the lines below."
+                title: "Double-check the receipt",
+                subtitle: "Some details may be off — please review the items below before saving."
             )
         case .low:
             banner(
-                icon: "info.circle.fill",
-                tint: AppColors.textSecondary,
-                title: "Quick scan",
-                subtitle: "Apple Intelligence isn't available, so we used a simpler text parser. Double-check the items."
+                icon: "exclamationmark.triangle.fill",
+                tint: AppColors.warning,
+                title: "Double-check the receipt",
+                subtitle: "Some details may be off — please review the items below before saving."
             )
         }
     }
@@ -163,6 +235,29 @@ struct ReceiptReviewView: View {
         .padding(.horizontal, AppSpacing.pageHorizontal)
     }
 
+    // MARK: - Edit items CTA
+    //
+    // Subtle, centred, no background — same visual rhythm as the
+    // "Add new friend" CTA on `FriendPickerView` ("Who to split with").
+    // The Save button in the toolbar is the primary action; this is the
+    // quiet escape hatch into the editor for users who want to tweak.
+    private var editItemsButton: some View {
+        Button {
+            showEditor = true
+        } label: {
+            HStack(spacing: AppSpacing.xs) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(AppFonts.captionEmphasized)
+                Text("Edit items")
+                    .font(AppFonts.captionEmphasized)
+            }
+            .foregroundColor(.accentColor)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.vertical, AppSpacing.sm)
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - Items list
 
     @ViewBuilder
@@ -189,69 +284,57 @@ struct ReceiptReviewView: View {
     }
 
     private func itemRow(_ item: ReceiptItem) -> some View {
-        HStack(alignment: .center, spacing: AppSpacing.md) {
-            VStack(alignment: .leading, spacing: AppSpacing.xxs) {
-                Text(item.name)
-                    .font(AppFonts.labelPrimary)
-                    .foregroundColor(AppColors.textPrimary)
-                    .lineLimit(2)
+        let kind = item.kind
+        let isDiscount = kind == .discount
+        return HStack(alignment: .center, spacing: AppSpacing.md) {
+            ReceiptItemKindIcon(kind: kind)
+            Text(item.name)
+                .font(AppFonts.labelPrimary)
+                .foregroundColor(AppColors.textPrimary)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            // Right-side stack: bold line total on top, the unit-breakdown
+            // ("2 × 850 RSD") on a smaller line directly underneath. This
+            // keeps the receipt-row hierarchy money-first — the value the
+            // user wants to scan reads on the leading edge of the trailing
+            // column, with the qty/price detail tucked subordinate
+            // beneath, rather than splitting that detail off under the
+            // item's name where it competed for the name's vertical space.
+            VStack(alignment: .trailing, spacing: AppSpacing.xxs) {
+                ReceiptItemAmountText(
+                    amount: item.lineTotal,
+                    currency: currency,
+                    isDiscount: isDiscount
+                )
                 if let qty = item.quantity, qty != 1, let price = item.price {
-                    Text("\(formattedQuantity(qty)) × \(formattedAmount(price))")
+                    Text("\(ReceiptItem.formatQuantity(qty)) × \(ReceiptItem.formatAmount(price)) \(currency)")
                         .font(.caption)
-                        .foregroundColor(AppColors.textSecondary)
+                        .foregroundColor(AppColors.textTertiary)
                 }
             }
-            Spacer(minLength: 8)
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
-                Text(NumberFormatting.integerPart(item.lineTotal))
-                    .font(AppFonts.rowAmountInteger)
-                    .foregroundColor(AppColors.textPrimary)
-                Text(NumberFormatting.decimalPartIfAny(item.lineTotal))
-                    .font(AppFonts.rowAmountCurrency)
-                    .foregroundColor(AppColors.textSecondary)
-                Text(currency)
-                    .font(AppFonts.rowAmountCurrency)
-                    .foregroundColor(AppColors.textSecondary)
-                    .padding(.leading, 3)
-            }
-            .fixedSize(horizontal: true, vertical: false)
-            Button(action: { delete(item) }) {
-                Image(systemName: "minus.circle.fill")
-                    .font(AppFonts.iconLarge)
-                    .foregroundColor(AppColors.textTertiary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Remove item")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.rowVertical)
         .background(
             RoundedRectangle(cornerRadius: AppRadius.large)
-                .fill(AppColors.backgroundElevated)
+                .fill(isDiscount ? AppColors.success.opacity(0.08) : AppColors.backgroundElevated)
         )
     }
 
     // MARK: - Totals
 
+    /// Single calculated total. We omit the per-row "Items vs Receipt" split
+    /// — the divergence (when there is one) is already surfaced by the
+    /// `confidenceBannerIfNeeded` block above the list, which is the place
+    /// the user expects to see "something's off, please check".
     @ViewBuilder
     private var totalsSummary: some View {
-        VStack(spacing: 6) {
-            HStack {
-                Text("Items total")
-                    .font(.subheadline)
-                    .foregroundColor(AppColors.textSecondary)
-                Spacer()
-                amountText(itemsTotal, primary: true)
-            }
-            if let grand = grandTotal, grand > 0 {
-                HStack {
-                    Text("Receipt total")
-                        .font(.subheadline)
-                        .foregroundColor(AppColors.textSecondary)
-                    Spacer()
-                    amountText(grand, primary: false)
-                }
-            }
+        HStack {
+            Text("Total")
+                .font(AppFonts.bodyEmphasized)
+                .foregroundColor(AppColors.textPrimary)
+            Spacer()
+            ReceiptItemAmountText(amount: itemsTotal, currency: currency)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.rowVertical)
@@ -262,38 +345,4 @@ struct ReceiptReviewView: View {
         .padding(.horizontal, AppSpacing.pageHorizontal)
     }
 
-    private func amountText(_ amount: Double, primary: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
-            Text(NumberFormatting.integerPart(amount))
-                .font(.system(size: 17, weight: primary ? .bold : .medium))
-                .foregroundColor(primary ? AppColors.textPrimary : AppColors.textSecondary)
-            Text(NumberFormatting.decimalPartIfAny(amount))
-                .font(AppFonts.captionEmphasized)
-                .foregroundColor(AppColors.textSecondary)
-            Text(currency)
-                .font(AppFonts.captionEmphasized)
-                .foregroundColor(AppColors.textSecondary)
-                .padding(.leading, 3)
-        }
-        .fixedSize(horizontal: true, vertical: false)
-    }
-
-    // MARK: - Actions
-
-    private func delete(_ item: ReceiptItem) {
-        items.removeAll { $0.id == item.id }
-    }
-
-    // MARK: - Formatting
-
-    private func formattedQuantity(_ quantity: Double) -> String {
-        if quantity.rounded() == quantity {
-            return String(Int(quantity))
-        }
-        return String(format: "%.2f", quantity)
-    }
-
-    private func formattedAmount(_ value: Double) -> String {
-        NumberFormatting.integerPart(value) + NumberFormatting.decimalPartIfAny(value)
-    }
 }

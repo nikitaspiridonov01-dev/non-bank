@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct FriendPickerView: View {
     @Environment(\.dismiss) private var dismiss
@@ -16,6 +17,25 @@ struct FriendPickerView: View {
     let initialSelection: [Friend]
     let includeYou: Bool
     let initialYouSelected: Bool
+    /// When true (default), wraps the body in its own `NavigationStack`
+    /// + Cancel/Save toolbar — matches the historic standalone-sheet
+    /// behavior. When false, returns only the content with a Continue
+    /// toolbar item — used by the Phase 4.4 orchestrator which owns
+    /// the parent NavigationStack and a Cancel/Back at root.
+    let wrapInNavigationStack: Bool
+    /// When true, the picker enforces single-selection semantics:
+    /// tapping a row clears any previous selection and selects only
+    /// that party. Used by the settle-up flow's payer / recipient
+    /// pickers where the conceptual choice is "exactly one person",
+    /// not "any subset". `Select all`/`Deselect all` is hidden.
+    let singleSelect: Bool
+    /// Optional ID to hide from the picker entirely. Pass `"me"` to
+    /// suppress the "You" row, or a `Friend.id` to filter that friend
+    /// out of the list. Used by the settle-up recipient step to avoid
+    /// re-offering the party who was just picked as payer — tapping
+    /// the same party twice was silently no-op'ed by the same-party
+    /// guard downstream and read as a lag bug.
+    let excludeID: String?
     let onConfirm: ([Friend], Bool) -> Void
 
     init(
@@ -24,6 +44,9 @@ struct FriendPickerView: View {
         initialSelection: [Friend] = [],
         includeYou: Bool = false,
         youSelected: Bool = true,
+        wrapInNavigationStack: Bool = true,
+        singleSelect: Bool = false,
+        excludeID: String? = nil,
         onConfirm: @escaping ([Friend], Bool) -> Void
     ) {
         self.title = title
@@ -31,23 +54,32 @@ struct FriendPickerView: View {
         self.initialSelection = initialSelection
         self.includeYou = includeYou
         self.initialYouSelected = youSelected
+        self.wrapInNavigationStack = wrapInNavigationStack
+        self.singleSelect = singleSelect
+        self.excludeID = excludeID
         self.onConfirm = onConfirm
         _selection = State(initialValue: Set(initialSelection.map(\.id)))
-        _youSelected = State(initialValue: youSelected)
+        // Don't surface a pre-selected "You" when the row is hidden —
+        // would otherwise leak through `selectedCount` as a phantom
+        // "1 selected" badge with nothing visible to back it up.
+        _youSelected = State(initialValue: (excludeID == "me") ? false : youSelected)
     }
 
     private var hasAnySelection: Bool {
-        (includeYou && youSelected) || !selection.isEmpty
+        (effectiveIncludeYou && youSelected) || !selection.isEmpty
     }
 
     private var selectedCount: Int {
         var count = selection.count
-        if includeYou && youSelected { count += 1 }
+        if effectiveIncludeYou && youSelected { count += 1 }
         return count
     }
 
     private var filteredFriends: [Friend] {
         var result = friendStore.friends
+        if let excludeID, excludeID != "me" {
+            result = result.filter { $0.id != excludeID }
+        }
         if let group = selectedGroup {
             result = result.filter { $0.groups.contains(group) }
         }
@@ -61,6 +93,13 @@ struct FriendPickerView: View {
         return result
     }
 
+    /// "You" row is hidden when the caller explicitly excludes the
+    /// `"me"` sentinel — settle-up recipient step uses this so the
+    /// payer (when they were "You") can't be re-picked as recipient.
+    private var effectiveIncludeYou: Bool {
+        includeYou && excludeID != "me"
+    }
+
     private var allFilteredSelected: Bool {
         let visible = filteredFriends
         guard !visible.isEmpty || includeYou else { return false }
@@ -69,37 +108,63 @@ struct FriendPickerView: View {
         return friendsAllSelected && youOk
     }
 
+    @ViewBuilder
     var body: some View {
-        NavigationStack {
-            FriendPickerContent(
-                title: title,
-                subtitle: subtitle,
-                includeYou: includeYou,
-                youSelected: $youSelected,
-                selection: $selection,
-                searchText: $searchText,
-                selectedGroup: $selectedGroup,
-                showFriendForm: $showFriendForm,
-                filteredFriends: filteredFriends,
-                allFilteredSelected: allFilteredSelected,
-                selectedCount: selectedCount,
-                hasFriends: !friendStore.friends.isEmpty,
-                allGroups: friendStore.allGroups
-            )
-            .scrollContentBackground(.hidden)
-            .background(AppColors.backgroundPrimary)
-            .searchable(text: $searchText, prompt: "Search friends")
-            .navigationTitle("")
-            .toolbarTitleDisplayMode(.inline)
-            .toolbar {
+        if wrapInNavigationStack {
+            NavigationStack { contentBody }
+        } else {
+            contentBody
+        }
+    }
+
+    private var contentBody: some View {
+        FriendPickerContent(
+            title: title,
+            subtitle: subtitle,
+            includeYou: effectiveIncludeYou,
+            youSelected: $youSelected,
+            selection: $selection,
+            searchText: $searchText,
+            selectedGroup: $selectedGroup,
+            showFriendForm: $showFriendForm,
+            filteredFriends: filteredFriends,
+            allFilteredSelected: allFilteredSelected,
+            selectedCount: selectedCount,
+            hasFriends: !friendStore.friends.isEmpty,
+            allGroups: friendStore.allGroups,
+            singleSelect: singleSelect,
+            onSingleSelectAdvance: singleSelect
+                ? { friends, you in
+                    onConfirm(friends, you)
+                    if wrapInNavigationStack { dismiss() }
+                }
+                : nil
+        )
+        .scrollContentBackground(.hidden)
+        .background(AppColors.backgroundPrimary)
+        .searchable(text: $searchText, prompt: "Search friends")
+        .navigationTitle("")
+        .toolbarTitleDisplayMode(.inline)
+        .toolbar {
+            // Standalone presentation owns Cancel; the orchestrator
+            // wrap relies on the parent NavigationStack's back arrow
+            // for "go back without confirming", so we only add the
+            // confirmation action when embedded.
+            if wrapInNavigationStack {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
+            }
+            // Multi-select needs an explicit confirm (no other commit
+            // point). Single-select commits on tap via
+            // `onSingleSelectAdvance`, so the toolbar checkmark would
+            // just be dead weight.
+            if !singleSelect {
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
                         let selected = friendStore.friends.filter { selection.contains($0.id) }
                         onConfirm(selected, youSelected)
-                        dismiss()
+                        if wrapInNavigationStack { dismiss() }
                     } label: {
                         Image(systemName: "checkmark")
                             .font(AppFonts.bodyEmphasized)
@@ -107,14 +172,14 @@ struct FriendPickerView: View {
                     .disabled(!hasAnySelection)
                 }
             }
-            .sheet(isPresented: $showFriendForm, onDismiss: {
-                if !searchText.isEmpty { searchText = "" }
-            }) {
-                FriendFormView(existingGroups: friendStore.allGroups, isCompact: true) { newFriend in
-                    Task {
-                        await friendStore.add(newFriend)
-                        selection.insert(newFriend.id)
-                    }
+        }
+        .sheet(isPresented: $showFriendForm, onDismiss: {
+            if !searchText.isEmpty { searchText = "" }
+        }) {
+            FriendFormView(existingGroups: friendStore.allGroups, isCompact: true) { newFriend in
+                Task {
+                    await friendStore.add(newFriend)
+                    selection.insert(newFriend.id)
                 }
             }
         }
@@ -123,7 +188,11 @@ struct FriendPickerView: View {
 
 // MARK: - Inner Content (reads @Environment(\.isSearching))
 
-private struct FriendPickerContent: View {
+/// Internal so the Phase 4.4 orchestrator can reuse this as the body
+/// of its `friendPicker` push step (without dragging in
+/// `FriendPickerView`'s outer NavigationStack / dismiss toolbar). The
+/// standalone sheet use-case keeps everything as before.
+struct FriendPickerContent: View {
     @Environment(\.isSearching) private var isSearching
 
     let title: String
@@ -139,6 +208,13 @@ private struct FriendPickerContent: View {
     let selectedCount: Int
     let hasFriends: Bool
     let allGroups: [String]
+    var singleSelect: Bool = false
+    /// In `singleSelect` mode this is invoked the moment the user taps
+    /// a row — the parent commits the choice and advances the flow
+    /// without requiring a separate toolbar confirmation. `nil` in
+    /// multi-select mode where the explicit confirm button is the
+    /// commit point.
+    var onSingleSelectAdvance: (([Friend], Bool) -> Void)? = nil
 
     var body: some View {
         List {
@@ -202,11 +278,18 @@ private struct FriendPickerContent: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                // Add new friend (left) + Select all (right) row
-                if !filteredFriends.isEmpty || (hasFriends && allGroups.isEmpty) {
+                // Add new friend (left) + Select all (right) row — only
+                // when at least one side has something to show. In
+                // `singleSelect` with groups present, neither side
+                // renders, so we skip the row entirely instead of
+                // letting an empty `HStack` reserve a 44pt row that
+                // pushes the friend list down (see the gap in the
+                // settle-up screenshot — there's nothing to put here).
+                let showAddFriendInRow = hasFriends && allGroups.isEmpty
+                let showSelectAll = !filteredFriends.isEmpty && !singleSelect
+                if showAddFriendInRow || showSelectAll {
                     HStack {
-                        // "Add new friend" on the left — only when no groups
-                        if hasFriends && allGroups.isEmpty {
+                        if showAddFriendInRow {
                             Button { showFriendForm = true } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: "person.badge.plus")
@@ -221,7 +304,7 @@ private struct FriendPickerContent: View {
 
                         Spacer()
 
-                        if !filteredFriends.isEmpty {
+                        if showSelectAll {
                             Button {
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     if allFilteredSelected {
@@ -249,29 +332,68 @@ private struct FriendPickerContent: View {
                 // "You" row
                 if includeYou {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            youSelected.toggle()
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        if singleSelect {
+                            // Single-select: tap commits "You" and
+                            // immediately hands off to the parent's
+                            // auto-advance callback. No toggle-off
+                            // path — there's no need for a "blank"
+                            // intermediate state when the next screen
+                            // appears in the same gesture.
+                            youSelected = true
+                            selection.removeAll()
+                            onSingleSelectAdvance?([], true)
+                        } else {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                youSelected.toggle()
+                            }
                         }
                     } label: {
+                        // In `singleSelect` mode the row itself
+                        // carries selection state (no radio icon).
+                        // Mirrors `WhoPaidPickerView.compactRow`:
+                        // selected rows sit on the filled chip
+                        // surface with bold primary text, unselected
+                        // rows stay outlined-on-clear with tertiary
+                        // text. Multi-select keeps the original
+                        // "everything filled, radio dot wins" look.
+                        let isDimmed = singleSelect && !youSelected
+
                         HStack(spacing: 14) {
                             PixelCatView(id: UserIDService.currentID(), size: 44, blackAndWhite: false)
                                 .clipShape(Circle())
 
                             Text("You")
                                 .font(AppFonts.labelPrimary)
-                                .foregroundColor(AppColors.textPrimary)
+                                .fontWeight(singleSelect && youSelected ? .semibold : .regular)
+                                .foregroundColor(isDimmed ? AppColors.textTertiary : AppColors.textPrimary)
                                 .lineLimit(1)
 
                             Spacer(minLength: 4)
 
-                            Image(systemName: youSelected ? "checkmark.circle.fill" : "circle")
-                                .font(AppFonts.emojiMedium)
-                                .foregroundColor(youSelected ? .accentColor : AppColors.textTertiary)
+                            // Radio indicator only in multi-select —
+                            // single-select rows auto-advance on tap,
+                            // so there's no "selected but unconfirmed"
+                            // state to visualise.
+                            if !singleSelect {
+                                Image(systemName: youSelected ? "checkmark.circle.fill" : "circle")
+                                    .font(AppFonts.emojiMedium)
+                                    .foregroundColor(youSelected ? .accentColor : AppColors.textTertiary)
+                            }
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 14)
-                        .background(AppColors.backgroundElevated)
-                        .clipShape(RoundedRectangle(cornerRadius: AppRadius.large))
+                        .background(
+                            RoundedRectangle(cornerRadius: AppRadius.large)
+                                .fill(isDimmed ? Color.clear : AppColors.backgroundElevated)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: AppRadius.large)
+                                        .stroke(
+                                            isDimmed ? AppColors.textQuaternary.opacity(0.3) : Color.clear,
+                                            lineWidth: 1
+                                        )
+                                )
+                        )
                         .contentShape(RoundedRectangle(cornerRadius: AppRadius.large))
                     }
                     .buttonStyle(.plain)
@@ -311,11 +433,21 @@ private struct FriendPickerContent: View {
             } else {
                 ForEach(filteredFriends) { friend in
                     Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            if selection.contains(friend.id) {
-                                selection.remove(friend.id)
-                            } else {
-                                selection.insert(friend.id)
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        if singleSelect {
+                            // Single-select: tap commits the friend
+                            // and triggers auto-advance. No toggle-off
+                            // — see the "You" branch above.
+                            selection = [friend.id]
+                            youSelected = false
+                            onSingleSelectAdvance?([friend], false)
+                        } else {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                if selection.contains(friend.id) {
+                                    selection.remove(friend.id)
+                                } else {
+                                    selection.insert(friend.id)
+                                }
                             }
                         }
                     } label: {
@@ -367,7 +499,14 @@ private struct FriendPickerContent: View {
     // MARK: - Friend Row
 
     private func friendRow(_ friend: Friend) -> some View {
-        HStack(spacing: 14) {
+        let isSelected = selection.contains(friend.id)
+        // Same single-select highlight as the "You" row above — a
+        // pre-filled selection (e.g. re-entering the settle-up
+        // picker) becomes immediately visible without the radio
+        // indicator we strip in `singleSelect`.
+        let isDimmed = singleSelect && !isSelected
+
+        return HStack(spacing: 14) {
             // Coloured if connected (verified ID via share-link),
             // greyscale otherwise. Same convention as FriendsView.
             PixelCatView(id: friend.id, size: 44, blackAndWhite: !friend.isConnected)
@@ -376,7 +515,8 @@ private struct FriendPickerContent: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(friend.name)
                     .font(AppFonts.labelPrimary)
-                    .foregroundColor(AppColors.textPrimary)
+                    .fontWeight(singleSelect && isSelected ? .semibold : .regular)
+                    .foregroundColor(isDimmed ? AppColors.textTertiary : AppColors.textPrimary)
                     .lineLimit(1)
 
                 if !friend.groups.isEmpty {
@@ -389,14 +529,29 @@ private struct FriendPickerContent: View {
 
             Spacer(minLength: 4)
 
-            Image(systemName: selection.contains(friend.id) ? "checkmark.circle.fill" : "circle")
-                .font(AppFonts.emojiMedium)
-                .foregroundColor(selection.contains(friend.id) ? .accentColor : AppColors.textTertiary)
+            // Same rationale as the "You" row — hide the radio
+            // indicator under `singleSelect`, since tapping auto-
+            // advances and there's no transient selection state to
+            // reflect.
+            if !singleSelect {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(AppFonts.emojiMedium)
+                    .foregroundColor(isSelected ? .accentColor : AppColors.textTertiary)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
-        .background(AppColors.backgroundElevated)
-        .clipShape(RoundedRectangle(cornerRadius: AppRadius.large))
+        .background(
+            RoundedRectangle(cornerRadius: AppRadius.large)
+                .fill(isDimmed ? Color.clear : AppColors.backgroundElevated)
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppRadius.large)
+                        .stroke(
+                            isDimmed ? AppColors.textQuaternary.opacity(0.3) : Color.clear,
+                            lineWidth: 1
+                        )
+                )
+        )
         .contentShape(RoundedRectangle(cornerRadius: AppRadius.large))
     }
 }

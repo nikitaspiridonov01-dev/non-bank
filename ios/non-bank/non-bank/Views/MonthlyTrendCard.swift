@@ -46,10 +46,14 @@ struct MonthlyTrendCard: View {
     // MARK: - Narrative
 
     /// "On average, your <subject> is/are <direction> by <N%> per
-    /// month." Direction word + percent share an accent colour
-    /// driven by `isFavorable` — green when the change is good for
-    /// the user (balance / income growing, expenses shrinking),
-    /// warm orange otherwise.
+    /// month." Bright orange `accent` is reserved for clickable
+    /// elements; the non-clickable emphasis (direction word + the
+    /// percent) uses `accentBold` (deep warm sienna) — noticeable
+    /// without competing with the clickable orange CTAs elsewhere
+    /// on the screen. The earlier favorable-vs-unfavorable green/red
+    /// split was retired — direction is now communicated through
+    /// the verbal word ("growing"/"shrinking") and a single warm
+    /// emphasis colour, not through hue semantics.
     private func narrative(for t: CategoryAnalyticsService.MonthlyTrend) -> some View {
         let percent = String(format: "%.1f", abs(t.percentPerMonth))
         let direction = t.percentPerMonth >= 0 ? "growing" : "shrinking"
@@ -59,7 +63,6 @@ struct MonthlyTrendCard: View {
         case .expenses:   subjectVerb = "your expenses are"
         case .income:     subjectVerb = "your income is"
         }
-        let accent: Color = t.isFavorable ? Color.green : AppColors.reminderAccent
 
         return (
             Text("On average, ")
@@ -69,11 +72,11 @@ struct MonthlyTrendCard: View {
             + Text(" ")
                 .foregroundColor(AppColors.textPrimary)
             + Text(direction)
-                .foregroundColor(accent)
+                .foregroundColor(AppColors.accentBold)
             + Text(" by ")
                 .foregroundColor(AppColors.textPrimary)
             + Text("\(percent)%")
-                .foregroundColor(accent)
+                .foregroundColor(AppColors.accentBold)
             + Text(" per month.")
                 .foregroundColor(AppColors.textPrimary)
         )

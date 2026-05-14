@@ -15,6 +15,7 @@ struct PaidUpfrontView: View {
         let name: String
         let avatarID: String
         let isMe: Bool
+        let isConnected: Bool
         let amount: Double
     }
 
@@ -25,15 +26,17 @@ struct PaidUpfrontView: View {
                 name: "You",
                 avatarID: UserIDService.currentID(),
                 isMe: true,
+                isConnected: true,
                 amount: split.paidByMe
             ))
         }
         for friend in split.friends where friend.paidAmount > 0.005 {
-            let name = friendStore.friend(byID: friend.friendID)?.name ?? "Friend"
+            let stored = friendStore.friend(byID: friend.friendID)
             result.append(Payer(
-                name: name,
+                name: stored?.name ?? "Friend",
                 avatarID: friend.friendID,
                 isMe: false,
+                isConnected: stored?.isConnected ?? false,
                 amount: friend.paidAmount
             ))
         }
@@ -103,7 +106,7 @@ struct PaidUpfrontView: View {
 
     private func row(_ payer: Payer) -> some View {
         HStack(spacing: 14) {
-            PixelCatView(id: payer.avatarID, size: 44, blackAndWhite: !payer.isMe)
+            PixelCatView(id: payer.avatarID, size: 44, blackAndWhite: !payer.isConnected)
                 .clipShape(Circle())
 
             Text(payer.name)

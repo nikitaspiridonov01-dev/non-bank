@@ -101,8 +101,12 @@ class CategoryStore: ObservableObject {
     }
 
     func removeCategory(_ category: Category) {
-        // "General" is reserved and cannot be deleted
-        guard category.title != Self.uncategorized.title else { return }
+        // Reserved categories (General + the 18 defaults seeded on
+        // first launch) cannot be deleted. They form a stable baseline
+        // — receipt-scan category matching narrows to this set, so the
+        // user can rename them (via the edit modal) but never remove
+        // them entirely.
+        guard !Self.isReserved(category) else { return }
         categories.removeAll { $0.id == category.id }
         Task {
             await repo.delete(id: category.id)
@@ -132,5 +136,27 @@ class CategoryStore: ObservableObject {
     /// If the category title doesn't exist in settings, returns "General".
     func validatedCategory(for title: String) -> Category {
         categories.first(where: { $0.title == title }) ?? Self.uncategorized
+    }
+
+    /// Reserved set: "General" + the 18 seeded defaults. Matched by
+    /// `title` (case-insensitive) so a user-renamed reserved row would
+    /// no longer count — that's intentional, the rename modal blocks
+    /// reserved-row renames via this same check by surfacing the
+    /// "Reserved" badge in the list. Receipt-scan category matching
+    /// narrows to this set; see `reservedCategories`.
+    static func isReserved(_ category: Category) -> Bool {
+        if category.title.lowercased() == uncategorized.title.lowercased() {
+            return true
+        }
+        let reservedTitles = Set(defaultCategories.map { $0.title.lowercased() })
+        return reservedTitles.contains(category.title.lowercased())
+    }
+
+    /// Live snapshot of the currently-installed reserved categories.
+    /// Use this (not `defaultCategories`) when you need real category
+    /// records to match against — `defaultCategories` is the seed list,
+    /// it doesn't carry the SQLite-assigned UUIDs / latest emoji edits.
+    var reservedCategories: [Category] {
+        categories.filter { Self.isReserved($0) }
     }
 }

@@ -48,11 +48,14 @@ struct CategoryCannibalizationCard: View {
 
     // MARK: - Narrative
 
-    /// Bold sentence with the **delta-up** in warm orange ("you
-    /// spent more") and the **delta-down** in green ("you spent
-    /// less"). Categories themselves are primary tone — the user
-    /// reads the categories as anchors, the colours convey the
-    /// direction.
+    /// Bold single-paragraph narrative — bright orange `accent` is
+    /// reserved for clickable elements; non-clickable emphasis
+    /// (month, both amounts, both categories) uses `accentBold`
+    /// (deep warm sienna) — noticeable without competing with the
+    /// clickable orange CTAs. "More"/"less" direction is already
+    /// encoded in the verbs ("you spent X more on…" / "…dropped by
+    /// Y"), so the earlier up/down green/red colour split was
+    /// retired in favour of a single warm emphasis colour.
     private func narrative(for e: CategoryAnalyticsService.CategoryCannibalization) -> some View {
         let monthName = formatMonth(e.monthDate)
         let upAmount = formatAmount(e.deltaUp)
@@ -62,23 +65,23 @@ struct CategoryCannibalizationCard: View {
             Text("In ")
                 .foregroundColor(AppColors.textPrimary)
             + Text(monthName)
-                .foregroundColor(AppColors.textPrimary)
+                .foregroundColor(AppColors.accentBold)
             + Text(", you spent ")
                 .foregroundColor(AppColors.textPrimary)
             + Text(upAmount)
-                .foregroundColor(AppColors.reminderAccent)
+                .foregroundColor(AppColors.accentBold)
             + Text(" more on ")
                 .foregroundColor(AppColors.textPrimary)
             + Text(e.categoryUp)
-                .foregroundColor(AppColors.textPrimary)
+                .foregroundColor(AppColors.accentBold)
             + Text(" — meanwhile ")
                 .foregroundColor(AppColors.textPrimary)
             + Text(e.categoryDown)
-                .foregroundColor(AppColors.textPrimary)
+                .foregroundColor(AppColors.accentBold)
             + Text(" dropped by ")
                 .foregroundColor(AppColors.textPrimary)
             + Text(downAmount)
-                .foregroundColor(Color.green)
+                .foregroundColor(AppColors.accentBold)
             + Text(".")
                 .foregroundColor(AppColors.textPrimary)
         )
@@ -105,10 +108,13 @@ struct CategoryCannibalizationCard: View {
 
     // MARK: - Formatting
 
+    /// Non-breaking spaces glue the amount together so it wraps as
+    /// one unit — see the matching helper in `BigPurchaseCard` for
+    /// the full reasoning.
     private func formatAmount(_ value: Double) -> String {
         let int = NumberFormatting.integerPart(value)
         let dec = NumberFormatting.decimalPartIfAny(value)
-        return "\(int)\(dec) \(context.targetCurrency)"
+        return "\(int)\(dec) \(context.targetCurrency)".replacingOccurrences(of: " ", with: "\u{00A0}")
     }
 
     /// Year omitted when the event month is in the current

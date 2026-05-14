@@ -4,8 +4,17 @@ import Combine
 @MainActor
 class FriendStore: ObservableObject {
     @Published private(set) var friends: [Friend] = []
+    /// `true` after the first `load()` finishes. Surfaced to the view
+    /// layer (via `@Published`) so FriendsView can show a skeleton
+    /// placeholder during cold-launch instead of flashing the empty
+    /// illustration before SQLite is ready.
+    @Published private(set) var hasLoadedOnce: Bool = false
     private let repo: FriendRepositoryProtocol
     private var hasLoaded = false
+    /// Set in `MainTabView` after both stores exist. Weak so the
+    /// store doesn't retain the SyncManager (which already retains
+    /// references to the stores).
+    weak var syncManager: SyncManager?
 
     nonisolated init(repo: FriendRepositoryProtocol = FriendRepository()) {
         self.repo = repo
@@ -15,12 +24,14 @@ class FriendStore: ObservableObject {
     func load() async {
         friends = await repo.fetchAll()
         hasLoaded = true
+        hasLoadedOnce = true
     }
 
     func add(_ friend: Friend) async {
         guard friend.isValid else { return }
         await repo.insert(friend)
         await load()
+        await syncManager?.pushFriend(friend, action: .save)
     }
 
     func update(_ friend: Friend) {
@@ -30,12 +41,16 @@ class FriendStore: ObservableObject {
         }
         Task {
             await repo.update(friend)
+            await syncManager?.pushFriend(friend, action: .save)
         }
     }
 
     func remove(_ friend: Friend) {
         friends.removeAll { $0.id == friend.id }
-        Task { await repo.delete(id: friend.id) }
+        Task {
+            await repo.delete(id: friend.id)
+            await syncManager?.pushFriend(friend, action: .delete)
+        }
     }
 
     func friend(byID id: String) -> Friend? {
@@ -89,6 +104,7 @@ class FriendStore: ObservableObject {
         )
         await add(upgraded)
         await repo.delete(id: phantomID)
+        await syncManager?.pushFriend(phantom, action: .delete)
         await load()
     }
 

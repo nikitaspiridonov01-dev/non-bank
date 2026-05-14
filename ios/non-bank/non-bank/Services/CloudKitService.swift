@@ -23,6 +23,8 @@ final class CloudKitService {
 
     static let transactionType = "Transaction"
     static let categoryType = "Category"
+    static let friendType = "Friend"
+    static let receiptItemType = "ReceiptItem"
 
     private let changeTokenKey = "ck_serverChangeToken"
 
@@ -98,8 +100,16 @@ final class CloudKitService {
         record["currency"] = tx.currency as CKRecordValue
         record["date"] = tx.date as CKRecordValue
         record["type"] = tx.type.rawValue as CKRecordValue
-        record["tags"] = "" as CKRecordValue
         record["lastModified"] = tx.lastModified as CKRecordValue
+
+        // Tags — JSON-encoded so the array survives round-trip. Earlier
+        // versions hard-coded `""` here, so missing/empty values on pull
+        // decode back to `nil`.
+        if let tags = tx.tags, !tags.isEmpty,
+           let data = try? JSONEncoder().encode(tags),
+           let str = String(data: data, encoding: .utf8) {
+            record["tags"] = str as CKRecordValue
+        }
 
         // New fields — stored as JSON strings (nil-safe)
         if let ri = tx.repeatInterval, let data = try? JSONEncoder().encode(ri) {
@@ -111,6 +121,17 @@ final class CloudKitService {
         if let si = tx.splitInfo, let data = try? JSONEncoder().encode(si) {
             record["splitInfo"] = String(data: data, encoding: .utf8) as? CKRecordValue
         }
+        // Share-link re-import classifier (Phase 4). Without this on
+        // sync the receiver device can't tell "I've already seen this
+        // exact link" from "the sharer edited and re-shared it."
+        if let checksum = tx.payloadChecksum {
+            record["payloadChecksum"] = checksum as CKRecordValue
+        }
+        // Per-tx insights exclusion. Synced so the user's hide decision
+        // travels with the transaction across their devices (see
+        // InsightsSettings for the global toggle, which is synced
+        // separately via NSUbiquitousKeyValueStore).
+        record["excludedFromInsights"] = (tx.excludedFromInsights ? 1 : 0) as CKRecordValue
 
         return record
     }
@@ -141,13 +162,24 @@ final class CloudKitService {
            let siData = siJSON.data(using: .utf8) {
             splitInfo = try? JSONDecoder().decode(SplitInfo.self, from: siData)
         }
+        var tags: [String]?
+        if let tagsJSON = record["tags"] as? String, !tagsJSON.isEmpty,
+           let tagsData = tagsJSON.data(using: .utf8) {
+            tags = try? JSONDecoder().decode([String].self, from: tagsData)
+        }
+        let payloadChecksum = record["payloadChecksum"] as? String
+        // Missing key = false (rows that pre-date the feature on either
+        // side default to "counted in insights").
+        let excludedFromInsights = (record["excludedFromInsights"] as? Int).map { $0 != 0 } ?? false
 
         return Transaction(
             id: 0, syncID: syncID, emoji: emoji, category: category,
             title: title, description: desc?.isEmpty == true ? nil : desc,
             amount: amount, currency: currency, date: date,
-            type: type, tags: nil, lastModified: lastModified,
-            repeatInterval: repeatInterval, parentReminderID: parentReminderID, splitInfo: splitInfo
+            type: type, tags: tags, lastModified: lastModified,
+            repeatInterval: repeatInterval, parentReminderID: parentReminderID, splitInfo: splitInfo,
+            payloadChecksum: payloadChecksum,
+            excludedFromInsights: excludedFromInsights
         )
     }
 
@@ -171,6 +203,106 @@ final class CloudKitService {
               let lastModified = record["lastModified"] as? Date
         else { return nil }
         return Category(id: uuid, emoji: emoji, title: title, lastModified: lastModified)
+    }
+
+    // MARK: - Friend ↔ CKRecord
+    //
+    // Friends are first-class CloudKit records so that split-transaction
+    // friendID references stay meaningful across devices. The receiver
+    // would otherwise see a UUID that doesn't resolve to anyone in
+    // FriendStore — the avatar renders as a phantom and groups /
+    // splitMode / `isConnected` would all be lost.
+
+    func friendToRecord(_ friend: Friend) -> CKRecord {
+        let rid = recordID(forSyncID: friend.id, type: Self.friendType)
+        let record = CKRecord(recordType: Self.friendType, recordID: rid)
+        record["friendID"] = friend.id as CKRecordValue
+        record["name"] = friend.name as CKRecordValue
+        record["lastModified"] = friend.lastModified as CKRecordValue
+        record["isConnected"] = (friend.isConnected ? 1 : 0) as CKRecordValue
+        if !friend.groups.isEmpty,
+           let data = try? JSONEncoder().encode(friend.groups),
+           let str = String(data: data, encoding: .utf8) {
+            record["groups"] = str as CKRecordValue
+        }
+        if let mode = friend.splitMode {
+            record["splitMode"] = mode.rawValue as CKRecordValue
+        }
+        return record
+    }
+
+    func friendFromRecord(_ record: CKRecord) -> Friend? {
+        guard let id = record["friendID"] as? String,
+              let name = record["name"] as? String,
+              let lastModified = record["lastModified"] as? Date
+        else { return nil }
+        let isConnected = (record["isConnected"] as? Int).map { $0 != 0 } ?? false
+        var groups: [String] = []
+        if let str = record["groups"] as? String,
+           let data = str.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode([String].self, from: data) {
+            groups = decoded
+        }
+        let splitMode: SplitMode? = (record["splitMode"] as? String).flatMap { SplitMode(rawValue: $0) }
+        return Friend(
+            id: id, name: name, groups: groups,
+            splitMode: splitMode, lastModified: lastModified,
+            isConnected: isConnected
+        )
+    }
+
+    // MARK: - ReceiptItem ↔ CKRecord
+    //
+    // Receipt items reference their parent transaction by the parent's
+    // stable `syncID` (not the local autoincrement, which differs per
+    // device). The receiver resolves `transactionSyncID` to a local
+    // `transactionID` after the parent transaction is in place.
+
+    func receiptItemToRecord(_ item: ReceiptItem, transactionSyncID: String) -> CKRecord {
+        let rid = recordID(forSyncID: item.syncID, type: Self.receiptItemType)
+        let record = CKRecord(recordType: Self.receiptItemType, recordID: rid)
+        record["syncID"] = item.syncID as CKRecordValue
+        record["transactionSyncID"] = transactionSyncID as CKRecordValue
+        record["name"] = item.name as CKRecordValue
+        record["position"] = item.position as CKRecordValue
+        record["lastModified"] = item.lastModified as CKRecordValue
+        if let q = item.quantity { record["quantity"] = q as CKRecordValue }
+        if let p = item.price { record["price"] = p as CKRecordValue }
+        if let t = item.total { record["total"] = t as CKRecordValue }
+        if !item.assignedParticipantIDs.isEmpty,
+           let data = try? JSONEncoder().encode(item.assignedParticipantIDs),
+           let str = String(data: data, encoding: .utf8) {
+            record["assignedParticipantIDs"] = str as CKRecordValue
+        }
+        return record
+    }
+
+    /// Decode a receipt-item record. Returns both the rebuilt
+    /// `ReceiptItem` (with `transactionID = nil` — caller resolves it
+    /// after fetching the parent transaction) and the parent's syncID.
+    func receiptItemFromRecord(_ record: CKRecord) -> (item: ReceiptItem, transactionSyncID: String)? {
+        guard let syncID = record["syncID"] as? String,
+              let transactionSyncID = record["transactionSyncID"] as? String,
+              let name = record["name"] as? String,
+              let lastModified = record["lastModified"] as? Date
+        else { return nil }
+        let position = record["position"] as? Int ?? 0
+        let quantity = record["quantity"] as? Double
+        let price = record["price"] as? Double
+        let total = record["total"] as? Double
+        var assigned: [String] = []
+        if let str = record["assignedParticipantIDs"] as? String,
+           let data = str.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode([String].self, from: data) {
+            assigned = decoded
+        }
+        let item = ReceiptItem(
+            name: name, quantity: quantity, price: price, total: total,
+            assignedParticipantIDs: assigned,
+            persistedID: nil, transactionID: nil,
+            syncID: syncID, position: position, lastModified: lastModified
+        )
+        return (item, transactionSyncID)
     }
 
     // MARK: - Save / Delete

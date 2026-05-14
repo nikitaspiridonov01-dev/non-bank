@@ -101,11 +101,16 @@ struct ReceiptHighlighterView: View {
                         Button {
                             showPreview = true
                         } label: {
+                            // `accentBold` rather than the lighter
+                            // `Color.accentColor` — white-on-light-accent
+                            // failed WCAG even for large text in dark
+                            // mode (~2.6:1). Same swap as the import
+                            // wizard / onboarding / settle-up CTAs.
                             Label("Confirm", systemImage: "checkmark")
                                 .font(.headline)
                                 .padding(.horizontal, AppSpacing.xl)
                                 .padding(.vertical, 10)
-                                .background(Color.accentColor)
+                                .background(AppColors.accentBold)
                                 .foregroundColor(.white)
                                 .clipShape(Capsule())
                         }

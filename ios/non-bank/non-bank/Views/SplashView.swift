@@ -8,53 +8,46 @@ import SwiftUI
 /// between the static dark background and the animation kicking in.
 ///
 /// Visuals:
-///  - Dark-navy background (`#0F0F23`) matching the iOS launch screen
-///    so there's no color pop at handoff.
-///  - Orange glow halo gently pulsing (radial gradient, opacity 0.05↔0.5).
-///  - 8-bit-style crystal made of `Rectangle()` pixels at the same
-///    coordinates as the original SVG — scaled 1.0 ↔ 1.06 in a
-///    breathing rhythm. Pixels overlap by 0.5pt so the dark background
-///    can't peek through micro-gaps when the crystal is scaled.
-///  - Stars scattered across the **whole screen** (not clustered around
-///    the crystal) with staggered twinkle periods (0.8–1.6 s) — the
-///    full-screen distribution makes the launch feel like a real night
-///    sky rather than a tight halo.
-///
-/// Everything starts animating the moment the view materialises
-/// because SwiftUI's animation modifiers don't have a load-from-disk
-/// preroll the way Lottie does.
+///  - Adaptive background sourced from the `LaunchBackground` color
+///    asset — cream in light mode (so it matches the rest of the warm
+///    palette inside the app), dark navy in dark mode. The static iOS
+///    launch screen reads the same asset so there's no color pop at
+///    handoff.
+///  - Accent-coloured 8-bit crystal pulsing 1.0 ↔ 1.06 in sync with a
+///    radial glow halo behind it. Pixels overlap by 0.5 pt so the
+///    background can't peek through micro-gaps when the crystal scales.
+///  - "non bank" wordmark below the crystal, hand-drawn pixel by pixel
+///    in the same chunky style as the crystal so the whole splash reads
+///    as one piece.
+///  - Stars scattered across the **whole screen** with staggered
+///    twinkle periods (0.8–1.6 s). Star colors adapt to the background
+///    so they stay readable in both modes.
 struct SplashView: View {
     /// Drives BOTH the crystal scale AND the glow opacity in lockstep.
     /// Initialized `false`; flipped to `true` `.onAppear` to kick off
     /// the auto-reversing repeat-forever animation.
     @State private var isPulsing: Bool = false
 
-    /// Background tone — also used by the LaunchBackground color asset
-    /// in `Info.plist` so the static iOS launch screen and our SwiftUI
-    /// view share the exact same pixel value.
-    private static let backgroundColor = Color(
-        red: 0x0F / 255, green: 0x0F / 255, blue: 0x23 / 255
-    )
-
     var body: some View {
         ZStack {
-            Self.backgroundColor.ignoresSafeArea()
+            Color("LaunchBackground").ignoresSafeArea()
 
             // Stars layer — sits BEHIND the crystal and spans the whole
-            // screen. Built via GeometryReader so the deterministic
-            // pseudo-random positions scale with the device size.
+            // screen.
             FullScreenStarField()
                 .ignoresSafeArea()
 
-            // The "icon" — same 200×200 logical canvas as the SVG.
-            // Scaled into the screen via .frame(); the inner shapes
-            // use absolute coords from the SVG.
-            ZStack {
-                glowHalo
-                crystal
+            VStack(spacing: 28) {
+                ZStack {
+                    glowHalo
+                    crystal
+                }
+                .frame(width: 200, height: 200)
+                .scaleEffect(1.4)
+
+                PixelWordmark()
+                    .padding(.top, 8)
             }
-            .frame(width: 200, height: 200)
-            .scaleEffect(1.4)  // visually fills more of the screen
         }
         .onAppear {
             // `.repeatForever` autoreverse takes the animation back and
@@ -71,17 +64,15 @@ struct SplashView: View {
     // MARK: - Glow halo
 
     /// Radial gradient that brightens the area behind the crystal,
-    /// pulsing from barely-visible to noticeable in lockstep with the
-    /// crystal's scale animation. Same `isPulsing` driver = phases stay
-    /// synchronised. Color is the same orange as the crystal so the
-    /// glow looks like it's emanating from it rather than sitting under
-    /// a different-colored light source.
+    /// pulsing in lockstep with the crystal's scale animation. Tinted
+    /// with the same accent as the crystal so it reads as light
+    /// emanating from the gem.
     private var glowHalo: some View {
         RadialGradient(
             colors: [
-                Color(red: 0xFC / 255, green: 0x7A / 255, blue: 0x4A / 255).opacity(0.6),
-                Color(red: 0xFC / 255, green: 0x7A / 255, blue: 0x4A / 255).opacity(0.15),
-                Color(red: 0xFC / 255, green: 0x7A / 255, blue: 0x4A / 255).opacity(0.0)
+                Color.accentColor.opacity(0.6),
+                Color.accentColor.opacity(0.15),
+                Color.accentColor.opacity(0.0)
             ],
             center: .center,
             startRadius: 0,
@@ -96,7 +87,6 @@ struct SplashView: View {
     /// Each `Rectangle` is positioned on a 200×200 grid via offset.
     private var crystal: some View {
         ZStack {
-            // Orange body
             ForEach(Array(crystalPixels.enumerated()), id: \.offset) { _, pixel in
                 pixelRect(pixel)
             }
@@ -104,44 +94,39 @@ struct SplashView: View {
         .scaleEffect(isPulsing ? 1.06 : 1.0)
     }
 
-    /// Rectangle coords from the original SVG: (x, y, w, h, color).
-    /// Order doesn't matter visually — `ZStack` flattens them into the
-    /// same XY plane.
-    ///
-    /// Colors:
-    ///   - body: `#FC7A4A` (orange) — matches AppIcon.
-    ///   - highlight: `#FFB590` (lighter peach) — softer than pure
-    ///     white, same hue family as the body so the highlight reads
-    ///     as a light-source reflection rather than a separate sticker.
+    /// Rectangle coords from the original SVG. Body uses `accentColor`
+    /// directly (so a future palette change ripples here automatically);
+    /// the highlight is a 50 %-tinted-with-white version of the same
+    /// accent, applied via `.opacity(0.55)` on a white overlay rather
+    /// than a hard-coded peach hex.
     private var crystalPixels: [PixelRect] {
-        let orange = Color(red: 0xFC / 255, green: 0x7A / 255, blue: 0x4A / 255)
-        let lightPeach = Color(red: 0xFF / 255, green: 0xB5 / 255, blue: 0x90 / 255)
+        let body = Color.accentColor
+        let highlight = Color.white.opacity(0.55)
         return [
-            PixelRect(x: 80,  y: 60,  w: 40, h: 10, color: orange),
-            PixelRect(x: 70,  y: 70,  w: 60, h: 10, color: orange),
-            PixelRect(x: 60,  y: 80,  w: 80, h: 10, color: orange),
-            PixelRect(x: 60,  y: 90,  w: 80, h: 10, color: orange),
-            PixelRect(x: 60,  y: 100, w: 80, h: 10, color: orange),
-            PixelRect(x: 70,  y: 110, w: 60, h: 10, color: orange),
-            PixelRect(x: 80,  y: 120, w: 40, h: 10, color: orange),
-            PixelRect(x: 90,  y: 130, w: 20, h: 10, color: orange),
+            PixelRect(x: 80,  y: 60,  w: 40, h: 10, color: body),
+            PixelRect(x: 70,  y: 70,  w: 60, h: 10, color: body),
+            PixelRect(x: 60,  y: 80,  w: 80, h: 10, color: body),
+            PixelRect(x: 60,  y: 90,  w: 80, h: 10, color: body),
+            PixelRect(x: 60,  y: 100, w: 80, h: 10, color: body),
+            PixelRect(x: 70,  y: 110, w: 60, h: 10, color: body),
+            PixelRect(x: 80,  y: 120, w: 40, h: 10, color: body),
+            PixelRect(x: 90,  y: 130, w: 20, h: 10, color: body),
             // Highlights — drawn after body so they paint on top.
-            PixelRect(x: 80,  y: 70,  w: 10, h: 10, color: lightPeach),
-            PixelRect(x: 70,  y: 80,  w: 10, h: 10, color: lightPeach)
+            PixelRect(x: 80,  y: 70,  w: 10, h: 10, color: highlight),
+            PixelRect(x: 70,  y: 80,  w: 10, h: 10, color: highlight)
         ]
     }
 
     // MARK: - Helpers
 
     /// Build a single `Rectangle` placed by absolute SVG-style coords
-    /// inside the 200×200 ZStack. SwiftUI's frame is centered, so we
-    /// offset the rect from the centre by `pixel.center - 100`.
+    /// inside the 200×200 ZStack.
     ///
     /// **Gap fix**: each rect is rendered slightly larger than its
     /// nominal size (`+overlap` pad on every side). Without the pad,
-    /// SwiftUI's sub-pixel rounding leaves visible 0.5pt seams between
+    /// SwiftUI's sub-pixel rounding leaves visible 0.5 pt seams between
     /// adjacent "pixels" once the whole crystal scales (1.4× outer ×
-    /// up-to-1.06 pulse) — those seams flash dark navy through the
+    /// up-to-1.06 pulse) — those seams flash background through the
     /// crystal. Padding produces a tiny overlap that the GPU happily
     /// composites into a clean fill.
     @ViewBuilder
@@ -167,23 +152,144 @@ private struct PixelRect {
     let color: Color
 }
 
+// MARK: - Pixel wordmark "non bank"
+
+/// "non bank" rendered as a 4×5-pixel-per-glyph wordmark. Drawn pixel
+/// by pixel so it sits naturally next to the chunky crystal — no need
+/// to ship a custom TTF for one screen of pixel-art type.
+///
+/// Layout:
+///   - Each glyph is 4 columns × 5 rows of "pixels".
+///   - 1 column of empty space between letters within a word, 3 columns
+///     between "non" and "bank".
+///   - Each pixel renders as a `PixelSize × PixelSize` square. 6 pt
+///     reads nicely on iPhone 17 Pro without overwhelming the crystal.
+private struct PixelWordmark: View {
+    private static let pixelSize: CGFloat = 6
+    private static let intraLetterGap: Int = 1
+    private static let interWordGap: Int = 3
+
+    /// Constant white — the splash background is warm dark in both
+    /// light and dark mode, so an adaptive `textPrimary` would flip
+    /// to dark brown in light mode and disappear against the backdrop.
+    private var inkColor: Color { .white }
+
+    var body: some View {
+        let glyphs: [[String]] = [
+            Self.glyphN, Self.glyphO, Self.glyphN,
+            Self.spaceColumns,
+            Self.glyphB, Self.glyphA, Self.glyphN, Self.glyphK
+        ]
+        let layout = Self.layout(glyphs: glyphs)
+        Canvas { ctx, _ in
+            for cell in layout {
+                let rect = CGRect(
+                    x: CGFloat(cell.col) * Self.pixelSize,
+                    y: CGFloat(cell.row) * Self.pixelSize,
+                    width: Self.pixelSize,
+                    height: Self.pixelSize
+                )
+                ctx.fill(Path(rect), with: .color(inkColor))
+            }
+        }
+        .frame(
+            width: CGFloat(Self.totalColumns(glyphs: glyphs)) * Self.pixelSize,
+            height: CGFloat(Self.rowsPerGlyph) * Self.pixelSize
+        )
+        .accessibilityLabel("non bank")
+    }
+
+    // MARK: Glyph definitions
+    //
+    // Each glyph is an array of 5 rows; each row is a 4-character
+    // string where "X" = filled pixel, "." = empty. Drawn in the same
+    // chunky style as the crystal — designed by eye, not from a real
+    // pixel font, so feel free to tweak rows directly if a letter
+    // reads weirdly at small sizes.
+
+    private static let rowsPerGlyph: Int = 5
+
+    private static let glyphN: [String] = [
+        "X..X",
+        "XX.X",
+        "X.XX",
+        "X..X",
+        "X..X"
+    ]
+    private static let glyphO: [String] = [
+        ".XX.",
+        "X..X",
+        "X..X",
+        "X..X",
+        ".XX."
+    ]
+    private static let glyphB: [String] = [
+        "XXX.",
+        "X..X",
+        "XXX.",
+        "X..X",
+        "XXX."
+    ]
+    private static let glyphA: [String] = [
+        ".XX.",
+        "X..X",
+        "XXXX",
+        "X..X",
+        "X..X"
+    ]
+    private static let glyphK: [String] = [
+        "X..X",
+        "X.X.",
+        "XX..",
+        "X.X.",
+        "X..X"
+    ]
+    private static let spaceColumns: [String] = Array(repeating: "...", count: 5)
+
+    private struct Cell {
+        let col: Int
+        let row: Int
+    }
+
+    /// Expand glyphs into a flat `Cell` list with correct horizontal
+    /// offsets and inter-letter gaps.
+    private static func layout(glyphs: [[String]]) -> [Cell] {
+        var cells: [Cell] = []
+        var col = 0
+        for (idx, glyph) in glyphs.enumerated() {
+            let width = glyph.first?.count ?? 0
+            for (rowIdx, row) in glyph.enumerated() {
+                for (colIdx, char) in row.enumerated() where char == "X" {
+                    cells.append(Cell(col: col + colIdx, row: rowIdx))
+                }
+            }
+            col += width
+            // Inter-letter spacing. Skip the gap after the last glyph.
+            if idx < glyphs.count - 1 {
+                col += intraLetterGap
+            }
+        }
+        return cells
+    }
+
+    private static func totalColumns(glyphs: [[String]]) -> Int {
+        var total = 0
+        for (idx, glyph) in glyphs.enumerated() {
+            total += glyph.first?.count ?? 0
+            if idx < glyphs.count - 1 { total += intraLetterGap }
+        }
+        return total
+    }
+}
+
 // MARK: - Full-screen star field
 
 /// Stars scattered across the entire screen. Positions are
 /// **deterministic** (seeded `SystemRandomNumberGenerator` replacement
 /// with a fixed-sequence LCG) so the same device always gets the same
-/// pattern and there's no flicker between launches. The field uses
-/// `GeometryReader` so positions scale with the actual safe area —
-/// looks the same proportional layout on iPhone SE through Pro Max.
+/// pattern and there's no flicker between launches.
 private struct FullScreenStarField: View {
-    /// Density tuned by eye on iPhone 17 Pro: ~30 stars feels like a
-    /// "real" sky without becoming visual noise. Smaller devices get
-    /// proportionally fewer because we cap by area.
     private static let baseStarCount: Int = 30
-
-    /// Fixed seed so the layout is stable across launches. Changing
-    /// this number reshuffles the entire field — useful for A/B'ing
-    /// distributions during design review.
     private static let seed: UInt64 = 0x5_A1A_55EED_5
 
     var body: some View {
@@ -197,19 +303,15 @@ private struct FullScreenStarField: View {
         }
     }
 
-    /// Build the star layout once per geometry change. Uses a small
-    /// LCG so we don't depend on `Foundation.SystemRandomNumberGenerator`
-    /// (whose output isn't reproducible across launches).
     private func generateStars(in size: CGSize) -> [PositionedStar] {
+        // The splash background is now warm dark (`#1B1410`) in both
+        // light and dark themes, so the star palette is constant too:
+        // warm yellow + white pop against the dark backdrop in the
+        // same way they did on the original navy splash. No dynamic
+        // colour needed — the splash isn't appearance-adaptive.
         let yellow = Color(red: 0xFC / 255, green: 0xD3 / 255, blue: 0x4D / 255)
         let white = Color.white
 
-        // Carve out a "no-stars" disc around the centre so stars don't
-        // visually pile up on top of the crystal. The crystal occupies
-        // roughly the central 280×280 box (200pt logical × 1.4 scale),
-        // so we exclude an 180-radius circle there. (Smaller than the
-        // crystal box because stars near the *corners* of the box still
-        // look fine — only the centre disc looks crowded.)
         let centre = CGPoint(x: size.width / 2, y: size.height / 2)
         let exclusionRadius: CGFloat = 180
 
@@ -228,16 +330,14 @@ private struct FullScreenStarField: View {
                 continue
             }
             let bigStar = rng.nextDouble() < 0.4
-            let size: CGFloat = bigStar ? 8 : 4
+            let starSize: CGFloat = bigStar ? 8 : 4
             let color = rng.nextDouble() < 0.5 ? yellow : white
-            // 0.7–1.7 s twinkle period — keeps the field feeling alive
-            // without any single star dominating attention.
             let period = 0.7 + rng.nextDouble()
             stars.append(
                 PositionedStar(
                     id: stars.count,
                     x: x, y: y,
-                    size: size,
+                    size: starSize,
                     color: color,
                     period: period
                 )
@@ -247,7 +347,6 @@ private struct FullScreenStarField: View {
     }
 }
 
-/// Star with absolute screen-space coords (set by FullScreenStarField).
 private struct PositionedStar: Identifiable {
     let id: Int
     let x: CGFloat
@@ -257,13 +356,6 @@ private struct PositionedStar: Identifiable {
     let period: Double
 }
 
-/// One twinkling star. Each instance owns its own `@State` toggle so
-/// stars phase independently — different periods + independent
-/// `withAnimation` start times produce a feels-random twinkle field.
-///
-/// Coordinates are absolute screen-space (top-left origin), so the
-/// view positions itself with `.position(x:y:)` rather than the
-/// centre-relative `.offset` the crystal uses.
 private struct TwinklingStar: View {
     let spec: PositionedStar
     @State private var bright: Bool = false
@@ -288,16 +380,13 @@ private struct TwinklingStar: View {
 // MARK: - Tiny seeded RNG
 
 /// Linear congruential generator. Numerical Recipes constants — fine
-/// for visual placement, **not** for cryptography. We use it because
+/// for visual placement, not for cryptography. We use it because
 /// `SystemRandomNumberGenerator` isn't seedable, and we need
-/// reproducible star layouts so the field is identical on every launch
-/// (no jarring re-shuffle when the user reopens the app).
+/// reproducible star layouts so the field is identical on every launch.
 private struct LCG {
     private var state: UInt64
 
     init(seed: UInt64) {
-        // Mix the seed so seeds with low Hamming weight don't produce
-        // trivially correlated initial outputs.
         self.state = seed &* 0x9E37_79B9_7F4A_7C15
     }
 
@@ -307,7 +396,6 @@ private struct LCG {
     }
 
     mutating func nextDouble() -> Double {
-        // Top 53 bits → uniform [0, 1).
         Double(next() >> 11) / Double(1 << 53)
     }
 }

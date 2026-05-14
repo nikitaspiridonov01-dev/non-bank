@@ -109,17 +109,28 @@ struct DebtTransactionRowView: View {
     }
 
     private func amountRow(amount: Double) -> some View {
+        // `fixedSize(horizontal:)` here mirrors the trick on the outer
+        // `positionView`. Without it the HStack inherits the VStack's
+        // ambient width and the currency code gets truncated to
+        // "100 A…" instead of "100 AMD" — the parent `Spacer(minLength:)`
+        // doesn't reserve enough room for three-letter ISO codes on
+        // narrow currencies (AMD, IDR, RUB) once a long title is on
+        // the other side.
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             Text(NumberFormatting.integerPart(amount))
                 .font(AppFonts.rowAmountInteger)
                 .foregroundColor(AppColors.textPrimary)
+                .lineLimit(1)
             Text(NumberFormatting.decimalPartIfAny(amount))
                 .font(AppFonts.rowAmountCurrency)
                 .foregroundColor(AppColors.textSecondary)
+                .lineLimit(1)
             Text(transaction.currency)
                 .font(AppFonts.rowAmountCurrency)
                 .foregroundColor(AppColors.textSecondary)
+                .lineLimit(1)
                 .padding(.leading, 3)
         }
+        .fixedSize(horizontal: true, vertical: false)
     }
 }

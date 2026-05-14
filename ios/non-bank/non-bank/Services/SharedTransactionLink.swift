@@ -46,6 +46,18 @@ enum SharedTransactionLink {
     /// any other future page on the same domain stays in Safari.
     static let universalLinkPath = "/transaction/"
 
+    /// Cloudflare Worker host that serves the `/share` HTML preview for
+    /// recipients without the iOS app installed. Same Worker that hosts
+    /// `/v1/parse-receipt` etc. — see `backend/src/share.ts`. Update
+    /// this if you ever migrate to a custom domain; for now it points
+    /// at the deployed `*.workers.dev` subdomain.
+    static let webBackendHost = "non-bank-receipt-proxy.non-bank-ai.workers.dev"
+
+    /// Path on the Worker. Lives at the root (not under `/v1/`) because
+    /// it's the user-facing share URL — short and brand-clean reads
+    /// better in iMessage previews than `…/v1/share?p=…`.
+    static let webBackendPath = "/share"
+
     /// Query parameter name carrying the base64url payload.
     static let payloadKey = "p"
 
@@ -59,12 +71,18 @@ enum SharedTransactionLink {
     /// from anywhere via AASA, but requires the paid Apple Developer
     /// Program for the Associated Domains entitlement).
     ///
-    /// Currently `.customScheme` so we can dev-test on a Personal Team
-    /// Apple ID. To flip to Universal Links: change to `.universalLink`
-    /// AND wire up the Associated Domains capability in Xcode (which
-    /// requires a paid dev account). The decoder accepts both styles
-    /// regardless, so old links keep working through the swap.
-    static var defaultURLStyle: URLStyle = .customScheme
+    /// Currently `.webBackend` — the Worker renders an HTML preview for
+    /// recipients without the iOS app, AND the page deep-links to
+    /// `nonbank://share?p=…` for those who have the app. Best of both:
+    /// shareable in any messenger, opens in-app for installed users.
+    ///
+    /// Other styles still work via the decoder (any old `nonbank://`
+    /// link keeps opening the app on `onOpenURL`):
+    ///   • `.customScheme` — only useful if the receiver definitely
+    ///     has the app and you want to skip the web hop.
+    ///   • `.universalLink` — Phase-2 path once Associated Domains
+    ///     entitlement is wired up (paid dev account required).
+    static var defaultURLStyle: URLStyle = .webBackend
 
     enum URLStyle {
         /// `nonbank://share?p=…` — works as soon as the app is installed.
@@ -76,6 +94,14 @@ enum SharedTransactionLink {
         /// the host's web page when the app isn't installed (which we'll
         /// configure to redirect to App Store).
         case universalLink
+        /// `https://<worker-host>/share?p=…` — the Cloudflare Worker
+        /// renders a server-side HTML preview, and the page tries to
+        /// hand off to `nonbank://share?p=…` on tap. Works in every
+        /// browser, on any platform, even when the app isn't installed.
+        /// No Associated Domains entitlement needed (the receiver
+        /// browser opens the URL directly; the app is invoked
+        /// secondarily via the in-page deep-link button).
+        case webBackend
     }
 
     // MARK: - Encode
@@ -94,6 +120,7 @@ enum SharedTransactionLink {
         sharerName: String?,
         friends: [Friend],
         category: Category,
+        repeatInterval: RepeatInterval? = nil,
         style: URLStyle = defaultURLStyle
     ) throws -> URL {
         guard let split = transaction.splitInfo else {
@@ -115,6 +142,15 @@ enum SharedTransactionLink {
             )
         }
 
+        // Resolve the recurring rule. Prefer the explicit param (caller
+        // walked the parent reminder for child-occurrence transactions),
+        // fall back to whatever's on the transaction itself for the
+        // standalone case (parent reminder shared directly, or non-
+        // recurring transaction). `nil` overall → the receiver gets a
+        // non-recurring import, which is the safe degradation.
+        let resolvedInterval = repeatInterval ?? transaction.repeatInterval
+        let recurring = resolvedInterval.flatMap(SharedRecurring.init(from:))
+
         let payload = SharedTransactionPayload(
             v: currentSchemaVersion,
             id: transaction.syncID,
@@ -130,7 +166,8 @@ enum SharedTransactionLink {
             ce: category.emoji,
             sm: split.splitMode?.rawValue,
             sn: sharerName,
-            f: participants
+            f: participants,
+            r: recurring
         )
 
         return try buildURL(payload: payload, style: style)
@@ -157,6 +194,10 @@ enum SharedTransactionLink {
             components.scheme = "https"
             components.host = universalLinkHost
             components.path = universalLinkPath
+        case .webBackend:
+            components.scheme = "https"
+            components.host = webBackendHost
+            components.path = webBackendPath
         }
         components.queryItems = [URLQueryItem(name: payloadKey, value: base64url)]
         guard let url = components.url else {
@@ -217,8 +258,14 @@ enum SharedTransactionLink {
         if url.scheme == customScheme && url.host == customSchemeHost {
             return true
         }
-        // Universal Link: `https://share.nonbank.app/s/…`
+        // Universal Link: `https://<universalLinkHost>/transaction/…`
         if url.scheme == "https" && url.host == universalLinkHost {
+            return true
+        }
+        // Web backend: `https://<workerHost>/share?p=…`. Path-scoped so
+        // a future `/v1/health` (or any other Worker route) doesn't get
+        // misclassified as a share link if it ever lands in onOpenURL.
+        if url.scheme == "https" && url.host == webBackendHost && url.path == webBackendPath {
             return true
         }
         return false

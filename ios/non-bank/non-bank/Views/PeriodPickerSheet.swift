@@ -82,6 +82,7 @@ struct PeriodPickerSheet: View {
                 }
             }
         }
+        .listRowBackground(AppColors.backgroundElevated)
     }
 
     /// Compact "MMM d, yy" format — short enough to fit alongside the
@@ -102,6 +103,7 @@ struct PeriodPickerSheet: View {
                 presetRow(p)
             }
         }
+        .listRowBackground(AppColors.backgroundElevated)
     }
 
     /// Tappable row for a specific month. Dismisses the sheet
@@ -226,11 +228,25 @@ private struct CustomRangeSheet: View {
                         .padding(.vertical, AppSpacing.sm)
                 }
                 .buttonStyle(.borderedProminent)
+                // `accentBold` — same swap the onboarding, settle-up,
+                // import-wizard, and receipt-scan CTAs already use.
+                // The earlier comment here claimed the deeper variant
+                // read as a "warning" against the cream form in light
+                // mode, but in practice it's fine in both themes and
+                // the lighter `accent` was failing white-on-fill
+                // contrast at ~2.6:1 in dark mode (visible as a pale
+                // peach pill). `accentBold` lands ≥3:1 (large-text
+                // WCAG AA) in both light and dark.
                 .tint(AppColors.accentBold)
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
             }
         }
+        // `.listSectionSpacing(.compact)` tightens the gap between the
+        // From/To section and the Apply button section. The default
+        // `insetGrouped` spacing left a wide cream band that made the
+        // CTA feel detached from the controls it acts on.
+        .listSectionSpacing(.compact)
         .scrollContentBackground(.hidden)
         .background(AppColors.backgroundPrimary)
         .dismissibleSheet(title: "Custom range")

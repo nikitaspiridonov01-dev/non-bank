@@ -43,11 +43,11 @@ struct BigCategoryMonthCard: View {
 
     // MARK: - Narrative
 
-    /// Bold sentence with **amount** and **multiplier** emphasized
-    /// in the warm accent. The clause after the dash starts with
-    /// "it's" so the second half reads as a follow-on observation
-    /// ("…— it's 2.6× higher than your typical expenses.")
-    /// rather than a fragment.
+    /// Bold single-paragraph narrative. Bright orange `accent` is
+    /// reserved for clickable elements; non-clickable emphasis (month,
+    /// amount, category, multiplier) uses `accentBold` — the deep
+    /// warm sienna variant — noticeable but muted enough to not
+    /// compete with the clickable orange CTAs.
     private func narrative(for e: CategoryAnalyticsService.BigCategoryMonth) -> some View {
         let amount = formatAmount(e.total)
         let mult = formatMultiplier(e.multiplier)
@@ -57,19 +57,19 @@ struct BigCategoryMonthCard: View {
             Text("In ")
                 .foregroundColor(AppColors.textPrimary)
             + Text(monthName)
-                .foregroundColor(AppColors.textPrimary)
+                .foregroundColor(AppColors.accentBold)
             + Text(", you spent ")
                 .foregroundColor(AppColors.textPrimary)
             + Text(amount)
-                .foregroundColor(AppColors.reminderAccent)
+                .foregroundColor(AppColors.accentBold)
             + Text(" on ")
                 .foregroundColor(AppColors.textPrimary)
             + Text(e.categoryTitle)
-                .foregroundColor(AppColors.textPrimary)
+                .foregroundColor(AppColors.accentBold)
             + Text(" — it's ")
                 .foregroundColor(AppColors.textPrimary)
             + Text("\(mult)× higher")
-                .foregroundColor(AppColors.reminderAccent)
+                .foregroundColor(AppColors.accentBold)
             + Text(" than your typical expenses.")
                 .foregroundColor(AppColors.textPrimary)
         )
@@ -81,10 +81,13 @@ struct BigCategoryMonthCard: View {
 
     // MARK: - Formatting
 
+    /// Non-breaking spaces glue the amount together so it wraps as
+    /// one unit — see the matching helper in `BigPurchaseCard` for
+    /// the full reasoning.
     private func formatAmount(_ value: Double) -> String {
         let int = NumberFormatting.integerPart(value)
         let dec = NumberFormatting.decimalPartIfAny(value)
-        return "\(int)\(dec) \(context.targetCurrency)"
+        return "\(int)\(dec) \(context.targetCurrency)".replacingOccurrences(of: " ", with: "\u{00A0}")
     }
 
     private func formatMultiplier(_ mult: Double) -> String {

@@ -26,16 +26,16 @@ struct EmptyTransactionsView: View {
 
     var body: some View {
         GeometryReader { geo in
-            VStack(spacing: AppSpacing.lg) {
-                SleepingCatIllustration(tint: .neutral, size: .hero)
+            VStack(spacing: AppSpacing.md) {
+                SleepingCatIllustration(tint: .neutral, size: .standard)
 
                 Text("No transactions yet")
-                    .font(AppFonts.subhead)
-                    .foregroundColor(AppColors.textPrimary)
+                    .font(AppFonts.labelPrimary)
+                    .foregroundColor(AppColors.textSecondary)
 
                 Text("Add your first transaction to start tracking your spending.")
                     .font(AppFonts.caption)
-                    .foregroundColor(AppColors.textSecondary)
+                    .foregroundColor(AppColors.textTertiary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, AppSpacing.xxxl)
 

@@ -62,10 +62,14 @@ final class ShareLinkCoordinator: ObservableObject {
         )
         /// Same `syncID` AND identical content — receiver already has
         /// this exact transaction. UI navigates to it (or shows toast).
-        case identical(existingID: Int)
+        /// Carries `syncID` rather than the SQLite autoincrement id so
+        /// the lookup stays valid across Replace-reminder flows that
+        /// rotate the id, and against the staleness window between a
+        /// DB write and the next `load()` cycle.
+        case identical(syncID: String)
         /// Action complete. UI navigates to the resulting transaction
-        /// and resets state.
-        case completed(transactionID: Int, kind: CompletionKind)
+        /// and resets state. Carries `syncID` (see `.identical` above).
+        case completed(syncID: String, kind: CompletionKind)
         /// Decode failed. UI shows error alert.
         case errored(SharedTransactionError)
     }
@@ -156,7 +160,13 @@ final class ShareLinkCoordinator: ObservableObject {
                 autoPickIndex: nil
             )
         case .identical(let id):
-            routingState = .identical(existingID: id)
+            // Translate the classifier's int id to syncID — the rest
+            // of the state machine (and the View layer) keys off the
+            // stable identifier so we don't have to refresh the int
+            // id at every consumer when the row's autoincrement key
+            // rotates (Replace-reminder flow).
+            let syncID = existingTransactions.first(where: { $0.id == id })?.syncID ?? ""
+            routingState = .identical(syncID: syncID)
         case .updatePrompt(let id, let knownIdx):
             routingState = .showingUpdateAlert(
                 payload: payload,
@@ -245,16 +255,24 @@ final class ShareLinkCoordinator: ObservableObject {
                 categoryStore.addCategory(cat)
             }
 
-            if isUpdate, let existingID {
+            if isUpdate, existingID != nil {
                 // Update path keeps the same SQLite primary key but
                 // replaces every other field — including the freshly
                 // computed `payloadChecksum`, which the classifier will
-                // read back next time.
-                transactionStore.update(resolved.transaction)
-                routingState = .completed(transactionID: existingID, kind: .updated)
+                // read back next time. `updateAndWait` blocks on the DB
+                // write + `load()` so the View's lookup-by-syncID after
+                // we transition to `.completed` reads the FRESH row,
+                // not the pre-update copy that was sitting in
+                // `transactions` while the async write was in flight.
+                await transactionStore.updateAndWait(resolved.transaction)
+                routingState = .completed(syncID: resolved.transaction.syncID, kind: .updated)
             } else {
-                if let newID = await transactionStore.addAndReturnID(resolved.transaction) {
-                    routingState = .completed(transactionID: newID, kind: .createdNew)
+                // `addAndReturnID` already awaits the load; we use
+                // its return value just as a success signal here —
+                // the sync id is intrinsic to `resolved.transaction`
+                // and survives any id rotation.
+                if await transactionStore.addAndReturnID(resolved.transaction) != nil {
+                    routingState = .completed(syncID: resolved.transaction.syncID, kind: .createdNew)
                 } else {
                     // `addAndReturnID` looks up by syncID after the load
                     // — falling here means the insert silently failed.
@@ -340,8 +358,8 @@ extension ShareLinkCoordinator.RoutingState: Equatable {
             return lp == rp && le == re && lk == rk
         case let (.identical(l), .identical(r)):
             return l == r
-        case let (.completed(li, lk), .completed(ri, rk)):
-            return li == ri && lk == rk
+        case let (.completed(ls, lk), .completed(rs, rk)):
+            return ls == rs && lk == rk
         case (.errored, .errored):
             // SharedTransactionError doesn't conform to Equatable and
             // synthesising it would mean opening up `LocalizedError`

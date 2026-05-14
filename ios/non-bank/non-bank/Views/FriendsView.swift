@@ -45,22 +45,29 @@ struct FriendsView: View {
         return result
     }
 
-    var body: some View {
-        List {
-            if !friendStore.allGroups.isEmpty {
-                groupFilterSection
-            }
+    /// True when there's no friend record at all — neither in the store
+    /// nor in any group. We swap the List for a centred placeholder
+    /// because the search bar / group filter chips have nothing to
+    /// operate on, and the List doesn't centre an empty section
+    /// vertically.
+    private var isFullyEmpty: Bool {
+        friendStore.friends.isEmpty
+    }
 
-            if filteredFriends.isEmpty {
-                emptyState
+    var body: some View {
+        Group {
+            if !friendStore.hasLoadedOnce && isFullyEmpty {
+                // Cold-launch skeleton — better than flashing the
+                // sleeping-cat empty state before SQLite finishes
+                // its first `fetchAll`.
+                SkeletonTransactionList(rowCount: 4)
+            } else if isFullyEmpty {
+                emptyPlaceholder
             } else {
-                friendsListSection
+                friendsList
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(AppColors.backgroundPrimary)
-        .searchable(text: $searchText, prompt: "Search friends")
         .navigationTitle("Friends")
         // The parent `SettingsView` calls `.navigationBarHidden(true)`
         // for its own screen. That leaks into pushed children inside
@@ -119,28 +126,104 @@ struct FriendsView: View {
         }
     }
 
-    // MARK: - Group Filter
+    // MARK: - Friends List
+    //
+    // List with per-row Liquid Glass background pills. Trading
+    // ScrollView + LazyVStack for List: SwiftUI's List handles search
+    // diffing without dropping scroll position, and per-row glass
+    // containers stay stable across cell recycling (one giant glass
+    // container around the whole list flickers on scroll/tap).
+    // Native `.swipeActions` carries the delete affordance — on guard
+    // failure the row stays in place because the data hasn't changed,
+    // sidestepping the awkward "row faded out then snaps back" of the
+    // earlier `SwipeToDeleteRow` approach.
 
-    private var groupFilterSection: some View {
-        Section {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: AppSpacing.sm) {
-                    groupChip(label: "All", isSelected: selectedGroup == nil) {
-                        selectedGroup = nil
-                    }
-                    ForEach(friendStore.allGroups, id: \.self) { group in
-                        groupChip(label: group, isSelected: selectedGroup == group) {
-                            selectedGroup = (selectedGroup == group) ? nil : group
+    private var friendsList: some View {
+        List {
+            if !friendStore.allGroups.isEmpty {
+                groupFilterBar
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: AppSpacing.sm, trailing: 0))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+
+            if filteredFriends.isEmpty {
+                // Active search returned no rows — inline "No results"
+                // (the parent body's `isFullyEmpty` branch only catches
+                // the never-had-friends case).
+                noResultsInline
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
+            } else {
+                ForEach(filteredFriends) { friend in
+                    friendRowContent(friend)
+                        // Glass on the content (not via
+                        // `listRowBackground`, which would render
+                        // edge-to-edge regardless of insets and make
+                        // adjacent rows merge into one slab).
+                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                        .listRowInsets(EdgeInsets(
+                            top: AppSpacing.xs,
+                            leading: AppSpacing.pageHorizontal,
+                            bottom: AppSpacing.xs,
+                            trailing: AppSpacing.pageHorizontal
+                        ))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                handleDelete(friend)
+                            } label: {
+                                // `iconOnly` so iOS renders the trash
+                                // glyph the same way on every row
+                                // height — without it, taller rows
+                                // (with avatars) get a stacked icon+
+                                // label and shorter rows get inline,
+                                // making the destructive affordance
+                                // visually inconsistent across the
+                                // Friends / Categories list family.
+                                Label("Delete", systemImage: "trash")
+                                    .labelStyle(.iconOnly)
+                            }
+                            .tint(AppColors.danger)
                         }
-                    }
                 }
-                .padding(.horizontal, AppSpacing.pageHorizontal)
-                .padding(.vertical, AppSpacing.xs)
             }
         }
-        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .searchable(text: $searchText, prompt: "Search friends")
+    }
+
+    private var noResultsInline: some View {
+        VStack(spacing: AppSpacing.md) {
+            SearchIllustration(tint: .neutral, size: .standard)
+            Text("No results")
+                .font(AppFonts.labelPrimary)
+                .foregroundColor(AppColors.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+    }
+
+    // MARK: - Group Filter
+
+    private var groupFilterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: AppSpacing.sm) {
+                groupChip(label: "All", isSelected: selectedGroup == nil) {
+                    selectedGroup = nil
+                }
+                ForEach(friendStore.allGroups, id: \.self) { group in
+                    groupChip(label: group, isSelected: selectedGroup == group) {
+                        selectedGroup = (selectedGroup == group) ? nil : group
+                    }
+                }
+            }
+            .padding(.horizontal, AppSpacing.pageHorizontal)
+            .padding(.vertical, AppSpacing.xs)
+        }
     }
 
     private func groupChip(label: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
@@ -154,32 +237,6 @@ struct FriendsView: View {
                 .clipShape(Capsule())
         }
         .buttonStyle(.plain)
-    }
-
-    // MARK: - Friends List
-
-    private var friendsListSection: some View {
-        Section {
-            ForEach(filteredFriends) { friend in
-                friendRow(friend)
-                    .listRowInsets(EdgeInsets(
-                        top: AppSpacing.xxs,
-                        leading: AppSpacing.pageHorizontal,
-                        bottom: AppSpacing.xxs,
-                        trailing: AppSpacing.pageHorizontal
-                    ))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button(role: .destructive) {
-                            handleDelete(friend)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                        .tint(AppColors.danger)
-                    }
-            }
-        }
     }
 
     /// Guarded delete: blocked when this friend appears in any
@@ -205,15 +262,13 @@ struct FriendsView: View {
         }
     }
 
-    private func friendRow(_ friend: Friend) -> some View {
-        // Cream pill-card row, mirroring `WhoPaidPickerView.compactRow`
-        // and `DebtRowView` shape so all three friend list surfaces
-        // share one visual pattern. Tinted with `backgroundElevated`
-        // (cream) instead of `splitCardFill` (lavender) — Friends is
-        // a neutral page, not a Split sub-context.
+    /// Single friend row content. Background-less — the parent
+    /// `glassFriendsCard` provides one shared Liquid Glass surface for
+    /// all rows. Tap routes to the friend's profile sheet.
+    private func friendRowContent(_ friend: Friend) -> some View {
         Button(action: { sheetFriend = .view(friend) }) {
             HStack(spacing: AppSpacing.md) {
-                PixelCatView(id: friend.id, size: 36, blackAndWhite: !friend.isConnected)
+                PixelCatView(id: friend.id, size: AppSizes.emojiFrame, blackAndWhite: !friend.isConnected)
                     .clipShape(Circle())
 
                 Text(friend.name)
@@ -235,28 +290,22 @@ struct FriendsView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, AppSpacing.rowVertical)
             .frame(maxWidth: .infinity)
-            .background(AppColors.backgroundElevated)
-            .cornerRadius(AppRadius.large)
-            .contentShape(RoundedRectangle(cornerRadius: AppRadius.large))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Empty State
+    // MARK: - Empty State (no friends ever)
 
-    private var emptyState: some View {
-        Section {
+    /// Centred placeholder shown when the user has zero friends in the
+    /// store. Matches the Reminders / Home pattern: `.standard`-size
+    /// figure, GeometryReader + `.position` for reliable visual
+    /// centring inside the navigation child container.
+    private var emptyPlaceholder: some View {
+        GeometryReader { geo in
             VStack(spacing: AppSpacing.md) {
-                // Different pixel figure per state — `emptyBox` reads
-                // as "container with nothing in it" for the no-friends-
-                // ever case; `search` reads as "active hunt with no
-                // hits" for the search-with-zero-results case.
-                if searchText.isEmpty {
-                    EmptyBoxIllustration(tint: .neutral, size: .standard)
-                } else {
-                    SearchIllustration(tint: .neutral, size: .standard)
-                }
-                Text(searchText.isEmpty ? "No friends yet" : "No results")
+                EmptyBoxIllustration(tint: .neutral, size: .standard)
+                Text("No friends yet")
                     .font(AppFonts.labelPrimary)
                     .foregroundColor(AppColors.textSecondary)
                 Button { sheetFriend = .create } label: {
@@ -270,11 +319,8 @@ struct FriendsView: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 40)
+            .position(x: geo.size.width / 2, y: geo.size.height / 2)
         }
-        .listRowInsets(EdgeInsets())
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
     }
 }
 
@@ -296,6 +342,7 @@ struct FriendCardView: View {
     @EnvironmentObject var currencyStore: CurrencyStore
     @EnvironmentObject var friendStore: FriendStore
     @EnvironmentObject var categoryStore: CategoryStore
+    @EnvironmentObject var receiptItemStore: ReceiptItemStore
 
     @State private var selectedTransaction: Transaction? = nil
     @State private var showTransactionDetail: Bool = false
@@ -304,6 +351,10 @@ struct FriendCardView: View {
     /// friend page). Mirrors `FriendDetailView`'s pattern so both
     /// friend hero pages route into the same prefilled split flow.
     @State private var showCreateSplit: Bool = false
+    /// Drives the "Settle up" CTA's create-transaction sheet. Same
+    /// shape as `FriendDetailView.pendingSettleUp` so both friend
+    /// hero pages route into the same prefilled settle-up flow.
+    @State private var pendingSettleUp: CreateTransactionModal.SettleUpPrefill? = nil
 
     private var convert: (Double, String, String) -> Double {
         { [currencyStore] amount, from, to in
@@ -338,6 +389,7 @@ struct FriendCardView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     profileHeader
                     debtStatusRow
+                    settleUpCTA
                     transactionsSection
                     Spacer().frame(height: 40)
                 }
@@ -362,13 +414,29 @@ struct FriendCardView: View {
             .sheet(isPresented: $showCreateSplit) {
                 CreateTransactionModal(
                     isPresented: $showCreateSplit,
-                    initialTab: .split,
+                    autoOpenSplitFlow: true,
                     prefilledFriendIDs: [friend.id]
                 )
                 .environmentObject(categoryStore)
                 .environmentObject(transactionStore)
                 .environmentObject(currencyStore)
                 .environmentObject(friendStore)
+            }
+            // Settle-up CTA target — same prefilled-modal route as
+            // the Debts-side `FriendDetailView`.
+            .sheet(item: $pendingSettleUp) { prefill in
+                CreateTransactionModal(
+                    isPresented: Binding(
+                        get: { pendingSettleUp != nil },
+                        set: { if !$0 { pendingSettleUp = nil } }
+                    ),
+                    settleUpPrefill: prefill
+                )
+                .environmentObject(categoryStore)
+                .environmentObject(transactionStore)
+                .environmentObject(currencyStore)
+                .environmentObject(friendStore)
+                .environmentObject(receiptItemStore)
             }
             .sheet(isPresented: Binding(
                 get: { showTransactionDetail && selectedTransaction != nil },
@@ -399,6 +467,7 @@ struct FriendCardView: View {
                     .environmentObject(transactionStore)
                     .environmentObject(friendStore)
                     .environmentObject(currencyStore)
+                    .environmentObject(receiptItemStore)
                     .sheet(item: $editingTransaction) { editTx in
                         CreateTransactionModal(
                             isPresented: Binding(
@@ -456,6 +525,46 @@ struct FriendCardView: View {
 
         DebtRowView(kind: kind, currency: currency, isConnected: friend.isConnected)
             .padding(.horizontal, AppSpacing.pageHorizontal)
+    }
+
+    // MARK: - Settle Up CTA
+
+    /// "Settle up" button under the debt row. Identical shape and
+    /// behaviour to `FriendDetailView.settleUpCTA` — the Profile-side
+    /// friend page (this view) needs the same affordance so users
+    /// reaching the friend through Profile → Friends don't have to
+    /// jump over to Debts to close the balance.
+    @ViewBuilder
+    private var settleUpCTA: some View {
+        let amount = myDebt?.amount ?? 0
+        if abs(amount) >= 0.005 {
+            Button {
+                pendingSettleUp = CreateTransactionModal.SettleUpPrefill(
+                    friendID: friend.id,
+                    amount: abs(amount),
+                    currency: currencyStore.selectedCurrency,
+                    // Positive (you lent) → friend pays you back.
+                    // Negative (you borrowed) → you pay the friend.
+                    direction: amount > 0 ? .friendPaysMe : .iPayFriend
+                )
+            } label: {
+                HStack(spacing: AppSpacing.xs) {
+                    Image(systemName: "arrow.right.circle.fill")
+                        .font(AppFonts.bodyEmphasized)
+                    Text("Settle up")
+                        .font(AppFonts.bodyEmphasized)
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+                        .fill(AppColors.splitAccentBold)
+                )
+            }
+            .padding(.horizontal, AppSpacing.pageHorizontal)
+            .padding(.top, AppSpacing.md)
+        }
     }
 
     // MARK: - Transactions Section

@@ -345,13 +345,13 @@ final class ReceivedTransactionMapperTests: XCTestCase {
         let me = SharedTransactionPayload.Participant(
             id: "rec-X1", n: "Me", sh: 50, pa: 0
         )
-        let payload = makePayload(participants: [me], sm: "Unequally, exact amounts")
+        let payload = makePayload(participants: [me], sm: "byAmount")
         let resolved = try ReceivedTransactionMapper.map(
             payload: payload, receiverParticipantIndex: 0,
             existingFriends: [], existingCategories: [foodCategory],
             nextTransactionID: 1
         )
-        XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .unequalExact)
+        XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .byAmount)
     }
 
     func testMap_legacySplitModeNil_decodesAsNil() throws {

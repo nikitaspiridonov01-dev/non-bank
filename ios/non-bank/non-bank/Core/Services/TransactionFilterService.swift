@@ -180,7 +180,7 @@ enum TransactionFilterService {
     static func topCategories(
         from transactions: [Transaction],
         resolveCategory: (Transaction) -> String,
-        limit: Int = 2
+        limit: Int = 3
     ) -> [String] {
         var stats: [String: (count: Int, lastDate: Date)] = [:]
         for tx in transactions {

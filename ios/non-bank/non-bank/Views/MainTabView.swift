@@ -2,10 +2,16 @@ import SwiftUI
 import UserNotifications
 
 struct MainTabView: View {
-    @StateObject private var transactionStore = TransactionStore()
-    @StateObject private var categoryStore = CategoryStore(defaults: CategoryStore.defaultCategories)
-    @StateObject private var friendStore = FriendStore()
-    @StateObject private var receiptItemStore = ReceiptItemStore()
+    // Data stores live at the app root now — `non_bankApp` owns the
+    // single `@StateObject` instances and pushes them down via
+    // `@EnvironmentObject`. Lifting them out of this view was needed
+    // so the splash-stage `OnboardingView` (which sits above the tab
+    // bar in `RootView`) can resolve the same stores the main app
+    // sees.
+    @EnvironmentObject var transactionStore: TransactionStore
+    @EnvironmentObject var categoryStore: CategoryStore
+    @EnvironmentObject var friendStore: FriendStore
+    @EnvironmentObject var receiptItemStore: ReceiptItemStore
     @EnvironmentObject var currencyStore: CurrencyStore
     @EnvironmentObject var router: NavigationRouter
     @EnvironmentObject var syncManager: SyncManager
@@ -26,14 +32,26 @@ struct MainTabView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            Group {
-                if router.selectedTab == 0 {
-                    HomeView()
-                        .environmentObject(transactionStore)
-                        .environmentObject(categoryStore)
-                        .environmentObject(friendStore)
-                        .environmentObject(receiptItemStore)
-                } else if router.selectedTab == 1 {
+            // HomeView is always kept in the view tree and just hidden
+            // via opacity / hit-testing when the Settings tab is up.
+            // The previous `if router.selectedTab == 0` discard reset
+            // the home scroll offset every time the user popped into
+            // Settings and back — `ScrollView` state lives in the view
+            // tree, so destroying the tree throws the position away.
+            // SettingsView, on the other hand, is rebuilt on entry
+            // (no expensive scroll state to preserve, and we want its
+            // `.onAppear` hooks — display name reload, sync availability
+            // check — to re-run each visit).
+            ZStack {
+                HomeView()
+                    .environmentObject(transactionStore)
+                    .environmentObject(categoryStore)
+                    .environmentObject(friendStore)
+                    .environmentObject(receiptItemStore)
+                    .opacity(router.selectedTab == 0 ? 1 : 0)
+                    .allowsHitTesting(router.selectedTab == 0)
+
+                if router.selectedTab == 1 {
                     SettingsView()
                         .environmentObject(transactionStore)
                         .environmentObject(categoryStore)
@@ -107,7 +125,9 @@ struct MainTabView: View {
             CreateTransactionModal(
                 isPresented: $router.showTransactionEditor,
                 editingTransaction: router.editingTransaction,
-                initialTab: router.initialCreateTab,
+                autoOpenSplitFlow: router.autoOpenSplitFlow,
+                autoOpenScanFlow: router.autoOpenScanFlow,
+                autoSplitByItems: router.autoSplitByItems,
                 prefilledFriendIDs: router.prefilledFriendIDs
             )
             .environmentObject(categoryStore)
@@ -115,6 +135,36 @@ struct MainTabView: View {
             .environmentObject(currencyStore)
             .environmentObject(friendStore)
             .environmentObject(receiptItemStore)
+        }
+        // Post-create share prompt for split transactions. Driven by
+        // `router.pendingSplitShareSyncID` so the trigger is decoupled
+        // from the create modal's own dismiss animation. We resolve
+        // the transaction from the store at present-time so the sheet
+        // always sees the latest version (any post-save tweak —
+        // recurring spawn, sync update — flows in).
+        .sheet(
+            isPresented: Binding(
+                get: { router.pendingSplitShareSyncID != nil },
+                set: { if !$0 { router.dismissSplitSharePrompt() } }
+            ),
+            onDismiss: { router.dismissSplitSharePrompt() }
+        ) {
+            if let syncID = router.pendingSplitShareSyncID,
+               let tx = transactionStore.transactions.first(where: { $0.syncID == syncID }) {
+                ShareSplitPromptSheet(transaction: tx)
+                    .environmentObject(categoryStore)
+                    .environmentObject(friendStore)
+                    .presentationDetents([.medium])
+                    .presentationDragIndicator(.visible)
+                // Background is set on the sheet itself
+                // (`AppColors.backgroundPrimary`) to match the rest of
+                // the sheet family — CategoriesSheetView,
+                // CurrencyRatesSheet, the create-transaction modal
+                // all use that token. The previous
+                // `.presentationBackground(.regularMaterial)` here
+                // produced a flat translucent-grey card that read as
+                // an odd one out.
+            }
         }
         .sheet(item: $notificationOpenedTransaction) { tx in
             // Use the freshest version from the store — the snapshot we
@@ -163,8 +213,19 @@ struct MainTabView: View {
             if SyncManager.isCloudKitEnabled {
                 syncManager.transactionStore = transactionStore
                 syncManager.categoryStore = categoryStore
+                syncManager.friendStore = friendStore
+                syncManager.receiptItemStore = receiptItemStore
                 transactionStore.syncManager = syncManager
                 categoryStore.syncManager = syncManager
+                friendStore.syncManager = syncManager
+                receiptItemStore.syncManager = syncManager
+                // ReceiptItem rows only carry the parent's local
+                // autoincrement id; CloudKit pushes need the stable
+                // syncID. The lookup reads off the in-memory
+                // transaction store so it stays cheap.
+                receiptItemStore.transactionSyncIDLookup = { [weak transactionStore] id in
+                    transactionStore?.transactions.first(where: { $0.id == id })?.syncID
+                }
                 Task { await syncManager.syncIfEnabled() }
             }
             requestNotificationPermission()
@@ -217,8 +278,16 @@ struct MainTabView: View {
                         categoryStore: categoryStore
                     )
                 }
-            case .completed(let txID, _), .identical(let txID):
-                if let tx = transactionStore.transactions.first(where: { $0.id == txID }) {
+            case .completed(let txSyncID, _), .identical(let txSyncID):
+                // `syncID` lookup (instead of the previous `id` /
+                // SQLite-autoincrement) survives Replace-reminder
+                // flows that rotate the int id, AND survives the
+                // staleness window between a write and the next
+                // `load()` cycle — `syncID` is set on the in-memory
+                // record at insert/update time, so it's already
+                // queryable even before the followup `load()` would
+                // refresh anything else.
+                if let tx = transactionStore.transactions.first(where: { $0.syncID == txSyncID }) {
                     shareLinkOpenedTransaction = tx
                 }
                 shareLinkCoordinator.reset()

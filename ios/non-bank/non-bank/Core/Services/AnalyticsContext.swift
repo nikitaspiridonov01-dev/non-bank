@@ -37,6 +37,17 @@ import Foundation
 // just makes the new pattern available.
 
 struct AnalyticsContext {
+    /// Pre-normalised transactions ready for analytics aggregation:
+    ///  - Rows the user hid (`excludedFromInsights == true`) are dropped.
+    ///  - For split transactions, when the global "include potential
+    ///    expenses" setting is ON, `amount` is rewritten to
+    ///    `splitInfo.myShare` so every `tx.amount` site in
+    ///    `CategoryAnalyticsService` aggregates the user's real share
+    ///    rather than the out-of-pocket payment. In legacy mode the
+    ///    amount is untouched — analytics behave exactly as before.
+    /// This pre-transform is what makes the per-call-site changes in
+    /// CategoryAnalyticsService unnecessary: every aggregator reads
+    /// `tx.amount` and gets the right number for the current mode.
     let transactions: [Transaction]
     let targetCurrency: String
     let convert: (_ amount: Double, _ from: String, _ to: String) -> Double
@@ -93,20 +104,59 @@ extension AnalyticsContext {
         categoryStore: CategoryStore,
         useHomeTransactions: Bool = true
     ) -> AnalyticsContext {
-        let txs = useHomeTransactions
+        let raw = useHomeTransactions
             ? transactionStore.homeTransactions
             : transactionStore.transactions
         let emojiMap = Dictionary(
             uniqueKeysWithValues: categoryStore.categories.map { ($0.title, $0.emoji) }
         )
+        let includePotential = InsightsSettings.shared.includePotentialExpenses
+        let normalised = normaliseForInsights(raw, includePotentialExpenses: includePotential)
         return AnalyticsContext(
-            transactions: txs,
+            transactions: normalised,
             targetCurrency: currencyStore.selectedCurrency,
             convert: { [currencyStore] amount, from, to in
                 currencyStore.convert(amount: amount, from: from, to: to)
             },
             emojiByCategory: emojiMap
         )
+    }
+
+    /// Applies the per-tx exclude filter and the split-amount substitution
+    /// in one pass. Exposed at file scope so tests and non-SwiftUI
+    /// callers can build a context without going through the
+    /// `EnvironmentObject` plumbing of `from(...)`.
+    static func normaliseForInsights(
+        _ transactions: [Transaction],
+        includePotentialExpenses: Bool
+    ) -> [Transaction] {
+        transactions.compactMap { tx in
+            if tx.excludedFromInsights { return nil }
+            guard includePotentialExpenses,
+                  let split = tx.splitInfo,
+                  abs(split.myShare - tx.amount) > 0.0001 else {
+                return tx
+            }
+            return Transaction(
+                id: tx.id,
+                syncID: tx.syncID,
+                emoji: tx.emoji,
+                category: tx.category,
+                title: tx.title,
+                description: tx.description,
+                amount: split.myShare,
+                currency: tx.currency,
+                date: tx.date,
+                type: tx.type,
+                tags: tx.tags,
+                lastModified: tx.lastModified,
+                repeatInterval: tx.repeatInterval,
+                parentReminderID: tx.parentReminderID,
+                splitInfo: tx.splitInfo,
+                payloadChecksum: tx.payloadChecksum,
+                excludedFromInsights: tx.excludedFromInsights
+            )
+        }
     }
 }
 
@@ -220,6 +270,16 @@ extension AnalyticsContext {
     /// calendrically have those days as the denominator.
     var averageDailyByDayOfMonth: [CategoryAnalyticsService.DayOfMonthAverage] {
         CategoryAnalyticsService.averageDailyByDayOfMonth(
+            transactions: transactions,
+            targetCurrency: targetCurrency,
+            convert: convert
+        )
+    }
+
+    /// Average expense per weekday (Sun…Sat) across the user's full
+    /// expense history. Drives the calendar card's "Avg. week" tab.
+    var averageDailyByDayOfWeek: [CategoryAnalyticsService.DayOfWeekAverage] {
+        CategoryAnalyticsService.averageDailyByDayOfWeek(
             transactions: transactions,
             targetCurrency: targetCurrency,
             convert: convert

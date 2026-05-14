@@ -21,7 +21,14 @@ struct HomeView: View {
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var currencyStore: CurrencyStore
     @EnvironmentObject var friendStore: FriendStore
+    @EnvironmentObject var receiptItemStore: ReceiptItemStore
     @EnvironmentObject var router: NavigationRouter
+
+    /// Observed so the home balance / trend / per-row display rebuild
+    /// the moment the user flips the "include potential expenses"
+    /// switch in Settings — without re-rendering, the numbers would
+    /// stay stale until the next mutation in `transactionStore`.
+    @ObservedObject private var insightsSettings = InsightsSettings.shared
 
     @State private var showFilters: Bool = false
 
@@ -67,13 +74,19 @@ struct HomeView: View {
 
     // MARK: - Главный Экран
     var body: some View {
+        // Balance and trend bars sum amounts, so they go through the
+        // insights-normalised list (drops `excludedFromInsights`, swaps
+        // split `amount` for `myShare` when the setting is ON). The
+        // raw `homeTransactions` is reserved for the list view below —
+        // the user should still see (and unhide) excluded rows.
+        let insightsHome = transactionStore.homeTransactionsForInsights
         let baseBalance = vm.balanceForPeriod(
-            allTransactions: transactionStore.homeTransactions,
+            allTransactions: insightsHome,
             currency: currencyStore.selectedCurrency,
             convert: convert
         )
         let trendBars = vm.trendBars(
-            allTransactions: transactionStore.homeTransactions,
+            allTransactions: insightsHome,
             currency: currencyStore.selectedCurrency,
             convert: convert
         )
@@ -229,18 +242,29 @@ struct HomeView: View {
             .overlay(alignment: .topLeading) {
                 remindersButton
             }
+            .overlay(alignment: .topTrailing) {
+                scanReceiptButton
+            }
             .zIndex(1)
             } // end if !isEmpty
 
-            // Empty state — centred on screen whenever the user has
-            // no past-dated transactions for Home. Previously gated
-            // on **both** home + reminder transactions being empty,
-            // but that left a blank middle when a user had reminders
-            // only: the BalanceHeader VStack is also gated on
-            // `!homeTransactions.isEmpty`, so neither rendered.
-            // Reminders stay reachable via the top-left toolbar
-            // button — the empty state can claim the centre.
-            if transactionStore.homeTransactions.isEmpty {
+            // Cold-start skeleton state. Shown while the first
+            // `transactionStore.load()` is still in flight so the user
+            // sees a hint of "stuff is coming" instead of a flash of
+            // the empty illustration (which would look like "you have
+            // nothing" for a beat before the real list pops in).
+            if !transactionStore.hasLoadedOnce && transactionStore.homeTransactions.isEmpty {
+                SkeletonTransactionList()
+                    .zIndex(0)
+            } else if transactionStore.homeTransactions.isEmpty {
+                // Empty state — centred on screen whenever the user has
+                // no past-dated transactions for Home. Previously gated
+                // on **both** home + reminder transactions being empty,
+                // but that left a blank middle when a user had reminders
+                // only: the BalanceHeader VStack is also gated on
+                // `!homeTransactions.isEmpty`, so neither rendered.
+                // Reminders stay reachable via the top-left toolbar
+                // button — the empty state can claim the centre.
                 EmptyTransactionsView(onAdd: { router.showCreateTransaction() })
                     .zIndex(0)
             }
@@ -255,12 +279,21 @@ struct HomeView: View {
                 remindersButton
             }
         }
+        // Top-right corner: scan-receipt entry point. Same geometry
+        // as `remindersButton` (left-side chip) so the two visually
+        // bracket the header without one being taller than the other.
+        .overlay(alignment: .topTrailing) {
+            if transactionStore.homeTransactions.isEmpty {
+                scanReceiptButton
+            }
+        }
         .sheet(isPresented: $showReminders) {
             RemindersView()
                 .environmentObject(transactionStore)
                 .environmentObject(categoryStore)
                 .environmentObject(friendStore)
                 .environmentObject(currencyStore)
+                .environmentObject(receiptItemStore)
         }
         .sheet(isPresented: $showDebtDetail) {
             DebtSummaryView()
@@ -268,6 +301,7 @@ struct HomeView: View {
                 .environmentObject(currencyStore)
                 .environmentObject(friendStore)
                 .environmentObject(categoryStore)
+                .environmentObject(receiptItemStore)
         }
         // Insights/Analytics screen — presented from the Insights
         // button in PeriodPickerBar. We pass the same store
@@ -339,6 +373,7 @@ struct HomeView: View {
                 .environmentObject(transactionStore)
                 .environmentObject(friendStore)
                 .environmentObject(currencyStore)
+                .environmentObject(receiptItemStore)
             }
         }
         .task {
@@ -346,10 +381,25 @@ struct HomeView: View {
             refreshQuickFilters()
             currencyStore.updateTransactions(transactionStore.homeTransactions)
         }
-        .onChange(of: transactionStore.transactions.count) { _ in
+        // `.onChange(of: array)` — Transaction is Equatable, so this
+        // fires on add/edit/delete (the previous `.onReceive($transactions)`
+        // would intermittently fail to populate `cachedTopCategories`
+        // on first launch — the publisher's emission timing didn't
+        // line up with the subscription, and the QUICK FILTERS row
+        // would render with the header but no chips).
+        .onChange(of: transactionStore.transactions) { _ in
             transactionStore.processRecurringSpawns()
             refreshQuickFilters()
             currencyStore.updateTransactions(transactionStore.homeTransactions)
+        }
+        // Re-run when the categories finish loading too — first
+        // launch can race the `.task` fire (which uses `resolveCategory`
+        // off `categoryStore`) against the store's async DB load. If
+        // categories arrive after the first refresh, the cached
+        // top-categories would be stuck on whatever was resolvable at
+        // task time.
+        .onChange(of: categoryStore.categories.count) { _ in
+            refreshQuickFilters()
         }
         .onChange(of: vm.activeDateFilter) { _ in refreshQuickFilters() }
     }
@@ -450,35 +500,82 @@ struct HomeView: View {
         }
     }
 
-    // Top-left toolbar chip — opens the Reminders sheet. Native iOS
-    // 26 Liquid Glass capsule so the chip refracts whatever scrolls
-    // beneath (trend chart in non-empty mode, empty illustration in
-    // empty mode) instead of sitting flat on top of it.
+    // MARK: - Header toolbar chips
+    //
+    // The Home header doesn't have a real `NavigationStack` toolbar
+    // (the screen is laid out as a `ScrollView` with overlays), so we
+    // hand-build the chips. To keep them pixel-identical to the
+    // native `ToolbarItem` chips on every other screen (create
+    // transaction, debts, friend detail), all three icon-only chips
+    // — reminder default, reminder-with-counter (capsule because the
+    // text widens it), and scan — share the same metrics:
+    //
+    //   • Fixed 36 × 36 pt visible footprint (iOS-26 toolbar metric)
+    //   • 17 pt semibold glyph (`AppFonts.bodyEmphasized`)
+    //   • `glassEffect(.regular, in: .circle)` for the icon-only
+    //     variants → renders as a clean disc identical to the system
+    //     button shape; the reminder-with-counter variant switches to
+    //     `.capsule` because the digit makes it elongate horizontally.
+
+    /// Common chip diameter / row height. 36 pt matches the rendered
+    /// width of an iOS 26 `.primaryAction` toolbar item, so the Home
+    /// chips and the create-transaction toolbar icon read at the
+    /// same size when the user pivots between screens.
+    private static let headerChipSize: CGFloat = 36
+
     @ViewBuilder
     private var remindersButton: some View {
         let count = vm.reminderCount(from: transactionStore.transactions)
         Button(action: { showReminders = true }) {
-            HStack(spacing: 5) {
-                Image(systemName: count > 0 ? "clock.badge" : "clock")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(count > 0 ? AppColors.reminderAccent : AppColors.textSecondary)
-                if count > 0 {
+            if count > 0 {
+                // Counter present → capsule (icon + digit stack).
+                // Pinned to `headerChipSize` height so the chip lines
+                // up with the scan disc on the right.
+                HStack(spacing: 5) {
+                    Image(systemName: "clock.badge")
+                        .font(AppFonts.bodyEmphasized)
+                        .foregroundColor(AppColors.reminderAccent)
                     Text("\(count)")
                         .font(AppFonts.footnote)
                         .foregroundColor(AppColors.textPrimary)
                         .monospacedDigit()
                 }
+                .padding(.horizontal, 10)
+                .frame(height: Self.headerChipSize)
+                .glassEffect(.regular, in: .capsule)
+                .contentShape(Capsule())
+            } else {
+                // No counter → perfect circle, same shape + size as
+                // the scan disc. Image is intrinsic-sized; the fixed
+                // 36 × 36 frame centres it deterministically.
+                Image(systemName: "clock")
+                    .font(AppFonts.bodyEmphasized)
+                    .foregroundColor(AppColors.textSecondary)
+                    .frame(width: Self.headerChipSize, height: Self.headerChipSize)
+                    .glassEffect(.regular, in: .circle)
+                    .contentShape(Circle())
             }
-            .padding(.horizontal, AppSpacing.md)
-            .padding(.vertical, AppSpacing.sm)
-            .glassEffect(.regular, in: .capsule)
-            // Explicit hit shape so taps register reliably across the
-            // whole pill (not just the icon/text glyphs).
-            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .padding(.top, 6)
         .padding(.leading, AppSpacing.md)
+    }
+
+    @ViewBuilder
+    private var scanReceiptButton: some View {
+        Button(action: {
+            router.showCreateTransaction(autoOpenScanFlow: true)
+        }) {
+            Image(systemName: "viewfinder")
+                .font(AppFonts.bodyEmphasized)
+                .foregroundColor(AppColors.textSecondary)
+                .frame(width: Self.headerChipSize, height: Self.headerChipSize)
+                .glassEffect(.regular, in: .circle)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 6)
+        .padding(.trailing, AppSpacing.md)
     }
 
     // MARK: - Helper Methods (moved to HomeViewModel + TransactionFilterService)

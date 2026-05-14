@@ -79,25 +79,20 @@ struct DebtBadgeView: View {
     // MARK: - Overlapping Avatars
 
     private var avatarStack: some View {
-        let ids = summary.topFriendIDs
-        let avatarSize: CGFloat = 20
-        let overlap: CGFloat = 10
-
-        return HStack(spacing: -overlap) {
-            ForEach(Array(ids.enumerated()), id: \.offset) { idx, friendID in
-                // Colored when the friend is a real user (their ID
-                // matches a real userID). Manual contacts stay B&W.
-                // Same rule everywhere we render an avatar.
-                let isConnected = friends.first(where: { $0.id == friendID })?.isConnected ?? false
-                PixelCatView(id: friendID, size: avatarSize, blackAndWhite: !isConnected)
-                    .clipShape(Circle())
-                    .overlay(
-                        Circle()
-                            .stroke(AppColors.splitChipFill, lineWidth: 1.5)
-                    )
-                    .zIndex(Double(ids.count - idx))
-            }
+        let participants = summary.topFriendIDs.map { friendID in
+            // Colored when the friend is a real user (their ID matches
+            // a real userID). Manual contacts stay B&W. Same rule
+            // everywhere we render an avatar.
+            let isConnected = friends.first(where: { $0.id == friendID })?.isConnected ?? false
+            return OverlappingAvatarStack.Participant(id: friendID, isConnected: isConnected)
         }
+        return OverlappingAvatarStack(
+            participants: participants,
+            avatarSize: 20,
+            strokeColor: AppColors.splitChipFill,
+            strokeWidth: 1.5,
+            maxVisible: 3
+        )
     }
 
     // MARK: - Formatting

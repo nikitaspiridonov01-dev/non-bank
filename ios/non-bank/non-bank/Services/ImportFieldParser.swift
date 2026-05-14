@@ -11,6 +11,10 @@ enum DateFormatHint: String, CaseIterable, Identifiable {
 
 // MARK: - Parsed import row (before becoming a Transaction)
 
+/// Output of the manual import flow. Only carries fields the user can
+/// explicitly map in the wizard — split / recurrence metadata never
+/// rides along even when present in the JSON. Native non-bank files
+/// bypass this struct entirely and decode straight into `Transaction`.
 struct ParsedImportRow {
     var title: String
     var amount: Double
@@ -20,9 +24,6 @@ struct ParsedImportRow {
     var description: String?
     var type: TransactionType
     var emoji: String
-    var repeatInterval: RepeatInterval?
-    var parentReminderID: Int?
-    var splitInfo: SplitInfo?
 }
 
 // MARK: - Import Field Parser
@@ -43,14 +44,60 @@ enum ImportFieldParser {
         return parseAmountString(str)
     }
 
+    /// Parse a human-typed amount string into a `Double`.
+    ///
+    /// Handles a wide menagerie of real-world formats so the same
+    /// parser can back both file-import paths (CSV/XLSX columns) and
+    /// the create-transaction screen's clipboard paste. Specifically:
+    ///   - Currency symbols (`$`, `€`, `£`, `¥`, `₽`, `₴`, …) and ISO
+    ///     codes (`USD`, `EUR`, `RUB`, `AMD`, …) anywhere in the
+    ///     string — stripped before parsing.
+    ///   - No-break (`\u{00A0}`) and narrow no-break (`\u{202F}`)
+    ///     spaces — banks and European locales use these as thousands
+    ///     separators in copy-pasted statements.
+    ///   - Accounting-style negatives in parentheses (`"(100.50)"`)
+    ///     in addition to the regular leading `-` / `+`.
+    ///   - US / European thousands convention disambiguated by the
+    ///     last-separator-wins rule already in place.
     static func parseAmountString(_ str: String) -> Double? {
-        var s = str.trimmingCharacters(in: .whitespaces)
+        // Normalise the unicode space variants to regular ASCII space
+        // before trimming — the default whitespace set covers them,
+        // but later separator handling cares about the literal char.
+        var s = str
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+            .replacingOccurrences(of: "\u{202F}", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !s.isEmpty else { return nil }
 
-        // Extract sign
-        var sign: Double = 1.0
-        if s.hasPrefix("-") { sign = -1.0; s.removeFirst() }
+        // Accounting-style negatives: "(100.50)" → magnitude 100.50,
+        // sign negative. Strip the wrapping parens before we hand the
+        // string to the rest of the pipeline.
+        var parensNegative = false
+        if s.hasPrefix("(") && s.hasSuffix(")") && s.count >= 2 {
+            parensNegative = true
+            s = String(s.dropFirst().dropLast())
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        // Strip everything that isn't a digit, separator, sign, or
+        // space. Currency symbols and trailing ISO codes ("100 USD",
+        // "$1,234.50", "1.234,50 €") fall away here without us
+        // needing to enumerate every glyph.
+        let allowed: Set<Character> = [
+            "0","1","2","3","4","5","6","7","8","9",
+            ",", ".", "-", "+", " "
+        ]
+        s = String(s.filter { allowed.contains($0) })
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return nil }
+
+        // Extract sign (after parens-handling so "-(100)" parses
+        // sanely too — sign flips combine).
+        var sign: Double = parensNegative ? -1.0 : 1.0
+        if s.hasPrefix("-") { sign = -sign; s.removeFirst() }
         else if s.hasPrefix("+") { s.removeFirst() }
+        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return nil }
 
         // Remove spaces (thousand separators)
         s = s.replacingOccurrences(of: " ", with: "")
@@ -79,8 +126,23 @@ enum ImportFieldParser {
                 // Thousand separator
                 s = s.replacingOccurrences(of: ",", with: "")
             }
+        } else if lastDot != nil {
+            // Dots only — same digit-count disambiguation as the
+            // comma-only branch. A naked "1.500" from a European
+            // bank statement means 1500, not 1.5; without this rule
+            // the parser would lossily collapse that value to one
+            // and a half. The cutoff matches the comma path: ≤2
+            // trailing digits → decimal, anything wider → thousands.
+            // Multi-dot inputs ("1.234.567") fall into the same
+            // wider-than-2 path because `split(maxSplits: 1)` puts
+            // every subsequent dot into `parts[1]`.
+            let parts = s.split(separator: ".", maxSplits: 1)
+            if parts.count == 2 && parts[1].count > 2 {
+                s = s.replacingOccurrences(of: ".", with: "")
+            }
+            // Otherwise leave the single dot in place — it's the
+            // decimal point in standard notation.
         }
-        // dots only: standard decimal notation, no change needed
 
         guard let result = Double(s) else { return nil }
         return sign * result
@@ -356,11 +418,6 @@ enum ImportFieldParser {
         let rawDesc = mapping[.description].flatMap { record[$0] }
         let description = parseDescription(rawDesc)
 
-        // --- Recurring / Split fields (auto-detected from known keys) ---
-        let repeatInterval: RepeatInterval? = decodeFromRecord(record, key: "repeatInterval")
-        let parentReminderID = record["parentReminderID"] as? Int
-        let splitInfo: SplitInfo? = decodeFromRecord(record, key: "splitInfo")
-
         return ParsedImportRow(
             title: title,
             amount: amount,
@@ -369,10 +426,7 @@ enum ImportFieldParser {
             date: date,
             description: description,
             type: txType,
-            emoji: emoji,
-            repeatInterval: repeatInterval,
-            parentReminderID: parentReminderID,
-            splitInfo: splitInfo
+            emoji: emoji
         )
     }
 
@@ -441,16 +495,6 @@ enum ImportFieldParser {
     /// Generate a random emoji from a curated pool (guaranteed to render on iOS).
     private static func randomEmoji() -> String {
         curatedEmojiPool.randomElement() ?? "📦"
-    }
-
-    // MARK: - JSON Decode Helper
-
-    /// Attempts to decode a Codable value from a raw JSON record entry.
-    /// Handles the case where JSONSerialization parses nested objects as [String: Any].
-    private static func decodeFromRecord<T: Decodable>(_ record: [String: Any], key: String) -> T? {
-        guard let rawValue = record[key] else { return nil }
-        guard let data = try? JSONSerialization.data(withJSONObject: rawValue) else { return nil }
-        return try? JSONDecoder().decode(T.self, from: data)
     }
 
     // MARK: - Auto-detection

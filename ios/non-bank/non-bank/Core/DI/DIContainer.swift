@@ -45,5 +45,39 @@ final class DIContainer {
 
         // Services
         register(CurrencyServiceProtocol.self, instance: CurrencyService())
+
+        // Analytics — Firebase if the SDK is linked, NoOp otherwise.
+        // The `FirebaseAnalyticsService` initialiser already gates on
+        // `canImport(FirebaseAnalytics)` and falls back to a NoOp
+        // internally, so a single registration line works whether the
+        // SDK is present or not.
+        let analytics: AnalyticsServiceProtocol
+        if AnalyticsAvailability.isFirebaseLinked {
+            analytics = FirebaseAnalyticsService(enabled: true)
+        } else {
+            // DEBUG-only console logging while the SDK isn't linked
+            // yet so we can verify event taxonomy before paying for
+            // the Firebase wiring.
+            #if DEBUG
+            analytics = NoOpAnalyticsService(logToConsole: true)
+            #else
+            analytics = NoOpAnalyticsService(logToConsole: false)
+            #endif
+        }
+        register(AnalyticsServiceProtocol.self, instance: analytics)
+    }
+}
+
+/// Compile-time check for whether the Firebase Analytics SDK is part
+/// of this build. Kept separate from `FirebaseAnalyticsService` so
+/// `DIContainer.registerDefaults` doesn't have to duplicate the
+/// `#if canImport(...)` block.
+enum AnalyticsAvailability {
+    static var isFirebaseLinked: Bool {
+        #if canImport(FirebaseAnalytics)
+        return true
+        #else
+        return false
+        #endif
     }
 }

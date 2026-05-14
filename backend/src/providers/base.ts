@@ -1,0 +1,218 @@
+import type {
+  ProviderId,
+  ProviderRequest,
+  ProviderResult,
+} from "../types.ts";
+import { ProviderError } from "../types.ts";
+
+export interface Provider {
+  readonly id: ProviderId;
+  // Soft daily limit — used by router to compute remaining quota ratio.
+  readonly dailyLimit: number;
+  parse(req: ProviderRequest, env: ProviderEnv): Promise<ProviderResult>;
+}
+
+// Subset of the Worker's Env that providers actually need. Keeps the
+// providers untestable-by-design without secrets, and clearly documents
+// each adapter's deps. New providers added here must also be set as
+// Wrangler secrets (see `wrangler.toml` for the `wrangler secret put`
+// commands) and registered in `router.ts` / the DB seed.
+export interface ProviderEnv {
+  GEMINI_API_KEY?: string;
+  GROQ_API_KEY?: string;
+  OPENROUTER_API_KEY?: string;
+  MISTRAL_API_KEY?: string;
+  SAMBANOVA_API_KEY?: string;
+  NVIDIA_API_KEY?: string;
+  HUGGINGFACE_API_KEY?: string;
+  AI?: Ai; // Cloudflare Workers AI binding (typed by @cloudflare/workers-types)
+}
+
+// Validate + coerce a model's JSON output into our canonical ParsedReceipt
+// shape. Most providers honor the schema, but we never trust a raw model
+// response — the same logic also recovers from "the model added prose
+// around the JSON" by extracting the first {...} block.
+import type { ParsedReceipt, ParsedReceiptItem } from "../types.ts";
+
+export function coerceReceipt(raw: unknown, providerId: ProviderId): ParsedReceipt {
+  const obj = ensureObject(raw, providerId);
+  const rawItems = ensureArray(obj.items, providerId).map((it) =>
+    coerceItem(it, providerId),
+  );
+  const items = sanitizeDiscountSemantics(rawItems.filter(isUsableItem));
+  return {
+    storeName: nullableString(obj.storeName),
+    date: nullableString(obj.date),
+    currency: nullableString(obj.currency),
+    totalAmount: nullableNumber(obj.totalAmount),
+    suggestedCategory: nullableString(obj.suggestedCategory),
+    items,
+  };
+}
+
+// Hard guard against the LLM misclassifying obvious non-discount lines as
+// negative-total deductions. The prompt already tells the model "a single
+// line is never a discount", but Gemini/Groq/etc. occasionally emit one
+// anyway on subscription receipts (OPENAI *CHATGPT, NETFLIX, etc.). We
+// flip the sign back to positive on the server so iOS never sees the
+// nonsense state. Two rules:
+//
+//   1. If there is exactly ONE item and its total is negative — flip it.
+//      A single-line receipt is the full charge by definition.
+//   2. If ALL items are negative — the LLM inverted the entire receipt.
+//      Flip them all so at least one positive line exists.
+//
+// We deliberately don't flip individual lines in a multi-item receipt
+// even when their name doesn't look discount-y; the model may have seen
+// a strikethrough or "−2,50" the prompt's discount-keyword list misses,
+// and that's still a legitimate deduction.
+function sanitizeDiscountSemantics(items: ParsedReceiptItem[]): ParsedReceiptItem[] {
+  if (items.length === 0) return items;
+  if (items.length === 1) {
+    const only = items[0];
+    if ((only.total ?? 0) < 0 || (only.price ?? 0) < 0) {
+      return [{
+        ...only,
+        total: only.total != null ? Math.abs(only.total) : only.total,
+        price: only.price != null ? Math.abs(only.price) : only.price,
+      }];
+    }
+    return items;
+  }
+  const allNegative = items.every((it) => (it.total ?? 0) < 0);
+  if (allNegative) {
+    return items.map((it) => ({
+      ...it,
+      total: it.total != null ? Math.abs(it.total) : it.total,
+      price: it.price != null ? Math.abs(it.price) : it.price,
+    }));
+  }
+  return items;
+}
+
+// Strip ```json fences and find the first JSON object — for providers
+// without native JSON mode (Cloudflare, sometimes OpenRouter free models).
+export function extractJSON(text: string, providerId: ProviderId): unknown {
+  const trimmed = text.trim();
+  // Direct parse path.
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // fall through
+  }
+  // Strip markdown fences.
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]+?)```/);
+  if (fenced) {
+    try {
+      return JSON.parse(fenced[1].trim());
+    } catch {
+      // fall through
+    }
+  }
+  // Find first balanced object — handles "Here's the JSON: { ... } Hope this helps!"
+  const start = trimmed.indexOf("{");
+  if (start >= 0) {
+    let depth = 0;
+    for (let i = start; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          try {
+            return JSON.parse(trimmed.slice(start, i + 1));
+          } catch {
+            break;
+          }
+        }
+      }
+    }
+  }
+  throw new ProviderError(
+    providerId,
+    "bad_response",
+    `could not extract JSON from response: ${trimmed.slice(0, 200)}`,
+  );
+}
+
+function coerceItem(raw: unknown, providerId: ProviderId): ParsedReceiptItem {
+  const obj = ensureObject(raw, providerId);
+  const name = String(obj.name ?? "").trim();
+  return {
+    name,
+    quantity: nullableNumber(obj.quantity),
+    price: nullableNumber(obj.price),
+    total: nullableNumber(obj.total),
+  };
+}
+
+function isUsableItem(item: ParsedReceiptItem): boolean {
+  if (!item.name) return false;
+  const hasValue = (item.price ?? 0) !== 0 || (item.total ?? 0) !== 0;
+  return hasValue;
+}
+
+function ensureObject(raw: unknown, providerId: ProviderId): Record<string, unknown> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ProviderError(providerId, "bad_response", "expected JSON object");
+  }
+  return raw as Record<string, unknown>;
+}
+
+function ensureArray(raw: unknown, providerId: ProviderId): unknown[] {
+  if (!Array.isArray(raw)) {
+    throw new ProviderError(providerId, "bad_response", "expected array");
+  }
+  return raw;
+}
+
+function nullableString(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  return s.length === 0 ? null : s;
+}
+
+function nullableNumber(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string") {
+    const n = parseFlexibleNumber(v);
+    return n;
+  }
+  return null;
+}
+
+// Tolerates the four ways receipts/LLMs format decimals:
+//   "1100.00"   US plain                     → 1100.00
+//   "1,100.00"  US thousands + dot decimal   → 1100.00
+//   "1.100,00"  EU thousands + comma decimal → 1100.00
+//   "550,00"    EU comma decimal             → 550.00
+//   "5,5"       EU short comma decimal       → 5.50
+//   "-2,50"     negative EU                  → -2.50
+//   "−2,50"     unicode minus EU             → -2.50
+// Matches the recovery semantics of `FlexibleDouble` on the iOS side
+// (non-bank/Models/ReceiptItem.swift) so the same string lands on the
+// same Double regardless of where it's parsed.
+export function parseFlexibleNumber(input: string): number | null {
+  // Strip whitespace and normalize unicode minus to ASCII.
+  const s = input.trim().replace(/\s/g, "").replace(/[−–—]/g, "-");
+  if (s.length === 0) return null;
+  const hasDot = s.includes(".");
+  const hasComma = s.includes(",");
+  let normalized: string;
+  if (hasDot && hasComma) {
+    // Whichever separator appears LAST is the decimal one — strip the other.
+    if (s.lastIndexOf(",") > s.lastIndexOf(".")) {
+      normalized = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      normalized = s.replace(/,/g, "");
+    }
+  } else if (hasComma) {
+    // Lone comma → always decimal in receipt context.
+    normalized = s.replace(",", ".");
+  } else {
+    normalized = s;
+  }
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}

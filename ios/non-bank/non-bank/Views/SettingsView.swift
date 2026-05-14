@@ -24,6 +24,30 @@ struct SettingsView: View {
     /// reusing the same big-text input UI as `FriendFormView` so the
     /// two flows feel consistent.
     @State private var showProfileNameSheet: Bool = false
+    /// Drives the `InsightsBehaviorSheet` — the modal that lets the
+    /// user pick whether splits count by their share or only by what
+    /// they paid upfront. Single-source-of-truth toggle lives in
+    /// `InsightsSettings.shared`; this state just drives presentation.
+    @State private var showInsightsBehaviorSheet: Bool = false
+
+    /// Observed so the "On / Off" status text next to the row in
+    /// Settings updates immediately when the user closes the sheet
+    /// after flipping the toggle.
+    @ObservedObject private var insightsSettings = InsightsSettings.shared
+
+    /// Drives the support-mail sheet. Set when the user taps one of the
+    /// rows in the Help & feedback section; cleared when the mail sheet
+    /// dismisses. Optional so `.sheet(item:)` only presents when set.
+    @State private var pendingMailKind: SupportMail.Kind?
+    /// Displayed when the device has no Mail account configured and we
+    /// can't fall back to `mailto:` either.
+    @State private var mailUnavailableAlert: Bool = false
+
+    /// Observed so the analytics toggle in the Privacy section
+    /// re-renders the row state from a single source. Flipping the
+    /// `@Published var isEnabled` immediately updates both
+    /// `UserDefaults` and the live `AnalyticsService` instance.
+    @ObservedObject private var analyticsConsent = AnalyticsConsentService.shared
 
     private let userID = UserIDService.currentID()
 
@@ -87,6 +111,7 @@ struct SettingsView: View {
                 } footer: {
                     Text("Shown to people you share split transactions with. Leave empty to share as 'Friend'.")
                 }
+                .listRowBackground(AppColors.backgroundElevated)
 
                 Section {
                     // The "Base Currency" picker that used to live
@@ -96,11 +121,28 @@ struct SettingsView: View {
                     // entry point — every currency dropdown in the
                     // app routes its "More currencies" overflow to
                     // the same sheet.
+                    // Explicit `Label { title } icon: { ... }` so the
+                    // title picks up `textPrimary` (high contrast on
+                    // cream) while the icon stays accent-tinted —
+                    // matches the visual rhythm of the `Friends`
+                    // `NavigationLink` row below. Using a plain
+                    // `Label("...", systemImage:)` inside a `Button`
+                    // tints the entire label with the accent colour,
+                    // which on the cream surface dropped contrast on
+                    // the text.
                     Button(action: { showCurrencyRatesSheet = true }) {
-                        Label("Currencies", systemImage: "coloncurrencysign.circle")
+                        Label {
+                            Text("Currencies").foregroundColor(AppColors.textPrimary)
+                        } icon: {
+                            Image(systemName: "coloncurrencysign.circle").foregroundColor(.accentColor)
+                        }
                     }
                     Button(action: { showCategoriesSheet = true }) {
-                        Label("Categories", systemImage: "tag")
+                        Label {
+                            Text("Categories").foregroundColor(AppColors.textPrimary)
+                        } icon: {
+                            Image(systemName: "tag").foregroundColor(.accentColor)
+                        }
                     }
                     NavigationLink {
                         FriendsView()
@@ -109,6 +151,7 @@ struct SettingsView: View {
                         Label("Friends", systemImage: "person.2")
                     }
                 }
+                .listRowBackground(AppColors.backgroundElevated)
 
                 if SyncManager.isCloudKitEnabled {
                 Section {
@@ -157,12 +200,14 @@ struct SettingsView: View {
                 } header: {
                     Text("Sync")
                 }
+                .listRowBackground(AppColors.backgroundElevated)
                 } // end if isCloudKitEnabled
 
                 Section {
                     NavigationLink {
                         ExportTransactionsView()
                             .environmentObject(transactionStore)
+                            .environmentObject(friendStore)
                     } label: {
                         Label("Export Transactions", systemImage: "square.and.arrow.up")
                     }
@@ -171,19 +216,90 @@ struct SettingsView: View {
                             .environmentObject(transactionStore)
                             .environmentObject(categoryStore)
                             .environmentObject(currencyStore)
+                            .environmentObject(friendStore)
                     } label: {
                         Label("Import Transactions", systemImage: "square.and.arrow.down")
                     }
                 }
+                .listRowBackground(AppColors.backgroundElevated)
 
-                // MARK: - Receipt Scanner disabled (feature temporarily removed)
-                // Section("Experimental") {
-                //     NavigationLink {
-                //         DebugReceiptScannerView()
-                //     } label: {
-                //         Label("Receipt Scanner", systemImage: "doc.text.viewfinder")
-                //     }
-                // }
+                Section {
+                    Button(action: { showInsightsBehaviorSheet = true }) {
+                        HStack(spacing: 14) {
+                            Image(systemName: "chart.bar.xaxis")
+                                .foregroundColor(.accentColor)
+                                .frame(width: 20)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Potential expenses and debts")
+                                    .foregroundColor(AppColors.textPrimary)
+                                Text(insightsSettings.includePotentialExpenses
+                                     ? "Counted by your share — including what's still owed."
+                                     : "Counted only by what actually moved.")
+                                    .font(AppFonts.metaText)
+                                    .foregroundColor(AppColors.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(AppFonts.footnote)
+                                .foregroundColor(AppColors.textTertiary)
+                        }
+                    }
+                } header: {
+                    Text("Insights and analytics")
+                }
+                .listRowBackground(AppColors.backgroundElevated)
+
+                Section {
+                    Toggle(isOn: $analyticsConsent.isEnabled) {
+                        Label("Share anonymous analytics", systemImage: "chart.bar.doc.horizontal")
+                            .foregroundColor(AppColors.textPrimary)
+                    }
+                } header: {
+                    Text("Privacy")
+                } footer: {
+                    Text("Helps us see which features are useful. No names, no amounts, no IDFA. See Licenses & Privacy for details.")
+                        .font(AppFonts.footnote)
+                        .foregroundColor(AppColors.textTertiary)
+                }
+                .listRowBackground(AppColors.backgroundElevated)
+
+                Section {
+                    // Tips sit at the top of the section — it's the
+                    // most actionable row here (mail buttons require
+                    // composing a message; the tip jar just opens). A
+                    // user looking to support the app shouldn't have
+                    // to scroll past three feedback links to find it.
+                    NavigationLink {
+                        TipJarView()
+                    } label: {
+                        Label("Leave a tip", systemImage: "heart.fill")
+                            .foregroundColor(AppColors.textPrimary)
+                    }
+                    ForEach(SupportMail.Kind.allCases) { kind in
+                        Button {
+                            pendingMailKind = kind
+                        } label: {
+                            HStack {
+                                Label(kind.label, systemImage: kind.systemImage)
+                                    .foregroundColor(AppColors.textPrimary)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundColor(AppColors.textTertiary)
+                            }
+                        }
+                    }
+                    NavigationLink {
+                        LicensesView()
+                    } label: {
+                        Label("Licenses & Privacy", systemImage: "doc.text")
+                            .foregroundColor(AppColors.textPrimary)
+                    }
+                } header: {
+                    Text("Help and feedback")
+                }
+                .listRowBackground(AppColors.backgroundElevated)
             }
             .scrollContentBackground(.hidden)
             .background(AppColors.backgroundPrimary)
@@ -215,6 +331,9 @@ struct SettingsView: View {
                     .environmentObject(categoryStore)
                     .environmentObject(transactionStore)
             }
+            .sheet(isPresented: $showInsightsBehaviorSheet) {
+                InsightsBehaviorSheet()
+            }
             .fullScreenCover(isPresented: $router.showImportSuccess) {
                 ImportSuccessScreen(
                     count: router.importedCount,
@@ -229,9 +348,41 @@ struct SettingsView: View {
             } message: {
                 Text(syncErrorMessage)
             }
+            // Mail sheet (or `mailto:` fallback). `item:`-driven so each
+            // re-tap re-presents with a fresh composer instead of
+            // re-using the prior modal's state.
+            .sheet(item: $pendingMailKind) { kind in
+                if MailComposeView.canSend {
+                    MailComposeView(
+                        recipient: SupportMail.address,
+                        subject: kind.subject,
+                        body: kind.body()
+                    )
+                    .ignoresSafeArea()
+                } else {
+                    // Mail.app uninstalled / no account: nudge the user
+                    // out to whatever default mail handler is configured
+                    // via mailto. If even that fails, surface an alert.
+                    Color.clear.onAppear {
+                        defer { pendingMailKind = nil }
+                        if let url = kind.mailtoURL(), UIApplication.shared.canOpenURL(url) {
+                            UIApplication.shared.open(url)
+                        } else {
+                            mailUnavailableAlert = true
+                        }
+                    }
+                }
+            }
+            .alert("Mail not available", isPresented: $mailUnavailableAlert) {
+                Button("Copy address", role: .none) {
+                    UIPasteboard.general.string = SupportMail.address
+                }
+                Button("Close", role: .cancel) {}
+            } message: {
+                Text("Set up a Mail account in iOS Settings, or send your message to \(SupportMail.address).")
+            }
         }
     }
-
 }
 
 struct SettingsView_Previews: PreviewProvider {

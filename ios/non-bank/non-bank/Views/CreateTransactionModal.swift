@@ -2,9 +2,15 @@ import SwiftUI
 import PhotosUI
 
 // MARK: - Transaction Tab
+//
+// Split is no longer a top-level tab — the orchestrator (Phase 4.4)
+// handles the entire split flow via a chip + subtitle entry under
+// expense/income. External callers that previously opened the modal
+// pre-flipped to `.split` now pass `autoOpenSplitFlow: true` instead;
+// the modal lands on `.expense` and presents the orchestrator on top.
 
 enum TransactionTab: Int, CaseIterable {
-    case expense, income, split
+    case expense, income
 }
 
 /// Drives the review-sheet presentation. Wraps the parser result + the source
@@ -24,34 +30,50 @@ private struct ReceiptScanFlowModifier: ViewModifier {
     @Binding var showSourceDialog: Bool
     @Binding var showDocumentScanner: Bool
     @Binding var showPhotosPicker: Bool
-    @Binding var photosPickerItem: PhotosPickerItem?
+    @Binding var photosPickerItems: [PhotosPickerItem]
     @Binding var reviewPayload: ReceiptReviewPayload?
     @Binding var receiptParseError: String?
     @Binding var showReceiptParseError: Bool
     @Binding var isParsingReceipt: Bool
 
     let onScannedImage: (UIImage) -> Void
-    let onReviewConfirm: ([ReceiptItem], Double, String?) -> Void
+    /// Gallery callback. Always called with at least one image, max 3.
+    /// Single-image picks are forwarded to `onScannedImage` for source
+    /// parity with the camera path.
+    let onScannedImages: ([UIImage]) -> Void
+    let onReviewConfirm: ([ReceiptItem], Double, String?, String?) -> Void
     let onReviewCancel: () -> Void
+    /// Fires whenever the scan flow ends in cancel before review
+    /// confirm: source dialog Cancel, scanner Cancel, scanner error,
+    /// or photos picker dismissed without picking an image. Used by
+    /// the parent to release any state that was waiting on a
+    /// successful review (e.g. the `byItems`-after-scan latch).
+    var onScanCancelled: () -> Void = {}
 
     func body(content: Content) -> some View {
         content
-            .confirmationDialog(
-                "Scan a receipt",
-                isPresented: $showSourceDialog,
-                titleVisibility: .hidden
-            ) {
-                Button {
-                    showDocumentScanner = true
-                } label: {
-                    Label("Take photo", systemImage: "camera")
-                }
-                Button {
-                    showPhotosPicker = true
-                } label: {
-                    Label("Choose from library", systemImage: "photo.on.rectangle")
-                }
-                Button("Cancel", role: .cancel) {}
+            // Replaces the legacy `.confirmationDialog` system alert
+            // with a full-screen styled picker matching the rest of
+            // the transaction flow (see `ReceiptSourcePickerView`).
+            // Used only by the toolbar scan button (amount = 0) —
+            // the byItems-without-receipt path inside the
+            // orchestrator now runs the same picker as a push step
+            // in its own NavigationStack and never reaches here.
+            .sheet(isPresented: $showSourceDialog) {
+                ReceiptSourcePickerView(
+                    wrapInNavigationStack: true,
+                    onPickCamera: {
+                        showSourceDialog = false
+                        showDocumentScanner = true
+                    },
+                    onPickLibrary: {
+                        showSourceDialog = false
+                        showPhotosPicker = true
+                    },
+                    onCancel: { onScanCancelled() }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             .fullScreenCover(isPresented: $showDocumentScanner) {
                 DocumentScannerView(
@@ -59,37 +81,80 @@ private struct ReceiptScanFlowModifier: ViewModifier {
                         showDocumentScanner = false
                         onScannedImage(image)
                     },
-                    onCancel: { showDocumentScanner = false },
+                    onCancel: {
+                        showDocumentScanner = false
+                        onScanCancelled()
+                    },
                     onError: { error in
                         showDocumentScanner = false
                         receiptParseError = error.localizedDescription
                         showReceiptParseError = true
+                        onScanCancelled()
                     }
                 )
                 .ignoresSafeArea()
             }
             .photosPicker(
                 isPresented: $showPhotosPicker,
-                selection: $photosPickerItem,
+                selection: $photosPickerItems,
+                maxSelectionCount: CreateTransactionModal.maxReceiptPhotos,
+                selectionBehavior: .ordered,
                 matching: .images,
                 photoLibrary: .shared()
             )
-            .onChange(of: photosPickerItem) { newItem in
-                guard let newItem else { return }
+            .onChange(of: photosPickerItems) { newItems in
+                guard !newItems.isEmpty else { return }
                 Task {
-                    if let data = try? await newItem.loadTransferable(type: Data.self),
-                       let image = UIImage(data: data) {
-                        onScannedImage(image)
+                    // Load each picked asset in order. Bad/unreadable
+                    // items are silently dropped — partial success is
+                    // better than failing the whole batch.
+                    var images: [UIImage] = []
+                    for item in newItems {
+                        if let data = try? await item.loadTransferable(type: Data.self),
+                           let image = UIImage(data: data) {
+                            images.append(image)
+                        }
                     }
-                    photosPickerItem = nil
+                    photosPickerItems = []
+                    guard !images.isEmpty else {
+                        onScanCancelled()
+                        return
+                    }
+                    if images.count == 1 {
+                        // Source-parity with the camera path so the
+                        // existing single-image pipeline (and its
+                        // metrics / state handling) stays untouched.
+                        onScannedImage(images[0])
+                    } else {
+                        onScannedImages(images)
+                    }
+                }
+            }
+            // Detect "picker dismissed without selection" — selection
+            // sets `photosPickerItems` to non-empty before
+            // `showPhotosPicker` flips to false, so checking the array
+            // state at dismiss time distinguishes cancel from select.
+            .onChange(of: showPhotosPicker) { presenting in
+                if !presenting && photosPickerItems.isEmpty {
+                    onScanCancelled()
                 }
             }
             .sheet(item: $reviewPayload) { payload in
                 ReceiptReviewView(
                     parseResult: payload.result,
                     sourceImage: payload.image,
-                    onConfirm: { items, total in
-                        onReviewConfirm(items, total, payload.result.parsedReceipt.currency)
+                    onConfirm: { items, total, currency in
+                        // Use the currency the review screen surfaced
+                        // (which the editor's picker may have corrected)
+                        // rather than the raw parser output — otherwise
+                        // a user fix to a wrong AI guess silently rolls
+                        // back here.
+                        onReviewConfirm(
+                            items,
+                            total,
+                            currency,
+                            payload.result.parsedReceipt.suggestedCategory
+                        )
                     },
                     onCancel: onReviewCancel
                 )
@@ -101,6 +166,14 @@ private struct ReceiptScanFlowModifier: ViewModifier {
             ) { _ in
                 Button("OK", role: .cancel) {
                     receiptParseError = nil
+                    // Parser errors fire from the parent's
+                    // `handleScannedImage` (post-OCR), which can't
+                    // reach `onScanCancelled` directly — clear here
+                    // so the parse-failure path is also treated as a
+                    // cancel. Scanner-side errors already cleared the
+                    // latch in `onError` above; the duplicate clear
+                    // is a no-op.
+                    onScanCancelled()
                 }
             } message: { message in
                 Text(message)
@@ -114,42 +187,110 @@ private struct ReceiptScanFlowModifier: ViewModifier {
 
     private var receiptParsingOverlay: some View {
         ZStack {
-            Color.black.opacity(0.35).ignoresSafeArea()
-            VStack(spacing: 14) {
-                ProgressView()
-                    .controlSize(.large)
+            // Opaque backdrop — fully blocks the modal underneath so the
+            // scan flow reads as a discrete "doing magic" beat, not a
+            // semi-transparent inconvenience.
+            AppColors.backgroundPrimary.ignoresSafeArea()
+            VStack(spacing: AppSpacing.xl) {
+                ReceiptScanLoader()
                 Text("Reading receipt…")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(.white)
+                    .font(AppFonts.body.weight(.semibold))
+                    .foregroundColor(AppColors.textPrimary)
+                Text("Hang on a second")
+                    .font(.subheadline)
+                    .foregroundColor(AppColors.textTertiary)
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 22)
-            .background(
-                RoundedRectangle(cornerRadius: AppRadius.large)
-                    .fill(.ultraThinMaterial)
-            )
         }
     }
 }
 
 // MARK: - Модальное окно создания и редактирования
 struct CreateTransactionModal: View {
+
+    /// Format a numeric amount for `CreateTransactionViewModel.amount`
+    /// (which holds the user's keypad input as a string). Trims the
+    /// `.00` tail so a clean integer like `15` displays as `15` rather
+    /// than `15.00`, but keeps two decimals for everything else so the
+    /// keypad shows the same precision the debt summary displayed.
+    static func formatPrefillAmount(_ amount: Double) -> String {
+        let rounded = (amount * 100).rounded() / 100
+        if rounded == rounded.rounded() {
+            return String(Int(rounded))
+        }
+        return String(format: "%.2f", rounded)
+    }
+
     @Binding var isPresented: Bool
     var editingTransaction: Transaction? = nil // Поддержка режима редактирования
     /// Optional starting tab for create mode (ignored when editing). Lets
     /// empty-state CTAs land directly in `.split` instead of forcing the
     /// user to flip the segmented control after the modal opens.
+    /// Optional tab override for the create flow. Pass `.expense` or
+    /// `.income` to land on something other than the default expense.
+    /// `.split` was removed in Phase 4.3 — external callers wanting to
+    /// open in split mode now pass `autoOpenSplitFlow: true` instead,
+    /// which lands on `.expense` and presents the orchestrator.
     var initialTab: TransactionTab? = nil
-    /// Friend IDs to pre-select as split participants when `initialTab`
-    /// is `.split`. Used by the friend-screen CTA so "you + this friend"
+    /// When true, the modal auto-presents the split-mode orchestrator
+    /// once it appears. Used by friend-scoped CTAs ("Add split with
+    /// Michael") to skip the chip / subtitle tap. Combined with
+    /// `prefilledFriendIDs` so the participants are already populated.
+    var autoOpenSplitFlow: Bool = false
+    /// When true, the modal pops the receipt-source picker (Camera /
+    /// Photo Library) right after appearing. Used by the Home and
+    /// Debts toolbar scan buttons so the user lands one tap away
+    /// from capture.
+    var autoOpenScanFlow: Bool = false
+    /// When true, the modal pre-arms `byItems` split mode: any
+    /// `prefilledFriendIDs` (plus the user) are selected as
+    /// participants and `splitMode` is set to `.byItems`. After the
+    /// receipt scan finishes the user lands directly on the item-
+    /// assignment step. Used by the Debts and Friend scan buttons.
+    var autoSplitByItems: Bool = false
+    /// Friend IDs to pre-select as split participants. Used by the
+    /// friend-screen CTA so "you + this friend"
     /// is wired up before the modal renders.
     var prefilledFriendIDs: [String] = []
+    /// Pre-configure the modal as a settle-up transaction (one payer
+    /// fully covers the other side's share). Used by the Friend
+    /// detail's "Settle up" CTA so the user lands on a transaction
+    /// that already balances the existing debt — they just confirm
+    /// and save. Amount + currency + payer side + category come from
+    /// this struct.
+    var settleUpPrefill: SettleUpPrefill? = nil
 
+    /// Description of a debt to settle. The CTA caller computes this
+    /// from `SplitDebtService.simplifiedDebts(...)` and passes it in.
+    /// `Identifiable` so callers can drive `sheet(item:)` directly.
+    struct SettleUpPrefill: Equatable, Identifiable {
+        let friendID: String
+        let amount: Double
+        let currency: String
+        let direction: Direction
+        // Identity key includes amount + direction so an updated
+        // prefill (e.g. the user came back, more debt accrued, tapped
+        // the button again) re-presents the sheet instead of dedup'ing
+        // against the prior identical id.
+        var id: String { "\(friendID)|\(direction)|\(amount)" }
+
+        enum Direction: Equatable {
+            /// I owe the friend money — this transaction has *me* paying.
+            case iPayFriend
+            /// The friend owes me money — this transaction has *them* paying.
+            case friendPaysMe
+        }
+    }
+
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var currencyStore: CurrencyStore
     @EnvironmentObject var friendStore: FriendStore
     @EnvironmentObject var receiptItemStore: ReceiptItemStore
+    /// Used to raise the post-save share prompt for newly-created
+    /// split transactions. Injected by the parent (always available
+    /// from the app root).
+    @EnvironmentObject var router: NavigationRouter
 
     @StateObject private var vm = CreateTransactionViewModel()
 
@@ -157,9 +298,14 @@ struct CreateTransactionModal: View {
     @State private var showCategoryModal: Bool = false
     @State private var showDateModal: Bool = false
     @State private var showFriendPicker: Bool = false
-    @State private var showSplitModePicker: Bool = false
+    /// Phase 4.4 orchestrator presentation flag. `modeFlowStartStep`
+    /// disambiguates fresh-start (state 2 chip tap, "Pay for yourself"
+    /// users picking a mode) from re-entry (state 3/4 chip/subtitle
+    /// tap with a mode already configured — orchestrator opens at the
+    /// "specific step" for that mode).
+    @State private var showModeFlowSheet: Bool = false
+    @State private var modeFlowStartStep: TransactionModeFlowSheet.StartStep = .modePicker
     @State private var showFriendForm: Bool = false
-    @State private var showWhoPaid: Bool = false
     // @State private var showWhoPays: Bool = false  // WhoPaysPicker — preserved for future
     @State private var selectedTab: TransactionTab = .expense
     @State private var youIncludedInSplit: Bool = true  // whether "You" is selected as split participant
@@ -174,23 +320,50 @@ struct CreateTransactionModal: View {
     @State private var showRecurringReplaceAlert: Bool = false
 
     // MARK: - Receipt Scan Flow
-    //
-    // The scan-receipt feature is **temporarily hidden** from the UI while
-    // we re-evaluate the parsing approach. State and helpers below stay so
-    // the wiring can be re-enabled by flipping `scanFeatureEnabled` to true.
-    private static let scanFeatureEnabled = false
+    private static let scanFeatureEnabled = true
     @State private var showReceiptSourceDialog: Bool = false
     @State private var showDocumentScanner: Bool = false
-    @State private var photosPickerItem: PhotosPickerItem? = nil
+    // Multi-image gallery picker: the user can grab up to 3 photos of
+    // a single receipt at once (e.g. the back of a long restaurant
+    // tape that didn't fit in one shot). One pick = original behaviour;
+    // multi-pick fans out through `handleScannedImages` which merges
+    // the per-image parse results into a single review payload.
+    @State private var photosPickerItems: [PhotosPickerItem] = []
     @State private var showPhotosPicker: Bool = false
     @State private var pickedReceiptImage: UIImage? = nil
     @State private var isParsingReceipt: Bool = false
     @State private var parsedReceiptResult: HybridReceiptParser.Result? = nil
     @State private var receiptParseError: String? = nil
     @State private var showReceiptParseError: Bool = false
+    /// Hard cap on how many gallery photos can be merged into one
+    /// receipt scan. 3 is enough to cover most long-tape restaurant
+    /// receipts without blowing past sensible token usage on the
+    /// upstream AI provider.
+    static let maxReceiptPhotos = 3
     /// Identifiable wrapper used to drive the review sheet (sheet(item:)
     /// requires Identifiable).
     @State private var reviewPayload: ReceiptReviewPayload? = nil
+
+    // (Items pill no longer opens the editor directly. It now drives the
+    // same `reviewPayload` flow as a fresh scan, so the user always lands
+    // on the read-only review sheet first and can drill into the editor
+    // from there. The previous `showItemsEditor` state was removed.)
+
+    /// True when the transaction's amount is locked to the sum of scanned/
+    /// edited receipt items. In this state the numpad is replaced by a
+    /// blurred overlay routing the user to the items editor — typing a
+    /// digit would silently break the items↔total invariant.
+    private var isReceiptLocked: Bool {
+        !vm.pendingReceiptItems.isEmpty
+    }
+
+    /// The "target total" the items editor measures against. Starts as
+    /// the parser-detected receipt total after a scan; gets overwritten
+    /// every time the editor commits — so once the user accepts a
+    /// divergent total via "Save total as X", subsequent re-opens of the
+    /// editor treat X as the new authoritative target instead of nagging
+    /// about the original receipt.
+    @State private var acceptedReceiptTotal: Double? = nil
 
     private let hybridParser = HybridReceiptParser()
 
@@ -240,16 +413,29 @@ struct CreateTransactionModal: View {
         // the user confirms Replace, because both `id` and `syncID` would
         // rotate at once.
         if let existing = editingTransaction, existing.isRecurringParent {
-            guard let replacement = vm.buildTransaction(
+            guard var replacement = vm.buildTransaction(
                 editingId: nil,
                 syncID: existing.syncID
             ) else { return }
+            // Same preservation rule as below — the recurring-replace
+            // path also rebuilds the transaction from scratch and
+            // must carry the existing exclude flag forward.
+            if existing.excludedFromInsights {
+                replacement = replacement.settingExcludedFromInsights(true)
+            }
             pendingRecurringReplacement = replacement
             showRecurringReplaceAlert = true
             return
         }
 
-        guard let tx = vm.buildTransaction(editingId: editingTransaction?.id) else { return }
+        guard var tx = vm.buildTransaction(editingId: editingTransaction?.id) else { return }
+        // Editing an existing transaction must preserve the user's
+        // include/exclude-from-insights choice — the build step starts
+        // from `vm` state, which doesn't carry that flag, so the row
+        // would otherwise quietly flip back to "counted" on every edit.
+        if let existing = editingTransaction, existing.excludedFromInsights {
+            tx = tx.settingExcludedFromInsights(true)
+        }
         let pendingItems = vm.pendingReceiptItems
 
         if editingTransaction != nil {
@@ -270,6 +456,7 @@ struct CreateTransactionModal: View {
             // preserve existing behavior on devices without camera/AI.
             transactionStore.add(tx)
             isPresented = false
+            promptShareIfSplit(tx)
             return
         }
 
@@ -281,7 +468,24 @@ struct CreateTransactionModal: View {
             if let newID = await transactionStore.addAndReturnID(tx) {
                 await receiptItemStore.saveItems(pendingItems, for: newID)
             }
-            await MainActor.run { isPresented = false }
+            await MainActor.run {
+                isPresented = false
+                promptShareIfSplit(tx)
+            }
+        }
+    }
+
+    /// Post-create hook: if the saved transaction is a split, raise
+    /// the share-prompt overlay so the user gets a nudge to send the
+    /// link before they forget. The receiver opens the same modal we
+    /// already use on the transaction-detail share path.
+    private func promptShareIfSplit(_ tx: Transaction) {
+        guard tx.isSplit else { return }
+        // Defer a beat so the create-modal dismissal animation finishes
+        // before the share prompt presents on top of MainTabView. iOS
+        // drops the second sheet otherwise.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            router.promptSplitShare(syncID: tx.syncID)
         }
     }
 
@@ -299,12 +503,110 @@ struct CreateTransactionModal: View {
 
     /// Kicks off OCR + LLM parsing for a captured/picked image. On success
     /// presents the review sheet; on failure shows an alert.
+    /// Holds the parse-result branch back until at least
+    /// `Self.minimumLoaderSeconds` have elapsed since the loader appeared.
+    /// Cloud round-trips can be sub-second on cached prompts; without this
+    /// gate the pixel-art loader would flash for ~300ms and read as a bug
+    /// rather than a deliberate "scanning" beat.
+    private static let minimumLoaderSeconds: Double = 5.0
+
+    /// Shared so the orchestrator's byItems-without-receipt scan flow
+    /// (which runs parsing inside its own NavigationStack) can use
+    /// the same min-loader-time floor as the toolbar scan path —
+    /// keeps "Reading receipt…" from blinking past too fast and
+    /// reading as a stutter instead of a deliberate beat.
+    static func enforceMinimumLoaderTime(startedAt: Date) async {
+        let elapsed = Date().timeIntervalSince(startedAt)
+        let remaining = minimumLoaderSeconds - elapsed
+        if remaining > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+        }
+    }
+
+    /// Sits on top of the (already-blurred) numpad when receipt items
+    /// drive the amount. Just a subtle backplate for legibility +
+    /// centred copy — the blur effect itself lives on the numpad
+    /// (`.blur(radius:)` modifier), so this overlay never expands the
+    /// host's frame. Tap routed via `.onTapGesture` (not `Button`) so
+    /// iOS doesn't apply the press-fade animation that would briefly
+    /// thin the layer and flash the numpad on touch.
+    private var receiptLockedNumpadOverlay: some View {
+        let count = vm.pendingReceiptItems.count
+        let itemsWord = count == 1 ? "item" : "items"
+        // Per-theme tint, both routed through the page colour for a
+        // unified look:
+        //   • Dark mode: 0.8α — backgroundPrimary is near-black, so this
+        //     reads as a darker recess against the surrounding modal.
+        //   • Light mode: 0.45α — backgroundPrimary is cream, washing
+        //     the blurred (slightly-darker) numpad keys back toward the
+        //     page tone. A touch less cream coverage than 0.6 lets the
+        //     beige keys show through more, so the locked area sits a
+        //     hair lower visually instead of disappearing into the page.
+        let tintFill: Color = colorScheme == .dark
+            ? AppColors.backgroundPrimary.opacity(0.8)
+            : AppColors.backgroundPrimary.opacity(0.45)
+        return ZStack {
+            RoundedRectangle(cornerRadius: AppRadius.fab)
+                .fill(tintFill)
+
+            VStack(spacing: AppSpacing.sm) {
+                Text("The amount is calculated from the receipt (\(count) \(itemsWord)).")
+                    .font(AppFonts.body.weight(.semibold))
+                    .foregroundColor(AppColors.textPrimary)
+                    .multilineTextAlignment(.center)
+                Text("Tap to edit items")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.accentColor)
+            }
+            .padding(.horizontal, AppSpacing.xxl)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: AppRadius.fab))
+        .onTapGesture { openItemsReview() }
+    }
+
+    /// Re-open the post-scan review sheet from the inline "N items" pill,
+    /// driving the same `reviewPayload` machinery the scan flow uses. We
+    /// build a synthetic `HybridReceiptParser.Result` from current state so
+    /// the review sheet renders the user's already-committed items + the
+    /// last-known store name / date / source info. Confidence is forced
+    /// to `.high` so the spurious "Quick scan" / "Totals don't match"
+    /// banners don't fire on a re-open — those copy lines are scoped to
+    /// the original parse, not subsequent edits.
+    private func openItemsReview() {
+        let parsed = ParsedReceipt(
+            storeName: parsedReceiptResult?.parsedReceipt.storeName,
+            date: parsedReceiptResult?.parsedReceipt.date,
+            items: vm.pendingReceiptItems,
+            totalAmount: acceptedReceiptTotal,
+            currency: vm.selectedCurrency,
+            suggestedCategory: parsedReceiptResult?.parsedReceipt.suggestedCategory
+        )
+        let result = HybridReceiptParser.Result(
+            parsedReceipt: parsed,
+            confidence: .high,
+            totalsMatch: true,
+            source: parsedReceiptResult?.source ?? .ocrFallback
+        )
+        reviewPayload = ReceiptReviewPayload(result: result, image: pickedReceiptImage)
+    }
+
     private func handleScannedImage(_ image: UIImage) {
         pickedReceiptImage = image
         isParsingReceipt = true
+        // Build the cloud config on the main actor *before* hopping into the
+        // task — `categoryStore` and `AISettings` are main-actor-bound, and
+        // the resulting `Sendable` value is then safe to capture by the actor.
+        let cloudConfig = HybridReceiptParser.CloudParseConfig.current(
+            categoryStore: categoryStore
+        )
+        let scanStartedAt = Date()
         Task {
             do {
-                let result = try await hybridParser.parse(image: image)
+                let result = try await hybridParser.parse(
+                    image: image,
+                    cloudConfig: cloudConfig
+                )
+                await Self.enforceMinimumLoaderTime(startedAt: scanStartedAt)
                 await MainActor.run {
                     isParsingReceipt = false
                     if result.parsedReceipt.items.isEmpty {
@@ -312,10 +614,13 @@ struct CreateTransactionModal: View {
                         showReceiptParseError = true
                         pickedReceiptImage = nil
                     } else {
+                        parsedReceiptResult = result
+                        acceptedReceiptTotal = result.parsedReceipt.totalAmount
                         reviewPayload = ReceiptReviewPayload(result: result, image: image)
                     }
                 }
             } catch {
+                await Self.enforceMinimumLoaderTime(startedAt: scanStartedAt)
                 await MainActor.run {
                     isParsingReceipt = false
                     receiptParseError = error.localizedDescription
@@ -323,6 +628,130 @@ struct CreateTransactionModal: View {
                     pickedReceiptImage = nil
                 }
             }
+        }
+    }
+
+    /// Multi-image gallery scan. Each photo runs through the hybrid
+    /// parser independently, then we stitch the per-image results into
+    /// a single `ParsedReceipt`:
+    ///   - items: concatenated in the order the user picked the photos
+    ///   - totalAmount: sum of per-image totals (best the parser could
+    ///     do for each strip); the review screen lets the user correct
+    ///   - storeName / date / suggestedCategory: first non-nil wins
+    ///   - confidence: lowest seen across the batch (a single low-conf
+    ///     strip should drag the whole receipt down)
+    ///   - source: cloud if any image went through cloud, OCR otherwise
+    ///
+    /// If every image fails we surface the error from the first one —
+    /// partial success (e.g. 2 of 3 succeeded) still continues to the
+    /// review screen with whatever items we did get.
+    private func handleScannedImages(_ images: [UIImage]) {
+        guard !images.isEmpty else { return }
+        pickedReceiptImage = images.first
+        isParsingReceipt = true
+        let cloudConfig = HybridReceiptParser.CloudParseConfig.current(
+            categoryStore: categoryStore
+        )
+        let scanStartedAt = Date()
+        Task {
+            var perImageResults: [HybridReceiptParser.Result] = []
+            var firstError: Error?
+            for image in images {
+                do {
+                    let result = try await hybridParser.parse(
+                        image: image,
+                        cloudConfig: cloudConfig
+                    )
+                    perImageResults.append(result)
+                } catch {
+                    if firstError == nil { firstError = error }
+                }
+            }
+            await Self.enforceMinimumLoaderTime(startedAt: scanStartedAt)
+            await MainActor.run {
+                isParsingReceipt = false
+                guard !perImageResults.isEmpty else {
+                    receiptParseError = firstError?.localizedDescription
+                        ?? "No items detected across the picked photos."
+                    showReceiptParseError = true
+                    pickedReceiptImage = nil
+                    return
+                }
+                let merged = Self.mergeScanResults(perImageResults)
+                guard !merged.parsedReceipt.items.isEmpty else {
+                    receiptParseError = "No items detected. Try clearer photos or enter the amount manually."
+                    showReceiptParseError = true
+                    pickedReceiptImage = nil
+                    return
+                }
+                parsedReceiptResult = merged
+                acceptedReceiptTotal = merged.parsedReceipt.totalAmount
+                // Show the first picked image in the review header —
+                // it's the closest proxy we have to "this scan" when
+                // the parse spanned multiple photos.
+                reviewPayload = ReceiptReviewPayload(result: merged, image: images.first)
+            }
+        }
+    }
+
+    /// Stitch N per-photo parse results into one consolidated
+    /// `HybridReceiptParser.Result`. Pulled out as a static so it
+    /// stays unit-testable without instantiating the modal.
+    static func mergeScanResults(_ results: [HybridReceiptParser.Result]) -> HybridReceiptParser.Result {
+        precondition(!results.isEmpty, "Caller must pass at least one result")
+        if results.count == 1 { return results[0] }
+
+        let allItems = results.flatMap { $0.parsedReceipt.items }
+        let totalSum = results.compactMap { $0.parsedReceipt.totalAmount }.reduce(0, +)
+        let firstStoreName = results.compactMap { $0.parsedReceipt.storeName }.first
+        let firstDate = results.compactMap { $0.parsedReceipt.date }.first
+        let firstCurrency = results.compactMap { $0.parsedReceipt.currency }.first
+        let firstCategory = results.compactMap { $0.parsedReceipt.suggestedCategory }.first
+        let lowestConfidence = results.map { $0.confidence }.min(by: { confidenceRank($0) < confidenceRank($1) })
+            ?? .low
+        let anyCloud = results.contains { result in
+            if case .cloud = result.source { return true }
+            return false
+        }
+        let mergedSource: HybridReceiptParser.Source
+        if anyCloud {
+            // Pick the first cloud source so the review screen surfaces
+            // a real provider string instead of an aggregated fake one.
+            mergedSource = results.first(where: { result in
+                if case .cloud = result.source { return true }
+                return false
+            })?.source ?? .ocrFallback
+        } else {
+            mergedSource = .ocrFallback
+        }
+
+        let parsed = ParsedReceipt(
+            storeName: firstStoreName,
+            date: firstDate,
+            items: allItems,
+            totalAmount: totalSum > 0 ? totalSum : nil,
+            currency: firstCurrency,
+            suggestedCategory: firstCategory
+        )
+        return HybridReceiptParser.Result(
+            parsedReceipt: parsed,
+            confidence: lowestConfidence,
+            // Totals are heuristic on multi-image stitches; flag a
+            // mismatch so the review screen tells the user to double
+            // check rather than silently committing the sum.
+            totalsMatch: false,
+            source: mergedSource
+        )
+    }
+
+    /// Ranking helper for `Confidence` so the multi-image merger can
+    /// pick the lowest value across a batch. Higher number = higher
+    /// confidence — pure ordering, never persisted.
+    static func confidenceRank(_ c: HybridReceiptParser.Confidence) -> Int {
+        switch c {
+        case .low:    return 0
+        case .medium: return 1
+        case .high:   return 2
         }
     }
 
@@ -338,17 +767,18 @@ struct CreateTransactionModal: View {
     @ViewBuilder
     private var primaryToolbarAction: some View {
         if Self.scanFeatureEnabled, vm.parsedAmount == 0 {
+            // Icon-only scan trigger. `viewfinder` (without the doc
+            // inside) reads as the universal "scan / capture" glyph and
+            // matches the weight of the cancel `xmark` on the other
+            // side of the toolbar — keeps the bar visually balanced.
             Button(action: { showReceiptSourceDialog = true }) {
-                HStack(spacing: AppSpacing.xs) {
-                    Image(systemName: "doc.viewfinder")
-                        .font(AppFonts.bodySmallEmphasized)
-                    Text("Scan")
-                        .font(.subheadline.weight(.semibold))
-                }
+                Image(systemName: "viewfinder")
+                    .font(AppFonts.bodyEmphasized)
             }
+            .accessibilityLabel("Scan receipt")
         } else {
             Button(action: {
-                if payerConflict {
+                if payerConflict || splitHasUnresolvedConflict {
                     shakeSubtitleWithHaptic()
                 } else if vm.isAmountValid {
                     let generator = UINotificationFeedbackGenerator()
@@ -359,7 +789,7 @@ struct CreateTransactionModal: View {
                 Image(systemName: "checkmark")
                     .font(AppFonts.bodyEmphasized)
             }
-            .disabled(!vm.isAmountValid && !payerConflict)
+            .disabled(!vm.isAmountValid && !payerConflict && !splitHasUnresolvedConflict)
         }
     }
 
@@ -370,7 +800,26 @@ struct CreateTransactionModal: View {
                 AppColors.backgroundPrimary.ignoresSafeArea()
                 
                 VStack(spacing: 0) {
-                    Spacer().frame(height: 60)
+                    Spacer().frame(height: 8)
+
+                    // Top mode-entry chip (Phase 4.4) — sits right
+                    // under the toolbar tabs. Hidden in income mode
+                    // (income transactions don't have split modes).
+                    // The chip itself maintains a stable height across
+                    // its three states so the title / amount below
+                    // don't jump as the chip morphs.
+                    if !vm.isIncome {
+                        modeEntryChip
+                            .frame(height: 22)
+                    } else {
+                        // Reserve the same vertical slot so flipping
+                        // expense → income doesn't ripple the layout
+                        // (tab toggle reads as content swap, not a
+                        // shift).
+                        Spacer().frame(height: 22)
+                    }
+
+                    Spacer().frame(height: 12)
 
                     // Title area — tappable, opens Notes screen
                     Button(action: { showNoteTagsModal = true }) {
@@ -401,14 +850,21 @@ struct CreateTransactionModal: View {
                                     .multilineTextAlignment(.center)
                                     .padding(.horizontal, AppSpacing.xl)
                                 if hasExtra {
-                                    // Match the placeholder zero's
-                                    // `textQuaternary` tone so the
-                                    // caption sits as a quiet hint
-                                    // below the title rather than a
-                                    // secondary call-to-action.
+                                    // Use `textDisabled` to match the
+                                    // notes-editor "Write a note…"
+                                    // placeholder. `textQuaternary`
+                                    // (the previous tone) maps to
+                                    // `UIColor.quaternaryLabel` in
+                                    // dark mode, which renders much
+                                    // fainter than `placeholderText`
+                                    // — the two empty hints ended up
+                                    // visibly mismatched on dark
+                                    // even though they read the same
+                                    // on light. Sharing one token
+                                    // gives parity in both themes.
                                     Text("View all notes")
                                         .font(AppFonts.labelCaption)
-                                        .foregroundColor(AppColors.textQuaternary)
+                                        .foregroundColor(AppColors.textDisabled)
                                 }
                             }
                         }
@@ -466,8 +922,48 @@ struct CreateTransactionModal: View {
                         .minimumScaleFactor(0.5)
                         .lineLimit(1)
                         .animation(.easeInOut(duration: 0.15), value: vm.amountFontSize)
-                        
-                        // Кнопка Backspace
+                        // Long-press the amount → native iOS context menu
+                        // with Paste / Copy / Clear. The numpad isn't a
+                        // TextField, so without this affordance there's
+                        // no way to drop a number in from the clipboard
+                        // — and copy-pasting from a bank statement /
+                        // chat is the single most common ask. The
+                        // `contentShape` makes the whole horizontal
+                        // stripe a hit-target instead of just the
+                        // digit glyphs. The menu is suppressed while
+                        // a receipt scan owns the amount (`isReceiptLocked`)
+                        // because mutating the displayed total would
+                        // silently break the items↔total invariant
+                        // that locks the keypad in the first place.
+                        .contentShape(Rectangle())
+                        .contextMenu {
+                            if !isReceiptLocked {
+                                Button {
+                                    if let pasted = UIPasteboard.general.string {
+                                        vm.pasteAmount(pasted)
+                                    }
+                                } label: {
+                                    Label("Paste", systemImage: "doc.on.clipboard")
+                                }
+                                if !vm.amount.isEmpty {
+                                    Button {
+                                        UIPasteboard.general.string =
+                                            "\(vm.amount) \(vm.selectedCurrency)"
+                                    } label: {
+                                        Label("Copy", systemImage: "doc.on.doc")
+                                    }
+                                    Button(role: .destructive) {
+                                        vm.clearAmount()
+                                    } label: {
+                                        Label("Clear", systemImage: "xmark.circle")
+                                    }
+                                }
+                            }
+                        }
+
+                        // Кнопка Backspace — also hidden while the amount
+                        // is driven by scanned receipt items, since the
+                        // user can't edit the digits anyway.
                         HStack {
                             Spacer()
                             Button(action: { vm.handleBackspace() }) {
@@ -478,51 +974,26 @@ struct CreateTransactionModal: View {
                                     .contentShape(Rectangle())
                             }
                             .padding(.trailing, 24)
-                            .opacity(vm.amount.isEmpty ? 0 : 1)
+                            .opacity((vm.amount.isEmpty || isReceiptLocked) ? 0 : 1)
+                            .disabled(isReceiptLocked)
                             .animation(.easeInOut(duration: 0.2), value: vm.amount.isEmpty)
+                            .animation(.easeInOut(duration: 0.2), value: isReceiptLocked)
                         }
                     }
                     .frame(height: 80)
                     .padding(.bottom, 0)
                     .offset(x: amountShakeOffset)
 
-                    // Dynamic payer subtitle for split mode
-                    if vm.isSplitMode && (!vm.selectedFriends.isEmpty || youIncludedInSplit) && !vm.payers.isEmpty {
-                        // Payers are set — show dynamic subtitle
-                        Button(action: {
-                            if vm.parsedAmount < 0.01 {
-                                // Shake the amount block + haptic
-                                let generator = UINotificationFeedbackGenerator()
-                                generator.notificationOccurred(.warning)
-                                withAnimation(.default) {
-                                    amountShakeOffset = 12
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                                    withAnimation(.interpolatingSpring(stiffness: 600, damping: 12)) {
-                                        amountShakeOffset = 0
-                                    }
-                                }
-                            } else {
-                                showWhoPaid = true
-                            }
-                        }) {
-                            HStack(spacing: AppSpacing.xxs) {
-                                payerSubtitle
-                                if vm.parsedAmount >= 0.01 {
-                                    Image(systemName: "chevron.right")
-                                        .font(AppFonts.iconSmall)
-                                        .foregroundColor(payerConflict ? AppColors.warning : AppColors.textTertiary)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .offset(x: subtitleShakeOffset)
-                        .padding(.bottom, AppSpacing.lg)
-                    } else {
-                        Spacer().frame(height: 4)
-                    }
+                    // Mode subtitle (Phase 4.4) — replaces the old
+                    // payerSubtitle. Visible when a mode is set; tap
+                    // opens the orchestrator at the relevant step
+                    // (same target as the top chip).
+                    modeSubtitle
 
-                    // Category button
+                    // Category button — items pill removed when receipt
+                    // is locked because the numpad overlay (below) already
+                    // surfaces "N items / tap to edit", and duplicating it
+                    // up here adds visual noise without new info.
                     HStack(spacing: AppSpacing.sm) {
                         Button(action: { showCategoryModal = true }) {
                             HStack(spacing: 6) {
@@ -535,6 +1006,13 @@ struct CreateTransactionModal: View {
                             .padding(.horizontal, AppSpacing.pageHorizontal)
                             .background(AppColors.backgroundElevated)
                             .cornerRadius(AppRadius.fab)
+                        }
+                        if !isReceiptLocked {
+                            ItemsBadgePill(
+                                count: vm.pendingReceiptItems.count,
+                                style: .categoryMatched,
+                                action: { openItemsReview() }
+                            )
                         }
                     }
                     .padding(.bottom, AppSpacing.sm)
@@ -572,13 +1050,23 @@ struct CreateTransactionModal: View {
                     .padding(.horizontal, AppSpacing.pageHorizontal)
                     .padding(.bottom, 10)
 
-                    // Клавиатура (Numpad)
+                    // Клавиатура (Numpad) + receipt-locked overlay
+                    //
+                    // The numpad is always laid out (so the modal's vertical
+                    // rhythm doesn't jump when items appear/disappear), and
+                    // when locked we drop a frosted card on top via
+                    // `.overlay { ... }`. That modifier sizes the overlay
+                    // to the numpad's exact frame — without it, a sibling
+                    // ZStack child would size to its own intrinsic content
+                    // and could grow taller than the numpad. Material
+                    // needs visible content behind it to blur, so the
+                    // numpad stays drawn (just non-interactive) underneath.
                     VStack(spacing: AppSpacing.md) {
                         ForEach([["1","2","3"],["4","5","6"],["7","8","9"],[".","0","✔︎"]], id: \.self) { row in
                             HStack(spacing: AppSpacing.md) {
                                 ForEach(row, id: \.self) { key in
                                     Button(action: {
-                                        if key == "✔︎" && payerConflict {
+                                        if key == "✔︎" && (payerConflict || splitHasUnresolvedConflict) {
                                             shakeSubtitleWithHaptic()
                                         } else {
                                             vm.handleKeyPress(key, onSave: trySave)
@@ -590,7 +1078,7 @@ struct CreateTransactionModal: View {
                                             if key == "✔︎" {
                                                 Image(systemName: "checkmark")
                                                     .font(AppFonts.fabIcon)
-                                                    .foregroundColor(vm.isAmountValid && !payerConflict ? AppColors.textPrimary : AppColors.textDisabled)
+                                                    .foregroundColor(vm.isAmountValid && !payerConflict && !splitHasUnresolvedConflict ? AppColors.textPrimary : AppColors.textDisabled)
                                             } else {
                                                 Text(key)
                                                     .font(.system(size: 28, weight: .medium))
@@ -599,22 +1087,54 @@ struct CreateTransactionModal: View {
                                         }
                                         .frame(height: 56)
                                     }
-                                    .disabled(key == "✔︎" && !vm.isAmountValid && !payerConflict)
+                                    .disabled(
+                                        (key == "✔︎" && !vm.isAmountValid && !payerConflict && !splitHasUnresolvedConflict)
+                                        // Block all keys except the
+                                        // confirm checkmark while the
+                                        // amount is locked to receipt
+                                        // items — the user has to go
+                                        // through the editor to change
+                                        // any digit.
+                                        || (isReceiptLocked && key != "✔︎")
+                                    )
                                 }
                             }
+                        }
+                    }
+                    // `.fixedSize(vertical: true)` pins the VStack to its
+                    // intrinsic height (4 × 56 + 3 × 12 = 260pt) so the
+                    // overlay never tugs the layout taller. `.blur(...)`
+                    // applied directly on the numpad gives a controlled,
+                    // tunable softness without Material's tendency to
+                    // grow with the host. 8pt radius lands in the sweet
+                    // spot — clearly defocused but the digit silhouettes
+                    // still suggest "there's a numpad behind".
+                    //
+                    // `clipShape(RoundedRectangle…)` is critical when the
+                    // numpad is blurred: `.blur` lets the rendered pixels
+                    // bleed outward by ~radius points, producing halos
+                    // around the bounding rect. We clip with the same
+                    // rounded-corner shape the overlay uses so the blurred
+                    // content lines up exactly with the rounded card —
+                    // a plain `.clipped()` would leave visible rectangular
+                    // corners poking out of the rounded overlay.
+                    .fixedSize(horizontal: false, vertical: true)
+                    .blur(radius: isReceiptLocked ? 8 : 0)
+                    .clipShape(RoundedRectangle(cornerRadius: AppRadius.fab))
+                    .allowsHitTesting(!isReceiptLocked)
+                    .overlay {
+                        if isReceiptLocked {
+                            receiptLockedNumpadOverlay
                         }
                     }
                     .padding(.horizontal, AppSpacing.md)
                     .padding(.bottom, AppSpacing.md)
                 }
 
-                // Friends block — overlays on top of content, doesn't affect layout
-                if vm.isSplitMode && (!vm.selectedFriends.isEmpty || youIncludedInSplit) {
-                    VStack {
-                        splitFriendsBlock
-                        Spacer()
-                    }
-                }
+                // Friends block previously rendered here as an overlay
+                // (`splitFriendsBlock`) — replaced by `modeEntryChip`
+                // up above, in the body's main VStack flow rather than
+                // an overlay. Removed in Phase 4.4 layout reshuffle.
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -622,18 +1142,25 @@ struct CreateTransactionModal: View {
                         Image(systemName: "xmark")
                     }
                 }
-                ToolbarItem(placement: .principal) {
-                    Picker("Type", selection: $selectedTab.animation(.easeInOut(duration: 0.25))) {
-                        Text("Expense").tag(TransactionTab.expense)
-                        Text("Income").tag(TransactionTab.income)
-                        Text("Split").tag(TransactionTab.split)
+                // Hide the type segmented picker + the right-hand
+                // confirm button while the parsing loader is up — both
+                // are interactive controls that don't apply during the
+                // "reading receipt…" beat. Only the cancel `xmark`
+                // stays so the user always has a visible escape hatch
+                // even if the parse hangs.
+                if !isParsingReceipt {
+                    ToolbarItem(placement: .principal) {
+                        Picker("Type", selection: $selectedTab.animation(.easeInOut(duration: 0.25))) {
+                            Text("Expense").tag(TransactionTab.expense)
+                            Text("Income").tag(TransactionTab.income)
+                        }
+                        .pickerStyle(.segmented)
+                        .controlSize(.mini)
+                        .frame(width: 250)
                     }
-                    .pickerStyle(.segmented)
-                    .controlSize(.mini)
-                    .frame(width: 250)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    primaryToolbarAction
+                    ToolbarItem(placement: .confirmationAction) {
+                        primaryToolbarAction
+                    }
                 }
             }
             .toolbarTitleDisplayMode(.inline)
@@ -704,80 +1231,35 @@ struct CreateTransactionModal: View {
                     }
                 }
             }
-            .sheet(isPresented: $showSplitModePicker) {
-                SplitModePickerView(selectedMode: $vm.splitMode, friendCount: vm.selectedFriends.count, youIncluded: youIncludedInSplit, onSelect: {
-                    vm.persistLastUsedSplitMode()
-                })
-            }
-            // WhoPaysPicker — commented out, preserved for future
-            // .sheet(isPresented: $showWhoPays) {
-            //     WhoPaysPicker(
-            //         friends: vm.selectedFriends,
-            //         totalAmount: vm.formattedAmountGrouped,
-            //         currency: vm.selectedCurrency
-            //     ) { payerName in
-            //         showWhoPays = false
-            //         commitTransaction(payerName: payerName)
-            //     }
-            // }
-            .sheet(isPresented: $showWhoPaid) {
-                WhoPaidPickerView(
-                    participants: whoPaidParticipants,
-                    totalAmount: vm.parsedAmount,
+            .sheet(isPresented: $showModeFlowSheet) {
+                TransactionModeFlowSheet(
+                    vm: vm,
+                    startStep: modeFlowStartStep,
                     currency: vm.selectedCurrency,
-                    initialPayers: vm.payers,
-                    onConfirm: { confirmedPayers in
-                        vm.payers = confirmedPayers
-                        payerConflict = false
-                        payerConflictHapticFired = false
-                    },
-                    onConfirmWithNewTotal: { confirmedPayers, newTotal in
-                        vm.payers = confirmedPayers
-                        payerConflict = false
-                        payerConflictHapticFired = false
-                        // Skip the next onChange(amount) so it doesn't re-trigger conflict
-                        skipNextAmountConflictCheck = true
-                        // Update the amount to the new total (exceed scenario)
-                        vm.amount = Self.formatAmountForInput(newTotal)
-                    }
+                    onDone: { /* chunk 4 will hook chip refresh here */ }
                 )
                 .environmentObject(friendStore)
+                .environmentObject(transactionStore)
+                .environmentObject(categoryStore)
             }
-            // Tab switching logic
+            // The legacy `showWhoPaid` standalone sheet was removed in
+            // Phase 4.3 cleanup — who-paid is now a step inside the
+            // orchestrator (`TransactionModeFlowSheet.whoPayStep`),
+            // with the exceed-confirm "bump the total" plumbing wired
+            // through `whoPayMultiCalcStep.onConfirmWithNewTotal`.
+            // Tab switching logic. Split is no longer a tab — the
+            // expense/income flip just toggles `isIncome` and clears
+            // any in-progress split state. Existing split transactions
+            // opened in income mode are an edge case (income + split is
+            // unusual but legal); flipping back from edit drops the
+            // split data on save, mirroring the old `.split` → other
+            // tab transition.
             .onChange(of: selectedTab) { newTab in
                 switch newTab {
                 case .expense:
                     vm.isIncome = false
-                    vm.isSplitMode = false
                 case .income:
                     vm.isIncome = true
-                    vm.isSplitMode = false
-                case .split:
-                    vm.isIncome = false
-                    vm.isSplitMode = true
-                    // Auto-fill frequent friends or open the picker whenever
-                    // no friends are selected — including when the user flips
-                    // an existing expense into a split during edit. Splits
-                    // with friends already populated don't re-open the picker
-                    // because `selectedFriends.isEmpty` guards that.
-                    if vm.selectedFriends.isEmpty {
-                        if let frequentIDs = CreateTransactionViewModel.mostFrequentSplitFriendIDs(from: transactionStore.transactions) {
-                            let resolved = frequentIDs.compactMap { id in friendStore.friend(byID: id) }
-                            if !resolved.isEmpty && resolved.count == frequentIDs.count {
-                                // All friends still exist — auto-fill
-                                youIncludedInSplit = true
-                                vm.youIncludedInSplit = true
-                                vm.selectFriendsAndResolveSplitMode(resolved)
-                                vm.setDefaultPayer()
-                            } else {
-                                // Some friends were deleted — open picker
-                                showFriendPicker = true
-                            }
-                        } else {
-                            // No past splits — open picker
-                            showFriendPicker = true
-                        }
-                    }
                 }
             }
             // Логика инициализации и переключения типа
@@ -788,15 +1270,30 @@ struct CreateTransactionModal: View {
                         categories: categoryStore.categories,
                         friendResolver: { friendStore.friend(byID: $0) }
                     )
-                    // Set the correct tab for the transaction type
-                    if tx.splitInfo != nil {
-                        selectedTab = .split
-                        youIncludedInSplit = vm.youIncludedInSplit
-                    } else if tx.isIncome {
-                        selectedTab = .income
-                    } else {
-                        selectedTab = .expense
+                    // Hydrate any previously-saved receipt items so the pill
+                    // appears + the editor pre-populates. Synchronous read
+                    // off the in-memory `ReceiptItemStore` cache, no async
+                    // hop needed.
+                    let existingItems = receiptItemStore.items(forTransactionID: tx.id)
+                    if !existingItems.isEmpty {
+                        vm.pendingReceiptItems = existingItems
+                        // Editing an existing transaction — there's no
+                        // "original receipt total" to compare against, so
+                        // start the editor at the items sum (i.e. balanced).
+                        // Any divergence the user introduces by editing
+                        // shows up as "over by" / "X left" against the
+                        // committed total they're working from.
+                        acceptedReceiptTotal = existingItems.reduce(0) { $0 + $1.lineTotal }
                     }
+                    // Pick tab from the underlying expense/income flag.
+                    // Split-ness is no longer a tab — it's reflected in
+                    // the orchestrator chip/subtitle once the modal is
+                    // up. `youIncludedInSplit` still hydrates so the
+                    // chip shows the right participant set.
+                    if tx.splitInfo != nil {
+                        youIncludedInSplit = vm.youIncludedInSplit
+                    }
+                    selectedTab = tx.isIncome ? .income : .expense
                 } else {
                     vm.selectedCurrency = currencyStore.selectedCurrency
                     if vm.selectedCategory == nil {
@@ -805,13 +1302,15 @@ struct CreateTransactionModal: View {
                             categories: categoryStore.categories
                         )
                     }
-                    // Apply CTA-driven prefill: pre-populate split participants
-                    // BEFORE flipping `selectedTab` so the onChange handler's
-                    // empty-friends auto-fill branch is skipped (otherwise it
-                    // would either auto-pick frequent friends or open the
-                    // picker, both of which fight the explicit prefill).
-                    if let initialTab = initialTab {
-                        if initialTab == .split && !prefilledFriendIDs.isEmpty {
+                    // CTA-driven prefill: pre-populate the split
+                    // participants (and flip the modal into split
+                    // mode) when `autoOpenSplitFlow` is set. The
+                    // orchestrator additionally auto-presents on top
+                    // so the user lands directly inside the flow at
+                    // the picker — friend prefill already populated,
+                    // they just have to confirm or tweak.
+                    if autoOpenSplitFlow {
+                        if !prefilledFriendIDs.isEmpty {
                             let resolved = prefilledFriendIDs.compactMap {
                                 friendStore.friend(byID: $0)
                             }
@@ -822,6 +1321,75 @@ struct CreateTransactionModal: View {
                                 vm.setDefaultPayer()
                             }
                         }
+                        // Defer the auto-open until after the modal's
+                        // own appear animation settles — iOS drops
+                        // the second sheet otherwise.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            modeFlowStartStep = .modePicker
+                            showModeFlowSheet = true
+                        }
+                    }
+                    // Auto-arm `byItems` split mode for the Debts /
+                    // Friend scan CTAs. Friend prefill (when present)
+                    // populates participants up front; an empty
+                    // prefill (Debts toolbar scan) just sets the mode,
+                    // user picks participants after the scan.
+                    if autoSplitByItems {
+                        if !prefilledFriendIDs.isEmpty {
+                            let resolved = prefilledFriendIDs.compactMap {
+                                friendStore.friend(byID: $0)
+                            }
+                            if !resolved.isEmpty {
+                                youIncludedInSplit = true
+                                vm.youIncludedInSplit = true
+                                vm.selectedFriends = resolved
+                                vm.isSplitMode = true
+                                vm.setDefaultPayer()
+                            }
+                        }
+                        vm.splitMode = .byItems
+                    }
+                    // Auto-open the receipt source picker. Used by the
+                    // Home / Debts / Friend toolbar scan buttons. Same
+                    // 0.5 s defer as `autoOpenSplitFlow` so the modal's
+                    // own present animation finishes before the
+                    // confirmation dialog stacks on top — without the
+                    // delay iOS silently drops the second sheet.
+                    if autoOpenScanFlow {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            showReceiptSourceDialog = true
+                        }
+                    }
+                    // Settle-up prefill: jam every field the user would
+                    // normally set by hand — amount, currency, category,
+                    // who paid — straight onto the VM so the modal opens
+                    // on a transaction that already zeros out the
+                    // existing debt. The user only has to tap Save.
+                    if let prefill = settleUpPrefill,
+                       let friend = friendStore.friend(byID: prefill.friendID) {
+                        selectedTab = .expense
+                        vm.selectedCurrency = prefill.currency
+                        vm.amount = Self.formatPrefillAmount(prefill.amount)
+                        youIncludedInSplit = true
+                        vm.youIncludedInSplit = true
+                        vm.selectFriendsAndResolveSplitMode([friend])
+                        vm.splitMode = .settleUp
+                        // "General" is reserved and always present —
+                        // safe to look up by title without a fallback.
+                        if let general = categoryStore.findCategory(byTitle: CategoryStore.uncategorized.title) {
+                            vm.selectedCategory = general
+                        }
+                        // Single payer covers the entire amount; the
+                        // other side is owed 100 %. Direction picks
+                        // which of {me, friend} is the payer.
+                        switch prefill.direction {
+                        case .iPayFriend:
+                            vm.payers = [Payer(id: "me", name: "You", amount: prefill.amount)]
+                        case .friendPaysMe:
+                            vm.payers = [Payer(id: friend.id, name: friend.name, amount: prefill.amount)]
+                        }
+                    }
+                    if let initialTab = initialTab {
                         selectedTab = initialTab
                     }
                 }
@@ -840,21 +1408,79 @@ struct CreateTransactionModal: View {
                 showSourceDialog: $showReceiptSourceDialog,
                 showDocumentScanner: $showDocumentScanner,
                 showPhotosPicker: $showPhotosPicker,
-                photosPickerItem: $photosPickerItem,
+                photosPickerItems: $photosPickerItems,
                 reviewPayload: $reviewPayload,
                 receiptParseError: $receiptParseError,
                 showReceiptParseError: $showReceiptParseError,
                 isParsingReceipt: $isParsingReceipt,
                 onScannedImage: handleScannedImage,
-                onReviewConfirm: { items, total, currency in
-                    vm.applyReceiptItems(items, total: total, currency: currency)
+                onScannedImages: handleScannedImages,
+                onReviewConfirm: { items, total, currency, suggestedCategory in
+                    // Detect whether the items array actually changed
+                    // before we apply — count + per-line sum picks up
+                    // adds / deletes / value edits without false
+                    // positives from re-opens that didn't touch the
+                    // list. Used below to decide whether to auto-chain
+                    // into the calculations step.
+                    let oldItemsCount = vm.pendingReceiptItems.count
+                    let oldItemsSum = vm.pendingReceiptItems.reduce(0.0) { $0 + $1.lineTotal }
+                    let newItemsSum = items.reduce(0.0) { $0 + $1.lineTotal }
+                    let itemsActuallyChanged = oldItemsCount != items.count
+                        || abs(oldItemsSum - newItemsSum) > 0.001
+
+                    vm.applyReceiptItems(
+                        items,
+                        total: total,
+                        currency: currency,
+                        suggestedCategory: suggestedCategory,
+                        // Receipt-scan suggestion is matched against
+                        // the reserved set only — that's the stable
+                        // baseline (General + 18 defaults) every user
+                        // has on first launch. Cuts down on false
+                        // positives where the LLM lands on a niche
+                        // user-created category by coincidence; the
+                        // user's own "most frequent" logic continues
+                        // to drive the manual-flow default elsewhere.
+                        availableCategories: categoryStore.reservedCategories
+                    )
+                    // Auto-fill the transaction title with the parsed
+                    // store name on first review-commit — but only when
+                    // the user hasn't typed anything in the title yet,
+                    // so re-scans can't overwrite a manual edit.
+                    let currentTitle = vm.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if currentTitle.isEmpty,
+                       let storeName = parsedReceiptResult?.parsedReceipt.storeName?
+                            .trimmingCharacters(in: .whitespacesAndNewlines),
+                       !storeName.isEmpty {
+                        vm.title = storeName
+                    }
+                    // Persist the new authoritative target so re-opens
+                    // of the editor stop nagging about a stale receipt
+                    // total the user already overrode.
+                    acceptedReceiptTotal = total
                     reviewPayload = nil
                     pickedReceiptImage = nil
+
+                    // Phase 4.6 auto-chain: items mutating under a
+                    // share-derived mode invalidates the calc — push
+                    // the orchestrator at the appropriate "specific
+                    // step" so the user re-balances right away
+                    // instead of finding out at save time. Skipped
+                    // for evenly (calc is mechanical) and settle-up
+                    // (100/0 is fixed by the mode itself).
+                    let modeNeedsRebalance = vm.splitMode == .byAmount
+                        || vm.splitMode == .byItems
+                    if itemsActuallyChanged && modeNeedsRebalance {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            openModeFlow()
+                        }
+                    }
                 },
                 onReviewCancel: {
                     reviewPayload = nil
                     pickedReceiptImage = nil
-                }
+                },
+                onScanCancelled: {}
             ))
             .onChange(of: vm.isIncome) { _ in
                 // Only auto-select category if user hasn't manually picked one
@@ -904,212 +1530,347 @@ struct CreateTransactionModal: View {
     }
 }
 
-// MARK: - Split Friends Block
+
+// MARK: - Mode entry chip + subtitle (Phase 4.4)
 
 extension CreateTransactionModal {
-    private var splitModeLabel: String {
-        guard let mode = vm.splitMode else { return "Evenly" }
-        if mode == .fiftyFifty {
-            return vm.selectedFriends.count == 1 ? "50/50" : "Evenly"
-        }
-        return mode.displayLabel
+
+    /// True once the user committed to a non-default mode (any split
+    /// or settle-up). Drives both the top chip's "active" appearance
+    /// and the subtitle's visibility — when false, only the empty
+    /// "Add friends to this purchase" affordance is shown.
+    private var modeIsConfigured: Bool {
+        vm.isSplitMode && (vm.youIncludedInSplit || !vm.selectedFriends.isEmpty)
     }
 
-    var splitFriendsBlock: some View {
-        HStack(spacing: 6) {
-            // Split mode icon + label — tappable to change mode
-            Button(action: { showSplitModePicker = true }) {
-                HStack(spacing: AppSpacing.xs) {
-                    SplitModeIcon(mode: vm.splitMode ?? .fiftyFifty, size: 18)
-                    Text(splitModeLabel)
-                        .font(AppFonts.footnote)
-                        .foregroundColor(AppColors.textPrimary)
-                        .lineLimit(1)
-                }
-                .padding(.vertical, AppSpacing.xs)
-                .padding(.horizontal, AppSpacing.sm)
-                .background(AppColors.backgroundChip)
-                .clipShape(Capsule())
-            }
-            .buttonStyle(.plain)
-
-            Text("between")
-                .font(AppFonts.metaText)
-                .foregroundColor(AppColors.textSecondary)
-                .lineLimit(1)
-
-            // Participant chips — tappable to re-edit
-            Button {
-                showFriendPicker = true
-            } label: {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: AppSpacing.xs) {
-                        // "You" chip — only if You is included
-                        if youIncludedInSplit {
-                            HStack(spacing: AppSpacing.xs) {
-                                PixelCatView(id: UserIDService.currentID(), size: 16, blackAndWhite: false)
-                                    .clipShape(Circle())
-                                Text("You")
-                                    .font(AppFonts.metaText)
-                                    .foregroundColor(AppColors.textPrimary)
-                                    .lineLimit(1)
-                            }
-                            .padding(.vertical, AppSpacing.xs)
-                            .padding(.leading, AppSpacing.xs)
-                            .padding(.trailing, AppSpacing.sm)
-                            .background(AppColors.backgroundChip)
-                            .clipShape(Capsule())
-                        }
-
-                        ForEach(vm.selectedFriends) { friend in
-                            HStack(spacing: AppSpacing.xs) {
-                                // Colored when the friend is a real
-                                // user (`isConnected == true`),
-                                // grayscale for manually-typed
-                                // contacts. Same rule everywhere we
-                                // render an avatar.
-                                PixelCatView(id: friend.id, size: 16, blackAndWhite: !friend.isConnected)
-                                    .clipShape(Circle())
-                                Text(friend.name)
-                                    .font(AppFonts.metaText)
-                                    .foregroundColor(AppColors.textPrimary)
-                                    .lineLimit(1)
-                            }
-                            .padding(.vertical, AppSpacing.xs)
-                            .padding(.leading, AppSpacing.xs)
-                            .padding(.trailing, AppSpacing.sm)
-                            .background(AppColors.backgroundChip)
-                            .clipShape(Capsule())
-                        }
-
-                        // "+" chip — visible only when just "You" is selected
-                        if vm.selectedFriends.isEmpty && youIncludedInSplit {
-                            Image(systemName: "plus")
-                                .font(AppFonts.captionSmallStrong)
-                                .foregroundColor(AppColors.textTertiary)
-                                .frame(width: 24, height: 24)
-                                .background(AppColors.backgroundChip)
-                                .clipShape(Circle())
-                        }
-                    }
-                    .padding(.trailing, 20)
-                }
-                .mask(
-                    HStack(spacing: 0) {
-                        Color.black
-                        LinearGradient(
-                            colors: [.black, .clear],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                        .frame(width: 24)
-                    }
-                )
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.leading, AppSpacing.xs)
-        .padding(.trailing, AppSpacing.xs)
-        .padding(.vertical, AppSpacing.sm)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, AppSpacing.pageHorizontal)
-        .padding(.top, AppSpacing.xs)
-        .padding(.bottom, AppSpacing.xxs)
-    }
-}
-
-// MARK: - Who Paid Participants
-
-extension CreateTransactionModal {
-    /// Build participant list for WhoPaidPickerView (always includes You + selected friends).
-    /// Payers are independent of split participants — you can pay even if not splitting.
-    var whoPaidParticipants: [WhoPaidParticipant] {
-        var list: [WhoPaidParticipant] = [WhoPaidParticipant(id: "me", name: "You")]
-        list += vm.selectedFriends.map { WhoPaidParticipant(id: $0.id, name: $0.name) }
-        return list
-    }
-}
-
-// MARK: - Payer Subtitle
-
-extension CreateTransactionModal {
-    private var subtitleSecondaryColor: Color {
-        payerConflict ? AppColors.warning : AppColors.textSecondary
-    }
-    private var subtitlePrimaryColor: Color {
-        payerConflict ? AppColors.warning : AppColors.textPrimary
+    /// True when the modal has a non-zero amount AND mode is set.
+    /// State 3/4 from the prototype — drives the orange-warning
+    /// rendering when the amount is later cleared.
+    private var amountReadyForSplit: Bool {
+        vm.parsedAmount > 0.001
     }
 
-    @ViewBuilder
-    var payerSubtitle: some View {
-        let lent = vm.netLentAmount
-        let absLent = abs(lent)
-        let absFormatted = vm.netLentAmountFormatted
-        let isZero = absLent < 0.01
+    /// byItems with a populated receipt but no per-participant
+    /// assignments yet — either the user just edited the items
+    /// (which strips `assignedParticipantIDs` via the editor) and
+    /// abandoned the re-walk, or they never finished the initial
+    /// assignment flow. In both cases the subtitle's "split the
+    /// receipt between N people" claim is misleading until the walk
+    /// is completed, so the caption renders orange the same way
+    /// amount=0-with-mode-set does.
+    private var byItemsNeedsAssignments: Bool {
+        modeIsConfigured
+            && vm.splitMode == .byItems
+            && !vm.pendingReceiptItems.isEmpty
+            && !vm.byItemsHasAssignments
+    }
 
-        if vm.payers.count == 1 && vm.payers[0].id == "me" {
-            HStack(spacing: AppSpacing.xs) {
-                PixelCatView(id: UserIDService.currentID(), size: 18, blackAndWhite: false)
-                    .clipShape(Circle())
-                if isZero {
-                    Text("You pay")
-                        .font(AppFonts.captionEmphasized)
-                        .foregroundColor(subtitleSecondaryColor)
-                } else {
-                    Text("You pay ")
-                        .font(AppFonts.captionEmphasized)
-                        .foregroundColor(subtitleSecondaryColor)
-                    + Text("and \(lent < 0 ? "owe" : "lend") ")
-                        .font(AppFonts.captionEmphasized)
-                        .foregroundColor(subtitleSecondaryColor)
-                    + Text("\(absFormatted) \(vm.selectedCurrency)")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(subtitlePrimaryColor)
-                }
-            }
-        } else if vm.payers.count == 1 {
-            let payerId = vm.payers[0].id
-            let payerName = vm.payers[0].name.count > 10 ? String(vm.payers[0].name.prefix(10)) + "…" : vm.payers[0].name
-            // Look up the payer's connection status from FriendStore.
-            // Falls back to grayscale (`true` → B&W) when the friend
-            // record can't be found — defensive, shouldn't happen in
-            // a valid split.
-            let payerIsConnected = friendStore.friend(byID: payerId)?.isConnected ?? false
-            HStack(spacing: AppSpacing.xs) {
-                PixelCatView(id: payerId, size: 18, blackAndWhite: !payerIsConnected)
-                    .clipShape(Circle())
-                if isZero {
-                    Text("\(payerName) pays")
-                        .font(AppFonts.captionEmphasized)
-                        .foregroundColor(subtitleSecondaryColor)
-                } else {
-                    Text("\(payerName) pays ")
-                        .font(AppFonts.captionEmphasized)
-                        .foregroundColor(subtitleSecondaryColor)
-                    + Text("and you borrow ")
-                        .font(AppFonts.captionEmphasized)
-                        .foregroundColor(subtitleSecondaryColor)
-                    + Text("\(absFormatted) \(vm.selectedCurrency)")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(subtitlePrimaryColor)
-                }
-            }
-        } else {
-            let isOwe = lent < 0
-            if isZero {
-                Text("\(vm.payers.count) people pay")
-                    .font(AppFonts.captionEmphasized)
-                    .foregroundColor(subtitleSecondaryColor)
+    /// byAmount with shares entered upstream but no longer summing
+    /// to `parsedAmount` (most common cause: user edited the amount
+    /// on the keypad after entering shares — leaving them stale —
+    /// or an exceed-confirm in the multi-payer numpad bumped the
+    /// total without the shares being re-balanced). Treated as an
+    /// unresolved conflict the same way `byItemsNeedsAssignments` is:
+    /// orange caption + save shake until the user re-walks the share
+    /// picker.
+    private var byAmountSharesStale: Bool {
+        modeIsConfigured
+            && vm.splitMode == .byAmount
+            && !vm.byAmountShares.isEmpty
+            && !vm.byAmountSharesBalanced
+    }
+
+    /// Multi-payer split where the per-payer amounts no longer sum
+    /// to `parsedAmount`. Independent of split mode — fires whenever
+    /// the user has more than one payer configured and their sum
+    /// drifted (manual amount edit, or evenly/byItems mode where
+    /// payers were committed against an older total). Mirrors the
+    /// `payerConflict` @State guard, but as a current-state computed
+    /// check so it stays accurate even when the conflict was reached
+    /// without crossing the `.onChange(of: vm.amount)` observer
+    /// (e.g., payers changed without an amount edit).
+    private var payerSumMismatch: Bool {
+        guard modeIsConfigured else { return false }
+        guard vm.payers.count > 1 else { return false }
+        let sum = vm.payers.reduce(0) { $0 + $1.amount }
+        return abs(sum - vm.parsedAmount) > 0.001
+    }
+
+    /// Union of all "split is currently unresolved" predicates —
+    /// used by both the orange-caption rendering and the save
+    /// blockers. Centralised so the chip, the subtitle, the toolbar
+    /// confirm, and the keypad ✔︎ stay in lockstep.
+    private var splitHasUnresolvedConflict: Bool {
+        byItemsNeedsAssignments || byAmountSharesStale || payerSumMismatch
+    }
+
+    /// The orchestrator entry point: opens at the mode picker for
+    /// fresh starts, jumps to the "specific step" for re-entries when
+    /// a mode is already configured. State 2 (no mode set yet) → mode
+    /// picker so the user makes their first choice.
+    ///
+    /// The byItems-but-items-vanished re-entry case (user nuked items
+    /// via the badge after configuring the mode) is handled inside
+    /// the orchestrator: `seedPathForStartStep` lands on the
+    /// `.scanSource` step in that shape and the unified scan flow
+    /// rebuilds the items list without bailing back out to the modal.
+    func openModeFlow() {
+        modeFlowStartStep = modeIsConfigured ? .specificStep : .modePicker
+        showModeFlowSheet = true
+    }
+
+    /// Top chip below the toolbar — single tap target for the entire
+    /// mode flow, with a satellite close button when a mode is set.
+    /// Two layout shapes:
+    ///
+    /// - **Default** (no split mode configured): 22pt circle showing
+    ///   the user's own avatar — a one-tap hint that this chip is
+    ///   "who's involved" rather than a generic split icon.
+    /// - **Mode set**: pill containing the overlapping avatar stack of
+    ///   every participant + payer. No text label, no close button —
+    ///   the user enters/leaves split mode via the mode-picker, not
+    ///   via a one-tap reset on the chip.
+    ///
+    /// Animations are spring-driven so the morph between circle and
+    /// pill reads as a fluid expansion rather than a step change.
+    var modeEntryChip: some View {
+        let isOrange = modeIsConfigured && (!amountReadyForSplit || splitHasUnresolvedConflict)
+        // The chip stays a circle until the user picks a real split
+        // mode; once configured, it expands into a pill that hugs the
+        // overlapping avatar stack on both sides.
+        let isCircle = !modeIsConfigured
+        // Tap-on-zero shake nudge stays — dim the circle so the
+        // un-actionable state is visually obvious.
+        let isUnactionable = !amountReadyForSplit && !modeIsConfigured
+
+        return Button(action: {
+            if !amountReadyForSplit {
+                triggerAmountShake()
             } else {
-                Text("\(vm.payers.count) people pay ")
-                    .font(AppFonts.captionEmphasized)
-                    .foregroundColor(subtitleSecondaryColor)
-                + Text("and you \(isOwe ? "owe" : "lend") ")
-                    .font(AppFonts.captionEmphasized)
-                    .foregroundColor(subtitleSecondaryColor)
-                + Text("\(absFormatted) \(vm.selectedCurrency)")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(subtitlePrimaryColor)
+                openModeFlow()
+            }
+        }) {
+            chipContent(orange: isOrange)
+                // Symmetric padding on both sides so the avatar pile
+                // sits centred in the pill — matches the left/right
+                // breathing room. Circle state ignores both via the
+                // forced square frame.
+                .padding(.leading, isCircle ? 0 : AppSpacing.xs)
+                .padding(.trailing, isCircle ? 0 : AppSpacing.xs)
+                .frame(width: isCircle ? 22 : nil, height: 22)
+                .background(
+                    Capsule().fill(
+                        isOrange
+                            ? AppColors.warning.opacity(0.15)
+                            : AppColors.backgroundElevated
+                    )
+                )
+                .opacity(isUnactionable ? 0.4 : 1)
+        }
+        .buttonStyle(.plain)
+        .animation(.spring(response: 0.42, dampingFraction: 0.78), value: amountReadyForSplit)
+        .animation(.spring(response: 0.42, dampingFraction: 0.78), value: modeIsConfigured)
+    }
+
+    /// Chip body — avatars only, no text. Keeping the structure stable
+    /// (single HStack with the avatar pile as the only child) lets
+    /// SwiftUI spring-animate the size change as the participant list
+    /// grows from one (default user avatar) to N participants.
+    private func chipContent(orange: Bool) -> some View {
+        HStack(spacing: AppSpacing.xs) {
+            chipLeadingVisual(orange: orange)
+        }
+    }
+
+    /// Avatars all the time:
+    ///   - Mode set: the full participant pile from
+    ///     `modeChipAvatars`, capped at 4 visible.
+    ///   - Default state: a single 14pt cat — the current user — so
+    ///     the chip reads as "you, alone, on this transaction" rather
+    ///     than as a faceless generic "split" symbol. Two-people icon
+    ///     used to live here; we dropped it because pre-mode the chip
+    ///     should hint at "who" (you), not at "category of action".
+    @ViewBuilder
+    private func chipLeadingVisual(orange: Bool) -> some View {
+        if modeIsConfigured {
+            modeChipAvatars
+        } else {
+            OverlappingAvatarStack(
+                participants: [OverlappingAvatarStack.Participant(
+                    id: UserIDService.currentID(),
+                    isConnected: true
+                )],
+                avatarSize: 14,
+                strokeColor: AppColors.backgroundElevated,
+                strokeWidth: 1,
+                maxVisible: 1
+            )
+        }
+    }
+
+    /// Pixel-cat pile sized for the chip — same `OverlappingAvatarStack`
+    /// layout the Home `DebtBadgeView` uses, just at 14pt to fit the
+    /// 22pt capsule with 4pt of breathing room above/below. Stroke
+    /// uses `backgroundElevated` so adjacent discs blend into the
+    /// chip surface rather than ringing visibly.
+    private var modeChipAvatars: some View {
+        let participants = chipParticipantPreview.map {
+            OverlappingAvatarStack.Participant(id: $0.id, isConnected: $0.coloredAvatar)
+        }
+        return OverlappingAvatarStack(
+            participants: participants,
+            avatarSize: 14,
+            strokeColor: AppColors.backgroundElevated,
+            strokeWidth: 1,
+            maxVisible: 4
+        )
+    }
+
+    /// Every party with a role on the transaction — split participants
+    /// AND payers, deduped, ordered "you first, then split members,
+    /// then payer-only friends". Drives both the avatar pile and the
+    /// trailing count text so the two never disagree (an earlier
+    /// version derived the count from `selectedFriends + youIncluded`,
+    /// which silently dropped paid-upfront friends who weren't in the
+    /// split — the chip would say "1 person" while the underlying
+    /// transaction had two real participants).
+    private var allChipParticipants: [(id: String, coloredAvatar: Bool)] {
+        var result: [(String, Bool)] = []
+        var seen = Set<String>()
+
+        // Self appears if you're in the split or you're a payer.
+        let youIsPayer = vm.payers.contains(where: { $0.id == "me" })
+        if vm.youIncludedInSplit || youIsPayer {
+            result.append((UserIDService.currentID(), true))
+            seen.insert("me")
+        }
+
+        // Split members.
+        for friend in vm.selectedFriends {
+            guard !seen.contains(friend.id) else { continue }
+            seen.insert(friend.id)
+            result.append((friend.id, friend.isConnected))
+        }
+
+        // Payers who aren't in the split — typical in paidUpfront
+        // where someone covers the bill but isn't a participant.
+        for payer in vm.payers {
+            guard payer.id != "me", !seen.contains(payer.id) else { continue }
+            seen.insert(payer.id)
+            let isConnected = friendStore.friend(byID: payer.id)?.isConnected ?? false
+            result.append((payer.id, isConnected))
+        }
+
+        return result
+    }
+
+    /// Avatars to render in the chip — same ordering as
+    /// `allChipParticipants`, capped for visual fit. The cap matters
+    /// for chip width; the count label below uses the uncapped total.
+    private var chipParticipantPreview: [(id: String, coloredAvatar: Bool)] {
+        Array(allChipParticipants.prefix(4))
+    }
+
+    /// Subtitle shown directly under the amount block once a mode is
+    /// configured. Hidden in state 1 (amount=0, no mode), state 2
+    /// (amount>0, no mode), and the income tab (income transactions
+    /// can't be split). Tappable — same orchestrator entry as the
+    /// top chip.
+    @ViewBuilder
+    var modeSubtitle: some View {
+        if vm.isIncome {
+            Spacer().frame(height: 4)
+        } else if modeIsConfigured {
+            let isOrange = !amountReadyForSplit || splitHasUnresolvedConflict
+            Button(action: {
+                if !amountReadyForSplit {
+                    triggerAmountShake()
+                } else {
+                    openModeFlow()
+                }
+            }) {
+                Text(modeSubtitleText)
+                    .font(AppFonts.metaText)
+                    .foregroundColor(isOrange ? AppColors.warning : AppColors.textSecondary)
+                    .lineLimit(1)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, AppSpacing.pageHorizontal)
+            }
+            .buttonStyle(.plain)
+            .offset(x: subtitleShakeOffset)
+            .padding(.bottom, AppSpacing.lg)
+        } else {
+            // State 1/2 — subtitle hidden, but reserve a small spacer
+            // so the layout doesn't snap when mode is later configured.
+            Spacer().frame(height: 4)
+        }
+    }
+
+    /// Composed subtitle string per the TZ rules.
+    private var modeSubtitleText: String {
+        guard let mode = vm.splitMode else { return "" }
+        if mode == .settleUp { return settleUpSubtitle }
+
+        let payerPrefix = subtitlePayerPrefix
+        let participantCount = (vm.youIncludedInSplit ? 1 : 0) + vm.selectedFriends.count
+        let peopleWord = participantCount == 1 ? "person" : "people"
+
+        switch mode {
+        case .evenly:
+            return "\(payerPrefix) and split evenly between \(participantCount) \(peopleWord)"
+        case .byAmount:
+            return "\(payerPrefix) and split by amount between \(participantCount) \(peopleWord)"
+        case .byItems:
+            return "\(payerPrefix) and split the receipt between \(participantCount) \(peopleWord)"
+        case .settleUp:
+            return settleUpSubtitle
+        }
+    }
+
+    /// "{X} pay" / "You pay" / "{Name} pays" depending on the payers
+    /// array. Falls back to "Someone pays" only in the defensive case
+    /// where vm.payers is empty (the create flow always seeds a
+    /// default payer, so this should be unreachable).
+    private var subtitlePayerPrefix: String {
+        let activePayers = vm.payers.filter { $0.amount > 0.001 }
+        if activePayers.isEmpty { return "Someone pays" }
+        if activePayers.count == 1 {
+            let payer = activePayers[0]
+            if payer.id == "me" { return "You pay" }
+            return "\(payer.name) pays"
+        }
+        return "\(activePayers.count) people pay"
+    }
+
+    /// "You pay for Michael" / "Michael pays for you" / "{A} pays for {B}".
+    private var settleUpSubtitle: String {
+        let activePayers = vm.payers.filter { $0.amount > 0.001 }
+        let payer = activePayers.first
+        let isYouPayer = payer?.id == "me"
+
+        if isYouPayer, let firstFriend = vm.selectedFriends.first {
+            return "You pay for \(firstFriend.name)"
+        }
+        if let payer, vm.youIncludedInSplit {
+            return "\(payer.name) pays for you"
+        }
+        if let payer, let firstFriend = vm.selectedFriends.first(where: { $0.id != payer.id }) {
+            return "\(payer.name) pays for \(firstFriend.name)"
+        }
+        return "Settle up"
+    }
+
+    /// Shared shake gesture for amount-not-ready taps on the chip /
+    /// subtitle.
+    private func triggerAmountShake() {
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.warning)
+        withAnimation(.default) {
+            amountShakeOffset = 12
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            withAnimation(.interpolatingSpring(stiffness: 600, damping: 12)) {
+                amountShakeOffset = 0
             }
         }
     }

@@ -7,6 +7,7 @@ struct RemindersView: View {
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var friendStore: FriendStore
     @EnvironmentObject var currencyStore: CurrencyStore
+    @EnvironmentObject var receiptItemStore: ReceiptItemStore
     @State private var selectedTransaction: Transaction? = nil
     @State private var editingTransaction: Transaction? = nil
 
@@ -57,6 +58,7 @@ struct RemindersView: View {
             .environmentObject(transactionStore)
             .environmentObject(friendStore)
             .environmentObject(currencyStore)
+            .environmentObject(receiptItemStore)
         }
         .sheet(item: $editingTransaction) { editTx in
             CreateTransactionModal(
@@ -76,8 +78,8 @@ struct RemindersView: View {
         .presentationCornerRadius(16)
         .presentationBackground { ReminderPageBackground() }
         .onAppear { vm.refresh(from: transactionStore.transactions) }
-        .onChange(of: transactionStore.transactions.count) { _ in
-            vm.refresh(from: transactionStore.transactions)
+        .onReceive(transactionStore.$transactions) { txs in
+            vm.refresh(from: txs)
         }
     }
 
@@ -87,18 +89,27 @@ struct RemindersView: View {
         // Sleeping cat in the `.reminders` tint (warm calendar-red)
         // visually anchors the empty state to the Reminders sub-
         // palette, so it doesn't read as a generic neutral empty.
-        VStack(spacing: AppSpacing.lg) {
-            SleepingCatIllustration(tint: .reminders, size: .standard)
-            Text("No Reminders")
-                .font(AppFonts.labelPrimary)
-                .foregroundColor(AppColors.textSecondary)
-            Text("Future and recurring transactions\nwill appear here.")
-                .font(AppFonts.rowDescription)
-                .foregroundColor(AppColors.textTertiary)
-                .multilineTextAlignment(.center)
+        // `.ignoresSafeArea()` on the GeometryReader is load-bearing:
+        // without it the geo's frame is the area *below* the large
+        // navigation title, so its midpoint sits well below the visual
+        // centre of the screen and the figure reads as floating low.
+        // Spanning full-screen and centring there puts the figure at
+        // the actual screen midpoint, matching `EmptyTransactionsView`.
+        GeometryReader { geo in
+            VStack(spacing: AppSpacing.md) {
+                SleepingCatIllustration(tint: .reminders, size: .standard)
+                Text("No Reminders")
+                    .font(AppFonts.labelPrimary)
+                    .foregroundColor(AppColors.textSecondary)
+                Text("Future and recurring transactions\nwill appear here.")
+                    .font(AppFonts.caption)
+                    .foregroundColor(AppColors.textTertiary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .position(x: geo.size.width / 2, y: geo.size.height / 2)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
+        .ignoresSafeArea()
     }
 
     // MARK: - List
@@ -136,7 +147,6 @@ struct RemindersView: View {
                                 ReminderRowView(
                                     transaction: tx,
                                     emoji: emoji,
-                                    nextDateLabel: vm.formattedNextDate(for: tx),
                                     isLast: idx == group.reminders.count - 1,
                                     onTap: { selectedTransaction = tx },
                                     onDelete: { transactionStore.delete(id: tx.id) }

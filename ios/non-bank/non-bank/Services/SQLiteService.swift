@@ -120,6 +120,11 @@ class SQLiteService: DatabaseProtocol {
         // Receipt items belonging to a transaction. We don't enable SQLite
         // foreign-key cascading (legacy connections may not have FKs on); the
         // store's `delete(id:)` flow explicitly deletes children instead.
+        //
+        // `assigned_participant_ids` stores the JSON-encoded array of
+        // participant IDs (Friend.id strings or `__me__`) responsible for
+        // this line in a `byItems` split. NULL/empty for receipts created
+        // outside a `byItems` flow — they don't need item-level assignment.
         let sql = """
         CREATE TABLE IF NOT EXISTS receipt_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,7 +135,8 @@ class SQLiteService: DatabaseProtocol {
             quantity REAL,
             price REAL,
             total REAL,
-            last_modified REAL NOT NULL
+            last_modified REAL NOT NULL,
+            assigned_participant_ids TEXT
         );
         """
         var statement: OpaquePointer?
@@ -193,6 +199,14 @@ class SQLiteService: DatabaseProtocol {
             exec("ALTER TABLE transactions ADD COLUMN payload_checksum TEXT;")
         }
 
+        // --- Per-transaction exclude-from-insights flag ---
+        // User can hide an individual transaction from analytics from
+        // the detail view or a row swipe action. Stored as 0/1; default
+        // 0 (counted) for pre-existing rows.
+        if !columnExists("excluded_from_insights", in: "transactions") {
+            exec("ALTER TABLE transactions ADD COLUMN excluded_from_insights INTEGER NOT NULL DEFAULT 0;")
+        }
+
         // --- Friends v2: add groups_json, split_mode columns ---
         if !columnExists("groups_json", in: "friends") {
             exec("ALTER TABLE friends ADD COLUMN groups_json TEXT;")
@@ -207,6 +221,14 @@ class SQLiteService: DatabaseProtocol {
         // before this point could have been "connected".
         if !columnExists("is_connected", in: "friends") {
             exec("ALTER TABLE friends ADD COLUMN is_connected INTEGER NOT NULL DEFAULT 0;")
+        }
+
+        // --- Receipt items: per-line assignment for `byItems` split mode ---
+        // Stores the JSON-encoded array of participant IDs that bought a
+        // given line. NULL on rows that pre-date the feature; the read
+        // path treats NULL as the empty array.
+        if !columnExists("assigned_participant_ids", in: "receipt_items") {
+            exec("ALTER TABLE receipt_items ADD COLUMN assigned_participant_ids TEXT;")
         }
 
         // --- Friends v3: remove legacy emoji column ---
@@ -294,9 +316,10 @@ class SQLiteService: DatabaseProtocol {
         } else {
             sqlite3_bind_null(statement, 16)
         }
+        sqlite3_bind_int(statement, 17, transaction.excludedFromInsights ? 1 : 0)
     }
 
-    private static let transactionInsertSQL = "INSERT INTO transactions (emoji, category, title, description, amount, currency, date, type, isIncome, tags, sync_id, last_modified, repeat_interval, parent_reminder_id, split_info, payload_checksum) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+    private static let transactionInsertSQL = "INSERT INTO transactions (emoji, category, title, description, amount, currency, date, type, isIncome, tags, sync_id, last_modified, repeat_interval, parent_reminder_id, split_info, payload_checksum, excluded_from_insights) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
 
     func insert(transaction: Transaction) async {
         await withCheckedContinuation { continuation in
@@ -356,10 +379,18 @@ class SQLiteService: DatabaseProtocol {
         if sqlite3_column_type(statement, 16) != SQLITE_NULL, let ptr = sqlite3_column_text(statement, 16) {
             payloadChecksum = String(cString: ptr)
         }
-        return Transaction(id: id, syncID: syncID, emoji: emoji, category: category, title: title, description: description, amount: amount, currency: currency, date: date, type: type, tags: tags, lastModified: lastModified, repeatInterval: repeatInterval, parentReminderID: parentReminderID, splitInfo: splitInfo, payloadChecksum: payloadChecksum)
+        // Column 17 — excluded_from_insights — is declared NOT NULL
+        // with a default of 0, but we still check for NULL defensively
+        // in case the read happens against a row that pre-dates the
+        // migration on a partially-upgraded database.
+        var excludedFromInsights = false
+        if sqlite3_column_type(statement, 17) != SQLITE_NULL {
+            excludedFromInsights = sqlite3_column_int(statement, 17) != 0
+        }
+        return Transaction(id: id, syncID: syncID, emoji: emoji, category: category, title: title, description: description, amount: amount, currency: currency, date: date, type: type, tags: tags, lastModified: lastModified, repeatInterval: repeatInterval, parentReminderID: parentReminderID, splitInfo: splitInfo, payloadChecksum: payloadChecksum, excludedFromInsights: excludedFromInsights)
     }
 
-    private static let transactionSelectSQL = "SELECT id, emoji, category, title, description, amount, currency, date, type, isIncome, tags, sync_id, last_modified, repeat_interval, parent_reminder_id, split_info, payload_checksum FROM transactions ORDER BY date DESC;"
+    private static let transactionSelectSQL = "SELECT id, emoji, category, title, description, amount, currency, date, type, isIncome, tags, sync_id, last_modified, repeat_interval, parent_reminder_id, split_info, payload_checksum, excluded_from_insights FROM transactions ORDER BY date DESC;"
 
     func fetchAllTransactions() async -> [Transaction] {
         await withCheckedContinuation { continuation in
@@ -413,14 +444,14 @@ class SQLiteService: DatabaseProtocol {
     func update(transaction: Transaction) async {
         await withCheckedContinuation { continuation in
             dbQueue.async {
-                let updateString = "UPDATE transactions SET emoji = ?, category = ?, title = ?, description = ?, amount = ?, currency = ?, date = ?, type = ?, isIncome = ?, tags = ?, sync_id = ?, last_modified = ?, repeat_interval = ?, parent_reminder_id = ?, split_info = ?, payload_checksum = ? WHERE id = ?;"
+                let updateString = "UPDATE transactions SET emoji = ?, category = ?, title = ?, description = ?, amount = ?, currency = ?, date = ?, type = ?, isIncome = ?, tags = ?, sync_id = ?, last_modified = ?, repeat_interval = ?, parent_reminder_id = ?, split_info = ?, payload_checksum = ?, excluded_from_insights = ? WHERE id = ?;"
                 var statement: OpaquePointer?
                 if sqlite3_prepare_v2(self.db, updateString, -1, &statement, nil) == SQLITE_OK {
                     self.bindTransactionFields(statement, transaction)
-                    // payload_checksum binds as column 16 inside
+                    // excluded_from_insights binds as column 17 inside
                     // bindTransactionFields; the WHERE clause's `id` is
                     // the next free slot.
-                    sqlite3_bind_int(statement, 17, Int32(transaction.id))
+                    sqlite3_bind_int(statement, 18, Int32(transaction.id))
                     if sqlite3_step(statement) != SQLITE_DONE {
                         print("Failed to update transaction")
                     }
@@ -560,7 +591,7 @@ class SQLiteService: DatabaseProtocol {
     func fetchTransactionBySyncID(_ syncID: String) async -> Transaction? {
         await withCheckedContinuation { continuation in
             dbQueue.async {
-                let query = "SELECT id, emoji, category, title, description, amount, currency, date, type, isIncome, tags, sync_id, last_modified, repeat_interval, parent_reminder_id, split_info FROM transactions WHERE sync_id = ? LIMIT 1;"
+                let query = "SELECT id, emoji, category, title, description, amount, currency, date, type, isIncome, tags, sync_id, last_modified, repeat_interval, parent_reminder_id, split_info, payload_checksum, excluded_from_insights FROM transactions WHERE sync_id = ? LIMIT 1;"
                 var statement: OpaquePointer?
                 var result: Transaction?
                 if sqlite3_prepare_v2(self.db, query, -1, &statement, nil) == SQLITE_OK {
@@ -743,8 +774,8 @@ class SQLiteService: DatabaseProtocol {
 
     private static let receiptItemInsertSQL = """
         INSERT INTO receipt_items
-            (sync_id, transaction_id, position, name, quantity, price, total, last_modified)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+            (sync_id, transaction_id, position, name, quantity, price, total, last_modified, assigned_participant_ids)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
 
     private func bindReceiptItemFields(_ statement: OpaquePointer?, _ item: ReceiptItem) {
@@ -760,6 +791,7 @@ class SQLiteService: DatabaseProtocol {
             sqlite3_bind_null(statement, 6)
             sqlite3_bind_null(statement, 7)
             sqlite3_bind_double(statement, 8, item.lastModified.timeIntervalSince1970)
+            bindAssignedParticipantIDs(statement, position: 9, ids: item.assignedParticipantIDs)
             return
         }
         sqlite3_bind_text(statement, 1, (item.syncID as NSString).utf8String, -1, nil)
@@ -782,6 +814,23 @@ class SQLiteService: DatabaseProtocol {
             sqlite3_bind_null(statement, 7)
         }
         sqlite3_bind_double(statement, 8, item.lastModified.timeIntervalSince1970)
+        bindAssignedParticipantIDs(statement, position: 9, ids: item.assignedParticipantIDs)
+    }
+
+    /// JSON-encodes the assignment list. Empty list is stored as NULL —
+    /// keeps rows from `byItems`-less flows (the common case) noise-free
+    /// in the SQL dump, and matches the read path's NULL-as-empty default.
+    private func bindAssignedParticipantIDs(_ statement: OpaquePointer?, position: Int32, ids: [String]) {
+        if ids.isEmpty {
+            sqlite3_bind_null(statement, position)
+            return
+        }
+        if let data = try? JSONEncoder().encode(ids),
+           let json = String(data: data, encoding: .utf8) {
+            sqlite3_bind_text(statement, position, (json as NSString).utf8String, -1, nil)
+        } else {
+            sqlite3_bind_null(statement, position)
+        }
     }
 
     private func readReceiptItemRow(_ statement: OpaquePointer?) -> ReceiptItem {
@@ -799,11 +848,21 @@ class SQLiteService: DatabaseProtocol {
         let lastModified = sqlite3_column_type(statement, 8) != SQLITE_NULL
             ? Date(timeIntervalSince1970: sqlite3_column_double(statement, 8))
             : Date()
+        var assigned: [String] = []
+        if sqlite3_column_type(statement, 9) != SQLITE_NULL,
+           let ptr = sqlite3_column_text(statement, 9) {
+            let json = String(cString: ptr)
+            if let data = json.data(using: .utf8),
+               let decoded = try? JSONDecoder().decode([String].self, from: data) {
+                assigned = decoded
+            }
+        }
         return ReceiptItem(
             name: name,
             quantity: quantity,
             price: price,
             total: total,
+            assignedParticipantIDs: assigned,
             persistedID: id,
             transactionID: txID,
             syncID: syncID,
@@ -854,7 +913,7 @@ class SQLiteService: DatabaseProtocol {
         }
     }
 
-    private static let receiptItemSelectColumns = "id, sync_id, transaction_id, position, name, quantity, price, total, last_modified"
+    private static let receiptItemSelectColumns = "id, sync_id, transaction_id, position, name, quantity, price, total, last_modified, assigned_participant_ids"
 
     func fetchReceiptItems(transactionID: Int) async -> [ReceiptItem] {
         await withCheckedContinuation { continuation in
@@ -895,11 +954,11 @@ class SQLiteService: DatabaseProtocol {
         guard let id = item.persistedID else { return }
         await withCheckedContinuation { continuation in
             dbQueue.async {
-                let sql = "UPDATE receipt_items SET sync_id = ?, transaction_id = ?, position = ?, name = ?, quantity = ?, price = ?, total = ?, last_modified = ? WHERE id = ?;"
+                let sql = "UPDATE receipt_items SET sync_id = ?, transaction_id = ?, position = ?, name = ?, quantity = ?, price = ?, total = ?, last_modified = ?, assigned_participant_ids = ? WHERE id = ?;"
                 var statement: OpaquePointer?
                 if sqlite3_prepare_v2(self.db, sql, -1, &statement, nil) == SQLITE_OK {
                     self.bindReceiptItemFields(statement, item)
-                    sqlite3_bind_int(statement, 9, Int32(id))
+                    sqlite3_bind_int(statement, 10, Int32(id))
                     if sqlite3_step(statement) != SQLITE_DONE {
                         print("Failed to update receipt item")
                     }
@@ -930,6 +989,79 @@ class SQLiteService: DatabaseProtocol {
                 var statement: OpaquePointer?
                 if sqlite3_prepare_v2(self.db, "DELETE FROM receipt_items WHERE transaction_id = ?;", -1, &statement, nil) == SQLITE_OK {
                     sqlite3_bind_int(statement, 1, Int32(transactionID))
+                    sqlite3_step(statement)
+                }
+                sqlite3_finalize(statement)
+                continuation.resume(returning: ())
+            }
+        }
+    }
+
+    // MARK: - Sync lookups (Friend / ReceiptItem)
+
+    func fetchFriendByID(_ id: String) async -> Friend? {
+        await withCheckedContinuation { continuation in
+            dbQueue.async {
+                let query = "SELECT id, name, groups_json, split_mode, last_modified, is_connected FROM friends WHERE id = ? LIMIT 1;"
+                var statement: OpaquePointer?
+                var result: Friend?
+                if sqlite3_prepare_v2(self.db, query, -1, &statement, nil) == SQLITE_OK {
+                    sqlite3_bind_text(statement, 1, (id as NSString).utf8String, -1, nil)
+                    if sqlite3_step(statement) == SQLITE_ROW {
+                        let fid = String(cString: sqlite3_column_text(statement, 0))
+                        let name = String(cString: sqlite3_column_text(statement, 1))
+                        let groups: [String] = {
+                            guard sqlite3_column_type(statement, 2) != SQLITE_NULL,
+                                  let raw = sqlite3_column_text(statement, 2) else { return [] }
+                            let str = String(cString: raw)
+                            guard let data = str.data(using: .utf8),
+                                  let arr = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+                            return arr
+                        }()
+                        let splitMode: SplitMode? = {
+                            guard sqlite3_column_type(statement, 3) != SQLITE_NULL,
+                                  let raw = sqlite3_column_text(statement, 3) else { return nil }
+                            return SplitMode(rawValue: String(cString: raw))
+                        }()
+                        let lastModified = Date(timeIntervalSince1970: sqlite3_column_double(statement, 4))
+                        let isConnected = sqlite3_column_int(statement, 5) != 0
+                        result = Friend(
+                            id: fid, name: name, groups: groups,
+                            splitMode: splitMode, lastModified: lastModified,
+                            isConnected: isConnected
+                        )
+                    }
+                }
+                sqlite3_finalize(statement)
+                continuation.resume(returning: result)
+            }
+        }
+    }
+
+    func fetchReceiptItemBySyncID(_ syncID: String) async -> ReceiptItem? {
+        await withCheckedContinuation { continuation in
+            dbQueue.async {
+                let query = "SELECT \(Self.receiptItemSelectColumns) FROM receipt_items WHERE sync_id = ? LIMIT 1;"
+                var statement: OpaquePointer?
+                var result: ReceiptItem?
+                if sqlite3_prepare_v2(self.db, query, -1, &statement, nil) == SQLITE_OK {
+                    sqlite3_bind_text(statement, 1, (syncID as NSString).utf8String, -1, nil)
+                    if sqlite3_step(statement) == SQLITE_ROW {
+                        result = self.readReceiptItemRow(statement)
+                    }
+                }
+                sqlite3_finalize(statement)
+                continuation.resume(returning: result)
+            }
+        }
+    }
+
+    func deleteReceiptItemBySyncID(_ syncID: String) async {
+        await withCheckedContinuation { continuation in
+            dbQueue.async {
+                var statement: OpaquePointer?
+                if sqlite3_prepare_v2(self.db, "DELETE FROM receipt_items WHERE sync_id = ?;", -1, &statement, nil) == SQLITE_OK {
+                    sqlite3_bind_text(statement, 1, (syncID as NSString).utf8String, -1, nil)
                     sqlite3_step(statement)
                 }
                 sqlite3_finalize(statement)

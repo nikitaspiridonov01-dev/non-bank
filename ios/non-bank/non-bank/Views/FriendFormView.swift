@@ -3,7 +3,6 @@ import SwiftUI
 struct FriendFormView: View {
     @Environment(\.dismiss) private var dismiss
     @FocusState private var nameFieldFocused: Bool
-    
 
     private let existingFriend: Friend?
     private let existingGroups: [String]
@@ -19,12 +18,6 @@ struct FriendFormView: View {
     // Sheets for option selection
     @State private var showGroupSheet = false
     @State private var showSplitModeSheet = false
-
-    // New group input
-    @State private var newGroupText = ""
-
-    // Stable snapshot of groups for sheet ordering
-    @State private var sheetGroupSnapshot: [String] = []
 
     private var isEditing: Bool { existingFriend != nil }
 
@@ -56,14 +49,6 @@ struct FriendFormView: View {
 
     private var canSave: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    /// Whether the new group name already exists in the snapshot or selected groups
-    private var isDuplicateGroupName: Bool {
-        let trimmed = newGroupText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        return sheetGroupSnapshot.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame })
-            || groups.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame })
     }
 
     var body: some View {
@@ -133,10 +118,16 @@ struct FriendFormView: View {
                     nameFieldFocused = true
                 }
             }
-            .sheet(isPresented: $showGroupSheet, onDismiss: {
-                newGroupText = ""
-            }) {
-                groupSelectionSheet
+            .sheet(isPresented: $showGroupSheet) {
+                // Extracted into its own struct so the autofocus
+                // `@FocusState` lives in the sheet's own view (and
+                // therefore survives parent re-renders that previously
+                // cancelled the focus task before it fired).
+                GroupSelectionSheetView(
+                    groups: $groups,
+                    existingGroups: existingGroups,
+                    isPresented: $showGroupSheet
+                )
             }
             .sheet(isPresented: $showSplitModeSheet) {
                 splitModeSelectionSheet
@@ -256,114 +247,6 @@ struct FriendFormView: View {
         .padding(.horizontal, AppSpacing.pageHorizontal)
     }
 
-    // MARK: - Group Selection Sheet
-
-    private var groupSelectionSheet: some View {
-        NavigationStack {
-            List {
-                // Add new group
-                Section {
-                    HStack {
-                        TextField("New group name", text: $newGroupText)
-                            .textInputAutocapitalization(.words)
-                            .onSubmit { addNewGroup() }
-
-                        Button(action: { addNewGroup() }) {
-                            Image(systemName: "plus.circle.fill")
-                                .font(AppFonts.emojiMedium)
-                                .foregroundColor(.accentColor)
-                        }
-                        .buttonStyle(.plain)
-                        .opacity(newGroupText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0 : 1)
-                        .disabled(newGroupText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-
-                    if isDuplicateGroupName {
-                        Text("This group already exists")
-                            .font(AppFonts.metaRegular)
-                            .foregroundColor(AppColors.danger)
-                    }
-                } header: {
-                    Text("Create New")
-                }
-
-                // All groups — stable order from snapshot, toggle style
-                if !sheetGroupSnapshot.isEmpty {
-                    Section {
-                        ForEach(sheetGroupSnapshot, id: \.self) { group in
-                            let isSelected = groups.contains(group)
-                            Button(action: {
-                                if isSelected {
-                                    groups.removeAll { $0 == group }
-                                } else {
-                                    groups.append(group)
-                                }
-                            }) {
-                                HStack {
-                                    Text(group)
-                                        .font(AppFonts.labelPrimary)
-                                        .foregroundColor(AppColors.textPrimary)
-                                    Spacer()
-                                    if isSelected {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .font(AppFonts.iconLarge)
-                                            .foregroundColor(.accentColor)
-                                    } else {
-                                        Image(systemName: "circle")
-                                            .font(AppFonts.iconLarge)
-                                            .foregroundColor(AppColors.textTertiary)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    } header: {
-                        Text("Groups")
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(AppColors.backgroundPrimary)
-            .navigationTitle("Groups")
-            .toolbarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        // Commit any pending typed text so the user
-                        // doesn't lose a group they typed but didn't
-                        // explicitly +-confirm. `addNewGroup` already
-                        // no-ops on empty/duplicate input.
-                        addNewGroup()
-                        showGroupSheet = false
-                    }
-                }
-            }
-            .onAppear {
-                sheetGroupSnapshot = buildStableGroupList()
-            }
-        }
-    }
-
-    /// Build stable group list: all unique groups sorted alphabetically
-    private func buildStableGroupList() -> [String] {
-        var all = Set(groups)
-        for g in existingGroups { all.insert(g) }
-        return all.sorted()
-    }
-
-    private func addNewGroup() {
-        let trimmed = newGroupText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isDuplicateGroupName else { return }
-        groups.append(trimmed)
-        // Insert at the top of the snapshot so new group appears first
-        if !sheetGroupSnapshot.contains(trimmed) {
-            sheetGroupSnapshot.insert(trimmed, at: 0)
-        }
-        newGroupText = ""
-        // Dismiss keyboard
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-    }
-
     // MARK: - Split Mode Selection Sheet
 
     private var splitModeSelectionSheet: some View {
@@ -459,5 +342,160 @@ struct FriendFormView: View {
         )
         onSave(friend)
         dismiss()
+    }
+}
+
+// MARK: - Group Selection Sheet
+//
+// Lives in its own struct (not as a computed property on
+// `FriendFormView`) so the `@FocusState` and the autofocus `.task`
+// don't get torn down whenever the parent re-renders. The earlier
+// inline implementation cancelled its autofocus task because every
+// state change in `FriendFormView` recomputed the sheet body, which
+// reset the FocusState binding before iOS had a chance to act on it.
+struct GroupSelectionSheetView: View {
+    @Binding var groups: [String]
+    let existingGroups: [String]
+    @Binding var isPresented: Bool
+
+    @State private var newGroupText = ""
+    @State private var sheetGroupSnapshot: [String] = []
+    @FocusState private var newGroupFieldFocused: Bool
+
+    private var isDuplicateGroupName: Bool {
+        let trimmed = newGroupText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return sheetGroupSnapshot.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame })
+            || groups.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame })
+    }
+
+    private func buildStableGroupList() -> [String] {
+        var all = Set(groups)
+        for g in existingGroups { all.insert(g) }
+        return all.sorted()
+    }
+
+    private func addNewGroup() {
+        let trimmed = newGroupText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isDuplicateGroupName else { return }
+        groups.append(trimmed)
+        if !sheetGroupSnapshot.contains(trimmed) {
+            sheetGroupSnapshot.insert(trimmed, at: 0)
+        }
+        newGroupText = ""
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    HStack {
+                        TextField(
+                            "",
+                            text: $newGroupText,
+                            // Custom-coloured placeholder via `prompt:` —
+                            // the implicit one inherits `.placeholderText`
+                            // (system gray) which clashes with the warm
+                            // page palette.
+                            prompt: Text("New group name")
+                                .foregroundColor(AppColors.textTertiary)
+                        )
+                        .foregroundColor(AppColors.textPrimary)
+                        .textInputAutocapitalization(.words)
+                        .focused($newGroupFieldFocused)
+                        .onSubmit { addNewGroup() }
+
+                        Button(action: { addNewGroup() }) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(AppFonts.emojiMedium)
+                                .foregroundColor(.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                        .opacity(newGroupText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0 : 1)
+                        .disabled(newGroupText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+
+                    if isDuplicateGroupName {
+                        Text("This group already exists")
+                            .font(AppFonts.metaRegular)
+                            .foregroundColor(AppColors.danger)
+                    }
+                } header: {
+                    // Default List section-header font stays — only the
+                    // colour swaps to the warm `textSecondary` token so
+                    // the title doesn't pick up iOS's cool system grey
+                    // on the cream page.
+                    Text("Create New")
+                        .foregroundColor(AppColors.textSecondary)
+                }
+
+                if !sheetGroupSnapshot.isEmpty {
+                    Section {
+                        ForEach(sheetGroupSnapshot, id: \.self) { group in
+                            let isSelected = groups.contains(group)
+                            Button(action: {
+                                if isSelected {
+                                    groups.removeAll { $0 == group }
+                                } else {
+                                    groups.append(group)
+                                }
+                            }) {
+                                HStack {
+                                    Text(group)
+                                        .font(AppFonts.labelPrimary)
+                                        .foregroundColor(AppColors.textPrimary)
+                                    Spacer()
+                                    if isSelected {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(AppFonts.iconLarge)
+                                            .foregroundColor(.accentColor)
+                                    } else {
+                                        Image(systemName: "circle")
+                                            .font(AppFonts.iconLarge)
+                                            .foregroundColor(AppColors.textTertiary)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    } header: {
+                        Text("Groups")
+                            .foregroundColor(AppColors.textSecondary)
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(AppColors.backgroundPrimary)
+            .navigationTitle("Groups")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        // Commit any pending typed text so the user
+                        // doesn't lose a group they typed but didn't
+                        // explicitly +-confirm. `addNewGroup` already
+                        // no-ops on empty/duplicate input.
+                        addNewGroup()
+                        isPresented = false
+                    }
+                }
+            }
+            .onAppear {
+                sheetGroupSnapshot = buildStableGroupList()
+            }
+            .task {
+                // Autofocus the input only when the user has no groups
+                // yet — the sheet's only useful action in that state is
+                // "type a name". Wait ~0.6s for the sheet rise + the
+                // parent's keyboard teardown to finish before claiming
+                // focus; iOS sheet focus is fragile during the
+                // presentation animation.
+                if existingGroups.isEmpty && groups.isEmpty {
+                    try? await Task.sleep(nanoseconds: 600_000_000)
+                    newGroupFieldFocused = true
+                }
+            }
+        }
     }
 }

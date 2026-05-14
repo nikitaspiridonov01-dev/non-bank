@@ -85,8 +85,12 @@ struct SplitBreakdownView: View {
             .buttonStyle(.plain)
 
             NavigationLink {
-                ShareDistributionView(split: split, currency: transaction.currency)
-                    .environmentObject(friendStore)
+                ShareDistributionView(
+                    split: split,
+                    currency: transaction.currency,
+                    transactionID: transaction.id
+                )
+                .environmentObject(friendStore)
             } label: {
                 peopleSection
                     .clipShape(BottomArchShape(archDepth: 8))
@@ -126,7 +130,7 @@ struct SplitBreakdownView: View {
         VStack(spacing: AppSpacing.sm) {
             HStack(spacing: -6) {
                 ForEach(Array(shareList.prefix(8).enumerated()), id: \.offset) { _, block in
-                    PixelCatView(id: block.avatarID, size: 32, blackAndWhite: !block.isMe)
+                    PixelCatView(id: block.avatarID, size: 32, blackAndWhite: !block.isConnected)
                         .clipShape(Circle())
                         .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
                 }
@@ -221,16 +225,18 @@ struct SplitBreakdownView: View {
     private struct ShareBlock {
         let avatarID: String
         let isMe: Bool
+        let isConnected: Bool
     }
 
     /// Avatars to stack in the people section of the chart.
     private var shareList: [ShareBlock] {
         var result: [ShareBlock] = []
         if split.myShare > 0.005 {
-            result.append(ShareBlock(avatarID: UserIDService.currentID(), isMe: true))
+            result.append(ShareBlock(avatarID: UserIDService.currentID(), isMe: true, isConnected: true))
         }
         for friend in split.friends where friend.share > 0.005 {
-            result.append(ShareBlock(avatarID: friend.friendID, isMe: false))
+            let connected = friendStore.friend(byID: friend.friendID)?.isConnected ?? false
+            result.append(ShareBlock(avatarID: friend.friendID, isMe: false, isConnected: connected))
         }
         return result
     }

@@ -564,6 +564,80 @@ enum CategoryAnalyticsService {
         }
     }
 
+    /// Single Sun…Sat bucket for the "average by day-of-week" mode.
+    /// `daysCounted` is the number of times that weekday occurred in
+    /// the user's active expense range — drives the per-occurrence
+    /// average (so a Saturday with one big spend doesn't dominate
+    /// the Saturday average forever).
+    struct DayOfWeekAverage: Identifiable, Equatable {
+        /// `id` = `dayOfWeek` (1 = Sunday … 7 = Saturday, matching
+        /// `Calendar.weekday`) so SwiftUI's `ForEach` is happy.
+        let id: Int
+        let dayOfWeek: Int
+        /// `sum / daysCounted`, or 0 if the user spent nothing on
+        /// that weekday across their range.
+        let average: Double
+        /// Number of times this weekday appeared in `[firstDate, lastDate]`.
+        /// E.g. for a 30-day range starting on a Wednesday, Wednesdays
+        /// appear 5 times and the rest 4-5 times depending on offset.
+        let daysCounted: Int
+    }
+
+    /// For each weekday 1…7, returns the user's average expense per
+    /// day-of-week occurrence across their full expense history.
+    /// Mirrors `averageDailyByDayOfMonth` but bucketed by weekday so
+    /// the calendar card's "Avg. week" tab can answer "how much do
+    /// I typically spend on a Monday vs. a Friday?".
+    ///
+    /// Denominator semantics:
+    ///   - Range = days from first expense to last expense, inclusive.
+    ///   - Each weekday in that range counts once for each calendar
+    ///     occurrence (a 14-day range starting on Monday gives 2
+    ///     Mondays, 2 Tuesdays … etc.).
+    ///   - Days with zero spending still count in the denominator —
+    ///     otherwise a user who never spends on Sundays would show
+    ///     an inflated Sunday average from a single outlier.
+    static func averageDailyByDayOfWeek(
+        transactions: [Transaction],
+        targetCurrency: String,
+        convert: (_ amount: Double, _ from: String, _ to: String) -> Double
+    ) -> [DayOfWeekAverage] {
+        let calendar = Calendar.current
+        let expenses = transactions.filter { $0.type == .expenses }
+
+        guard
+            let firstDate = expenses.map(\.date).min(),
+            let lastDate = expenses.map(\.date).max()
+        else {
+            return (1...7).map {
+                DayOfWeekAverage(id: $0, dayOfWeek: $0, average: 0, daysCounted: 0)
+            }
+        }
+
+        var sumByDay: [Int: Double] = [:]
+        for tx in expenses {
+            let day = calendar.component(.weekday, from: tx.date)
+            sumByDay[day, default: 0] += convert(tx.amount, tx.currency, targetCurrency)
+        }
+
+        var countByDay: [Int: Int] = [:]
+        var cursor = calendar.startOfDay(for: firstDate)
+        let end = calendar.startOfDay(for: lastDate)
+        while cursor <= end {
+            let day = calendar.component(.weekday, from: cursor)
+            countByDay[day, default: 0] += 1
+            guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+
+        return (1...7).map { day in
+            let total = sumByDay[day, default: 0]
+            let count = countByDay[day, default: 0]
+            let avg = count > 0 ? total / Double(count) : 0
+            return DayOfWeekAverage(id: day, dayOfWeek: day, average: avg, daysCounted: count)
+        }
+    }
+
     /// Maximum single-day expense total across the user's **entire**
     /// expense history. Used to anchor the heatmap colour scale's
     /// red end so the colour intensity is comparable across months

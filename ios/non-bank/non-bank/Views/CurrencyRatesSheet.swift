@@ -54,8 +54,20 @@ struct CurrencyRatesSheet: View {
 
     var body: some View {
         NavigationStack {
+            // Plain `List` (instead of ScrollView + custom layout) so
+            // SwiftUI's row-diffing keeps scroll position stable when
+            // the user types into the search field. Solid
+            // `backgroundElevated` fill (matches `FriendPickerView`) —
+            // earlier per-row `.glassEffect` pills produced inconsistent
+            // rendering in dark mode where some rows visually merged
+            // into a brighter slab while their neighbours did not.
             List {
-                Section {
+                if filteredCurrencies.isEmpty {
+                    noResultsInline
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
+                } else {
                     ForEach(filteredCurrencies, id: \.self) { code in
                         Button {
                             if let onSelect = onSelect {
@@ -77,27 +89,51 @@ struct CurrencyRatesSheet: View {
                             currencyRow(code)
                         }
                         .buttonStyle(.plain)
+                        // Fill on the content — `listRowBackground`
+                        // would render edge-to-edge regardless of
+                        // `listRowInsets`, so the pill bled to the
+                        // screen edges and adjacent rows merged.
+                        .background(AppColors.backgroundElevated, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                        .listRowInsets(EdgeInsets(
+                            top: AppSpacing.xs,
+                            leading: AppSpacing.pageHorizontal,
+                            bottom: AppSpacing.xs,
+                            trailing: AppSpacing.pageHorizontal
+                        ))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                     }
                 }
             }
-            .listStyle(.insetGrouped)
-            // Three modifiers gang up to close the band between the
-            // searchable drawer and the first section: the implicit
-            // header's min height (`defaultMinListHeaderHeight`), the
-            // section spacing (`listSectionSpacing`), and the scroll
-            // view's top content inset (`contentMargins`). Removing
-            // any one alone leaves a residual gap.
-            .environment(\.defaultMinListHeaderHeight, 0)
-            .listSectionSpacing(0)
-            .contentMargins(.top, 0, for: .scrollContent)
+            .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(AppColors.backgroundPrimary)
-            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search currencies")
+            // No `placement:` argument — on iOS 26 the default places
+            // the search field at the bottom integrated with the
+            // toolbar glass. Matches `CategoriesSheetView`.
+            .searchable(text: $searchText, prompt: "Search currencies")
             .navigationTitle("Currencies")
-            .navigationBarTitleDisplayMode(.inline)
+            // Large title to match `CategoriesSheetView` — both
+            // pickers share the same hero header pattern now (Close
+            // pill on the left, large title below, action pill on the
+            // right). Inline mode left the page feeling shallower than
+            // its sibling sheets.
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { isPresented = false }
+                ToolbarItem(placement: .navigationBarLeading) {
+                    // Icon-only `xmark` matches the dismiss pattern
+                    // of the other sheets in the app (DebtSummaryView,
+                    // FriendCardView via NavigationStack). A bare
+                    // "Close" word in a translucent capsule wasn't
+                    // reading as an action — the glyph is clearer
+                    // and shorter.
+                    Button {
+                        isPresented = false
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(AppFonts.bodySmallEmphasized)
+                            .foregroundColor(AppColors.textPrimary)
+                    }
+                    .accessibilityLabel("Close")
                 }
             }
             .onAppear {
@@ -110,6 +146,17 @@ struct CurrencyRatesSheet: View {
             }
         }
         .presentationDragIndicator(.visible)
+    }
+
+    private var noResultsInline: some View {
+        VStack(spacing: AppSpacing.md) {
+            SearchIllustration(tint: .neutral, size: .standard)
+            Text("No results")
+                .font(AppFonts.labelPrimary)
+                .foregroundColor(AppColors.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
     }
 
     @ViewBuilder
@@ -125,9 +172,16 @@ struct CurrencyRatesSheet: View {
                         .font(AppFonts.bodyEmphasized)
                         .foregroundColor(AppColors.textPrimary)
                     if let name = CurrencyInfo.byCode[code]?.name {
+                        // `lineLimit(1)` keeps long names (e.g. "Bosnia
+                        // and Herzegovina Convertible Mark") from
+                        // wrapping to a second line and ballooning the
+                        // row height — paired with `minHeight` below to
+                        // lock the entire list to a uniform row size.
                         Text(name)
                             .font(AppFonts.emojiSmall)
                             .foregroundColor(AppColors.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                 }
                 Text(rateSubtitle(for: code))
@@ -141,7 +195,12 @@ struct CurrencyRatesSheet: View {
                     .foregroundColor(.accentColor)
             }
         }
-        .padding(.vertical, AppSpacing.xxs)
+        .padding(.horizontal, AppSpacing.pageHorizontal)
+        .padding(.vertical, AppSpacing.md)
+        // Floor matches the natural height of the two-line content
+        // (code + name on top, rate subtitle below) so every row
+        // renders the same height regardless of name length.
+        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
         .contentShape(Rectangle())
     }
 }

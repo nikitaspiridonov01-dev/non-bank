@@ -14,11 +14,40 @@ private enum WhoPaidMode: Equatable {
     case multiSelect
 }
 
+/// What the picker is asking the user to allocate. Drives the strings
+/// shown in the title / subtitle / friend-picker page so the same view
+/// can serve three contexts:
+///
+/// - `.paidUpfront` — "Who paid the bill out of pocket?". The numbers
+///   represent money already spent. Allows the exceed-confirmation flow
+///   (paid more than the receipt → bump the receipt total). Compact
+///   single-payer mode is offered first; the multi-select numpad opens
+///   on demand.
+///
+/// - `.splitShares` — "Each person's share of the total" (used by the
+///   `byAmount` split mode). Numbers represent owed amounts, NOT spent
+///   ones. Exceed flow is disabled (the receipt total is fixed by the
+///   purchase). Compact mode and "Someone else paid" are both hidden —
+///   neither shortcut makes sense when every participant gets a share.
+///
+/// - `.settleUp` — "Who pays / Who gets paid" for the 1:1 settle-up
+///   case. Two participants only (You + the picked friend). Compact
+///   mode is the only mode (no numpad — settle-up is 100/0 by
+///   construction), "Someone else paid" is hidden (the friend is
+///   already chosen).
+enum WhoPaidPurpose: Equatable {
+    case paidUpfront
+    case splitShares
+    case settleUp
+}
+
 // MARK: - View
 
-/// "Who pay?" picker — two modes in one sheet:
-/// • Compact (single-select, tap = commit)
-/// • Full multi-select (numpad + per-person amounts)
+/// Per-participant amount picker. Two contextual flavours via
+/// `purpose`: paid-upfront (existing default) or by-amount split shares.
+/// The shared layout — list of participants, per-row numpad input,
+/// running balance vs. target — is identical between them; only labels,
+/// some shortcuts, and the exceed-overflow flow differ.
 struct WhoPaidPickerView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var friendStore: FriendStore
@@ -27,8 +56,32 @@ struct WhoPaidPickerView: View {
     let totalAmount: Double
     let currency: String
     let initialPayers: [Payer]
+    let purpose: WhoPaidPurpose
+    /// When true (default), the body wraps itself in a NavigationStack
+    /// + applies sheet-specific modifiers (detents, drag indicator,
+    /// interactive-dismiss control) — matches the historic standalone
+    /// presentation. When false, returns just the multi-select content
+    /// for embedding inside a parent NavigationStack (Phase 4.4
+    /// orchestrator). Compact mode is unavailable in embedded form
+    /// because the orchestrator only ever needs the full picker.
+    let wrapInNavigationStack: Bool
+    /// Override hook for the compact sheet's "More options" tap. When
+    /// non-nil, tapping the affordance calls this closure instead of
+    /// presenting the nested friend-picker sheet — used by the
+    /// orchestrator to route through its own
+    /// `whoPayMultiPicker`/`whoPayMultiCalc` steps so back-navigation
+    /// in the parent NavigationStack stays consistent.
+    let onMoreOptionsTapped: (() -> Void)?
     let onConfirm: ([Payer]) -> Void
-    var onConfirmWithNewTotal: (([Payer], Double) -> Void)?
+    /// Called when the user confirms increasing the total past the receipt
+    /// amount. The third argument is the *exceeding* payer — the row the
+    /// user was actively editing when they crossed the receipt total — so
+    /// the consumer can attribute the overage by name (e.g. for the
+    /// "{name}'s extra" / "Extra" placeholder line in the items list). `nil` only
+    /// in the defensive case where no row is active at save time.
+    /// Never invoked when `purpose == .splitShares` — the receipt total
+    /// is fixed by the purchase, so exceed is treated as invalid.
+    var onConfirmWithNewTotal: (([Payer], Double, Payer?) -> Void)?
 
     // MARK: - State
 
@@ -65,13 +118,19 @@ struct WhoPaidPickerView: View {
         totalAmount: Double,
         currency: String,
         initialPayers: [Payer] = [],
+        purpose: WhoPaidPurpose = .paidUpfront,
+        wrapInNavigationStack: Bool = true,
+        onMoreOptionsTapped: (() -> Void)? = nil,
         onConfirm: @escaping ([Payer]) -> Void,
-        onConfirmWithNewTotal: (([Payer], Double) -> Void)? = nil
+        onConfirmWithNewTotal: (([Payer], Double, Payer?) -> Void)? = nil
     ) {
         self.participants = participants
         self.totalAmount = totalAmount
         self.currency = currency
         self.initialPayers = initialPayers
+        self.purpose = purpose
+        self.wrapInNavigationStack = wrapInNavigationStack
+        self.onMoreOptionsTapped = onMoreOptionsTapped
         self.onConfirm = onConfirm
         self.onConfirmWithNewTotal = onConfirmWithNewTotal
 
@@ -110,7 +169,21 @@ struct WhoPaidPickerView: View {
 
         var amts: [String: Double] = [:]
         var initialFloated: Set<String> = []
-        if initialPayers.count > 1 {
+
+        // `splitShares` always opens straight into multi-select — the
+        // compact "one person took it all" shortcut is meaningless when
+        // every participant gets their own share. `paidUpfront` keeps
+        // the existing rule: enter multi-select only when there's more
+        // than one initial payer.
+        let shouldStartInMultiSelect: Bool = {
+            switch purpose {
+            case .splitShares: return true
+            case .paidUpfront: return initialPayers.count > 1
+            case .settleUp:    return false   // always compact, single tap = commit
+            }
+        }()
+
+        if shouldStartInMultiSelect {
             for p in initialPayers {
                 amts[p.id] = p.amount
                 if p.amount > 0 {
@@ -119,9 +192,9 @@ struct WhoPaidPickerView: View {
             }
             _mode = State(initialValue: .multiSelect)
             _selectedDetent = State(initialValue: .large)
-            _activeRowID = State(initialValue: initialPayers.first?.id)
+            _activeRowID = State(initialValue: initialPayers.first?.id ?? initialParticipants.first?.id)
             let firstAmt = initialPayers.first?.amount ?? 0
-            _activeInput = State(initialValue: Self.formatForInput(firstAmt))
+            _activeInput = State(initialValue: firstAmt > 0 ? Self.formatForInput(firstAmt) : "")
             _floatedIDs = State(initialValue: initialFloated)
         }
         _amounts = State(initialValue: amts)
@@ -166,8 +239,14 @@ struct WhoPaidPickerView: View {
 
     private var canSave: Bool { isBalanced && sum > 0 }
 
-    /// Can save with exceed confirmation
-    private var canSaveWithExceed: Bool { isExceeding && sum > 0 }
+    /// Can save with exceed confirmation. Only `.paidUpfront` allows
+    /// the exceed flow — `.splitShares` and `.settleUp` both have
+    /// fixed totals (the receipt amount and the 100/0 settle-up
+    /// shape, respectively), so exceeding must be corrected, not
+    /// committed.
+    private var canSaveWithExceed: Bool {
+        purpose == .paidUpfront && isExceeding && sum > 0
+    }
 
     private func isRowDisabled(_ id: String) -> Bool {
         (sum >= totalAmount - 0.001) && amountFor(id) == 0 && id != activeRowID
@@ -202,16 +281,41 @@ struct WhoPaidPickerView: View {
         if s > totalAmount + 0.001 {
             return "Exceeds \(Self.formatDisplay(totalAmount)) \(currency)"
         } else if abs(s - totalAmount) <= 0.01 * Double(max(payers.count, 1)) && s > 0 {
-            if payers.count == 1 {
-                let name = payers[0].name
-                return name == "You" ? "You pay" : "\(titleName(name)) pays"
+            switch purpose {
+            case .paidUpfront, .settleUp:
+                // settleUp tap commits the full amount on the picked
+                // row, so it lands here immediately — same wording
+                // works for both.
+                if payers.count == 1 {
+                    let name = payers[0].name
+                    return name == "You" ? "You pay" : "\(titleName(name)) pays"
+                }
+                return "\(payers.count) people pay"
+            case .splitShares:
+                // The single-person case can't really happen here (if
+                // one person owns 100%, the user would pick `evenly`
+                // not `byAmount`) but we cover it for symmetry.
+                if payers.count == 1 {
+                    let name = payers[0].name
+                    return name == "You" ? "You owe it all" : "\(titleName(name)) owes it all"
+                }
+                return "\(payers.count) shares to split"
             }
-            return "\(payers.count) people pay"
         } else {
-            switch payers.count {
-            case 0: return "How much pay"
-            case 1: return "\(titleName(payers[0].name)) chips in"
-            default: return "\(payers.count) people chip in"
+            switch purpose {
+            case .paidUpfront, .settleUp:
+                switch payers.count {
+                case 0: return "How much pay"
+                case 1: return "\(titleName(payers[0].name)) chips in"
+                default: return "\(payers.count) people chip in"
+                }
+            case .splitShares:
+                // Same "X shares to split" string as the balanced
+                // (green) state — color carries the balance signal,
+                // text just reports the participant count. When zero
+                // rows are filled the prompt asks the user to start.
+                if payers.count == 0 { return "How much each share" }
+                return "\(payers.count) shares to split"
             }
         }
     }
@@ -294,9 +398,33 @@ struct WhoPaidPickerView: View {
         return 32
     }
 
+
     // MARK: - Body
 
+    @ViewBuilder
     var body: some View {
+        if wrapInNavigationStack {
+            sheetBody
+                .presentationDetents(
+                    mode == .multiSelect ? [.large] : [.medium, .large],
+                    selection: $selectedDetent
+                )
+                .presentationDragIndicator(.hidden)
+                .interactiveDismissDisabled(mode == .multiSelect)
+        } else {
+            // Embedded inside an orchestrator's NavigationStack —
+            // skip the sheet-only modifiers (no detent, no drag
+            // indicator) and force multi-select since compact mode is
+            // a sheet-only shortcut.
+            sheetBody
+        }
+    }
+
+    /// The picker's content sans sheet-specific modifiers. Used by
+    /// both the standalone-sheet body (which adds detent / drag /
+    /// dismiss control on top) and the embedded body (which adds
+    /// nothing).
+    private var sheetBody: some View {
         Group {
             switch mode {
             case .compact:
@@ -305,12 +433,6 @@ struct WhoPaidPickerView: View {
                 multiSelectSheet
             }
         }
-        .presentationDetents(
-            mode == .multiSelect ? [.large] : [.medium, .large],
-            selection: $selectedDetent
-        )
-        .presentationDragIndicator(.hidden)
-        .interactiveDismissDisabled(mode == .multiSelect)
         .sheet(isPresented: $showExceedConfirmation) {
             exceedConfirmationSheet
                 .presentationDetents([.medium])
@@ -334,8 +456,8 @@ struct WhoPaidPickerView: View {
             pendingNewFriendForPicker = nil
         }) {
             FriendPickerView(
-                title: "Who pay",
-                subtitle: "Select who's paying upfront for the purchase. They'll owe less since they already cover part of the cost.",
+                title: "More options to choose who pay",
+                subtitle: "Pick everyone who paid upfront for the purchase. They'll owe less since they already covered part of the cost.",
                 initialSelection: pendingNewFriendForPicker.map { [$0] } ?? [],
                 includeYou: true,
                 youSelected: false
@@ -350,40 +472,66 @@ struct WhoPaidPickerView: View {
 
     private var compactSheet: some View {
         VStack(spacing: 0) {
-            dragHandle
+            // The drag-handle is a sheet artefact — it visually hints
+            // "swipe down to dismiss". When the picker is embedded
+            // inside the orchestrator's NavigationStack, it's a
+            // pushed step (no swipe-down), so the handle reads as
+            // confused chrome. Hide it in embedded mode.
+            if wrapInNavigationStack {
+                dragHandle
+            }
 
             ScrollView {
                 VStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Who pay")
+                        Text(purpose == .settleUp ? "Who pays" : "Who pay")
                             .font(.system(size: 32, weight: .bold))
                             .foregroundColor(AppColors.textPrimary)
 
-                        Text("Select who's paying upfront for the purchase.")
-                            .font(AppFonts.bodySmallRegular)
-                            .foregroundColor(AppColors.textTertiary)
+                        Text(
+                            purpose == .settleUp
+                                ? "Pick who covered this — the other person owes the full amount."
+                                : "Select who's paying upfront for the purchase."
+                        )
+                        .font(AppFonts.bodySmallRegular)
+                        .foregroundColor(AppColors.textTertiary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, AppSpacing.sm)
+                    // Match the friend-picker step's top padding
+                    // (`FriendPickerContent` uses
+                    // `listRowInsets(top: 48 ...)` for its header)
+                    // so the orchestrator's screens read as one
+                    // family — earlier the compact sheet hugged the
+                    // toolbar tightly while the friend picker had
+                    // visible breathing room above the title.
+                    .padding(.top, 48)
                     .padding(.bottom, AppSpacing.md)
 
-                    HStack {
-                        Spacer()
-                        Button {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            handleSomeoneElsePaid()
-                        } label: {
-                            HStack(spacing: AppSpacing.xs) {
-                                Image(systemName: "person.badge.plus")
-                                    .font(AppFonts.captionEmphasized)
-                                Text("More options")
-                                    .font(AppFonts.captionEmphasized)
+                    if purpose != .settleUp {
+                        // Settle-up is 1:1 with the friend already
+                        // picked in the orchestrator's friend-picker
+                        // step — there's no "someone else" to add, so
+                        // the affordance is hidden. paidUpfront keeps
+                        // it for the legacy "credit-card friend"
+                        // shortcut.
+                        HStack {
+                            Spacer()
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                handleSomeoneElsePaid()
+                            } label: {
+                                HStack(spacing: AppSpacing.xs) {
+                                    Image(systemName: "person.badge.plus")
+                                        .font(AppFonts.captionEmphasized)
+                                    Text("More options")
+                                        .font(AppFonts.captionEmphasized)
+                                }
+                                .foregroundColor(AppColors.textTertiary)
                             }
-                            .foregroundColor(AppColors.textTertiary)
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
+                        .padding(.bottom, AppSpacing.sm)
                     }
-                    .padding(.bottom, AppSpacing.sm)
 
                     VStack(spacing: AppSpacing.sm) {
                         ForEach(currentParticipants) { participant in
@@ -402,6 +550,8 @@ struct WhoPaidPickerView: View {
         let isSelected = participant.id == selectedSingleID
         let isYou = participant.id == "me"
 
+        let isConnected = isYou || (friendStore.friend(byID: participant.id)?.isConnected ?? false)
+
         return Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             selectSingleAndCommit(participant)
@@ -410,7 +560,7 @@ struct WhoPaidPickerView: View {
                 PixelCatView(
                     id: isYou ? UserIDService.currentID() : participant.id,
                     size: 36,
-                    blackAndWhite: !isYou
+                    blackAndWhite: !isConnected
                 )
                 .clipShape(Circle())
 
@@ -438,9 +588,17 @@ struct WhoPaidPickerView: View {
 
     // MARK: - Multi-Select Sheet
 
+    @ViewBuilder
     private var multiSelectSheet: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
+        if wrapInNavigationStack {
+            NavigationStack { multiSelectInner }
+        } else {
+            multiSelectInner
+        }
+    }
+
+    private var multiSelectInner: some View {
+        VStack(spacing: 0) {
                 // Dynamic title — fixed height to prevent content jumping
                 Text(cachedTitle)
                     .font(.system(size: titleFontSize, weight: .bold))
@@ -517,24 +675,48 @@ struct WhoPaidPickerView: View {
             .navigationTitle("")
             .toolbarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Back") {
-                        goBackToCompact()
+                if wrapInNavigationStack {
+                    // Standalone sheet — original Cancel/Back text
+                    // button. splitShares has no compact mode to
+                    // fall back to (shouldStartInMultiSelect forces
+                    // multi-select on open), so it dismisses; the
+                    // others can return to compact.
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(purpose == .splitShares ? "Cancel" : "Back") {
+                            if purpose == .splitShares {
+                                dismiss()
+                            } else {
+                                goBackToCompact()
+                            }
+                        }
                     }
                 }
+                // Embedded mode (any purpose, any inner mode) — no
+                // custom cancellation. The orchestrator's
+                // NavigationStack provides the auto-back chevron,
+                // which pops the whole picker step. The previous
+                // "go back to compact within the same step" shortcut
+                // was removed because it (a) added a second chevron
+                // alongside the platform's, and (b) trapped the user
+                // who already configured multi-payer state — going
+                // back would re-render compact and force them to
+                // re-walk "More options" if they wanted to keep
+                // editing. Auto-back jumping straight to the
+                // previous orchestrator step (friends or calc) is
+                // the cleaner default.
+
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
+                    Button("Confirm") {
                         handleSaveAction()
                     }
                     .disabled(!canSave && !canSaveWithExceed)
                 }
             }
-        }
-        .onAppear {
-            cachedTitle = computeTitle()
-            cachedTitleColor = computeTitleColor()
-            refreshCachedState()
-        }
+            .onAppear {
+                cachedTitle = computeTitle()
+                cachedTitleColor = computeTitleColor()
+                refreshCachedState()
+            }
     }
 
     // MARK: - Multi-Select Row
@@ -545,6 +727,7 @@ struct WhoPaidPickerView: View {
         let amt = amountFor(participant.id)
         let disabled = isRowDisabled(participant.id)
         let balanced = canSave
+        let isConnected = isYou || (friendStore.friend(byID: participant.id)?.isConnected ?? false)
 
         return Button {
             handleRowTap(participant.id)
@@ -554,7 +737,7 @@ struct WhoPaidPickerView: View {
                     PixelCatView(
                         id: isYou ? UserIDService.currentID() : participant.id,
                         size: 36,
-                        blackAndWhite: !isYou
+                        blackAndWhite: !isConnected
                     )
                     .clipShape(Circle())
                     .opacity(disabled ? 0.35 : 1)
@@ -750,6 +933,12 @@ struct WhoPaidPickerView: View {
             .padding(.horizontal, AppSpacing.xxl)
             .padding(.bottom, AppSpacing.xxxl)
         }
+        // Match the receipts confirmation sheet — opaque page-coloured
+        // background so the two confirmation surfaces feel like one
+        // family. Without this, iOS picks its default translucent
+        // sheet Material and the payers sheet reads as a different
+        // visual layer than the receipts one.
+        .background(AppColors.backgroundPrimary)
     }
 
     // MARK: - Actions
@@ -762,13 +951,34 @@ struct WhoPaidPickerView: View {
         }
         let payer = Payer(id: participant.id, name: participant.name, amount: totalAmount)
         onConfirm([payer])
-        dismiss()
+        commitDismiss()
+    }
+
+    /// Dismiss the picker — but only when it owns the surrounding
+    /// sheet (`wrapInNavigationStack: true`). Embedded inside the
+    /// orchestrator's `NavigationStack`, the inner `dismiss()` would
+    /// resolve to the orchestrator's sheet presenter and tear down
+    /// the WHOLE flow before the orchestrator's `onConfirm` had a
+    /// chance to push the next step. The orchestrator's onConfirm
+    /// closure decides what to do next (push a step OR dismiss the
+    /// flow), so we just hand control back to it.
+    private func commitDismiss() {
+        if wrapInNavigationStack {
+            dismiss()
+        }
     }
 
     // MARK: - Someone Else Paid Actions
 
     private func handleSomeoneElsePaid() {
-        showSomeoneElseFriendPicker = true
+        // Orchestrator-driven flows route this tap through their own
+        // path so the back-stack stays consistent. Standalone usage
+        // falls back to the legacy in-place nested sheet.
+        if let callback = onMoreOptionsTapped {
+            callback()
+        } else {
+            showSomeoneElseFriendPicker = true
+        }
     }
 
     private func handleFriendPickerResult(_ friends: [Friend], youSelected: Bool) {
@@ -779,12 +989,12 @@ struct WhoPaidPickerView: View {
             // Single friend selected → commit as sole payer → dismiss
             let payer = Payer(id: friends[0].id, name: friends[0].name, amount: totalAmount)
             onConfirm([payer])
-            dismiss()
+            commitDismiss()
         } else if totalSelected == 1 && youSelected {
             // Only "You" selected → commit as sole payer → dismiss
             let payer = Payer(id: "me", name: "You", amount: totalAmount)
             onConfirm([payer])
-            dismiss()
+            commitDismiss()
         } else {
             // Multiple people selected → show ONLY these in multi-select
             var selectedParticipants: [WhoPaidParticipant] = []
@@ -840,7 +1050,7 @@ struct WhoPaidPickerView: View {
         }
 
         // Set initial title
-        cachedTitle = "How much pay"
+        cachedTitle = purpose == .splitShares ? "Each share" : "How much pay"
         cachedTitleColor = AppColors.textPrimary
         cachedSubtitle = "Enter amount up to \(Self.formatDisplay(totalAmount)) \(currency)"
         cachedSubtitleColor = AppColors.textTertiary
@@ -973,7 +1183,7 @@ struct WhoPaidPickerView: View {
         }
 
         onConfirm(result)
-        dismiss()
+        commitDismiss()
     }
 
     /// Save with updated total amount (exceed scenario)
@@ -989,14 +1199,20 @@ struct WhoPaidPickerView: View {
             }
         }
 
+        // The active row at confirm time is the one whose input crossed the
+        // receipt total — by design, only that row can be edited once the
+        // sum reaches the target (see `isRowDisabled`), so it's a single
+        // unambiguous payer per exceed-confirm cycle.
+        let exceedingPayer = result.first(where: { $0.id == activeRowID })
+
         showExceedConfirmation = false
 
         if let handler = onConfirmWithNewTotal {
-            handler(result, newTotal)
+            handler(result, newTotal, exceedingPayer)
         } else {
             onConfirm(result)
         }
-        dismiss()
+        commitDismiss()
     }
 
     /// Reset all amounts to 0

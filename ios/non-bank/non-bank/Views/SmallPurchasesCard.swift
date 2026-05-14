@@ -68,16 +68,17 @@ struct SmallPurchasesCard: View {
 
     // MARK: - Narrative
 
-    /// Bold sentence with **amount** emphasized in the warm
-    /// accent. Same typographic scale as the other extreme cards
-    /// so the cards read as a coherent visual family.
+    /// Bold sentence — bright orange `accent` is reserved for
+    /// clickable elements; the non-clickable savings amount uses
+    /// `accentBold` (deep warm sienna) to draw the eye without
+    /// competing with the clickable orange CTAs below.
     private func narrative(for s: CategoryAnalyticsService.SmallPurchasesSavings) -> some View {
         let amount = formatAmount(s.maxMonthlySavings)
         return (
             Text("You could save up to ")
                 .foregroundColor(AppColors.textPrimary)
             + Text(amount)
-                .foregroundColor(AppColors.reminderAccent)
+                .foregroundColor(AppColors.accentBold)
             + Text(" per month.")
                 .foregroundColor(AppColors.textPrimary)
         )
@@ -105,9 +106,10 @@ struct SmallPurchasesCard: View {
     // MARK: - Expenses link (CTA)
 
     /// Tappable row pill ("Take a look at these N expenses →") that
-    /// opens the detail sheet. Same row-pill vocabulary used
-    /// elsewhere on the Insights screen so the affordance reads
-    /// consistently.
+    /// opens the detail sheet. Tinted with the orange `accentColor`
+    /// — the only accent reserved for clickable affordances on the
+    /// Insights surface, so this CTA reads as the primary action of
+    /// the card.
     private func expensesLink(for s: CategoryAnalyticsService.SmallPurchasesSavings) -> some View {
         Button {
             showExpensesList = true
@@ -115,13 +117,13 @@ struct SmallPurchasesCard: View {
             HStack(spacing: AppSpacing.sm) {
                 Text("Take a look at these \(s.totalQualifyingSmallPurchases) expenses")
                     .font(AppFonts.bodySmallEmphasized)
-                    .foregroundColor(AppColors.reminderAccent)
+                    .foregroundColor(.accentColor)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 Spacer(minLength: 8)
                 Image(systemName: "arrow.right")
                     .font(AppFonts.captionSmallStrong)
-                    .foregroundColor(AppColors.reminderAccent)
+                    .foregroundColor(.accentColor)
             }
             .rowPill()
         }
@@ -130,9 +132,12 @@ struct SmallPurchasesCard: View {
 
     // MARK: - Formatting
 
+    /// Non-breaking spaces glue the amount together so it wraps as
+    /// one unit — see the matching helper in `BigPurchaseCard` for
+    /// the full reasoning.
     private func formatAmount(_ value: Double) -> String {
         let int = NumberFormatting.integerPart(value)
         let dec = NumberFormatting.decimalPartIfAny(value)
-        return "\(int)\(dec) \(context.targetCurrency)"
+        return "\(int)\(dec) \(context.targetCurrency)".replacingOccurrences(of: " ", with: "\u{00A0}")
     }
 }

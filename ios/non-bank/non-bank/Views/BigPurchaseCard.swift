@@ -24,17 +24,30 @@ struct BigPurchaseCard: View {
     let context: AnalyticsContext
 
     /// Stores still injected for **sheet re-injection** only:
-    /// `TransactionDetailView` reads them via `@EnvironmentObject`
-    /// and sheets don't auto-inherit the parent's environment.
+    /// `TransactionDetailView` and `CreateTransactionModal` read
+    /// them via `@EnvironmentObject` and sheets don't auto-inherit
+    /// the parent's environment.
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var currencyStore: CurrencyStore
     @EnvironmentObject var friendStore: FriendStore
+    @EnvironmentObject var receiptItemStore: ReceiptItemStore
 
     /// Drives the transaction-detail sheet. Toggled by the tappable
     /// pill at the top of the card; SwiftUI's sheet binding zeroes
     /// it back to false on drag-dismiss / Close-button.
     @State private var showTransactionDetail: Bool = false
+
+    /// Stacks `CreateTransactionModal` *on top* of the detail sheet
+    /// when the user taps Edit. Routing through the global
+    /// `NavigationRouter` (which is what `HomeView` does) doesn't
+    /// work here — that router-driven sheet is hosted by
+    /// `MainTabView`, which is hidden behind the Insights sheet,
+    /// so the editor wouldn't appear until the user manually
+    /// dismissed Insights. Presenting locally lets the editor
+    /// stack on top of Insights and the detail sheet, exactly the
+    /// "tap → edit immediately" flow the user expects.
+    @State private var editingTransaction: Transaction? = nil
 
     // MARK: - Derived
 
@@ -58,17 +71,63 @@ struct BigPurchaseCard: View {
             narrative(for: p)
         }
         .insightCardShell()
-        // Sheet is attached to the content (which has `p` in scope)
-        // so the closure can capture the transaction without a
-        // separate `selectedTransaction` state. Standard
-        // modal-on-modal pattern matching `HomeView`'s usage of
-        // `TransactionDetailView`.
+        // Detail sheet hosts a *nested* edit sheet — same pattern as
+        // `TransactionDetailView`'s `splitBreakdownTransaction` →
+        // `editingFromBreakdown` chain. Earlier two-`.sheet`-modifiers-
+        // on-the-same-view variant hung the sheet stack when both
+        // states changed in the same tick (binding setter trying to
+        // dismiss two sheets at once); nesting the second sheet
+        // inside the first sheet's content closure lets iOS handle
+        // the stacking gracefully.
         .sheet(isPresented: $showTransactionDetail) {
-            TransactionDetailView(transaction: p.transaction)
+            TransactionDetailView(
+                transaction: p.transaction,
+                onEdit: {
+                    // Just open the editor on top of the detail —
+                    // no dismiss-then-present dance. Stacking is
+                    // instant, no perceptible delay before Edit.
+                    editingTransaction = p.transaction
+                },
+                onDelete: {
+                    transactionStore.delete(id: p.transaction.id)
+                    showTransactionDetail = false
+                },
+                onClose: {
+                    showTransactionDetail = false
+                }
+            )
+            .environmentObject(transactionStore)
+            .environmentObject(categoryStore)
+            .environmentObject(currencyStore)
+            .environmentObject(friendStore)
+            .environmentObject(receiptItemStore)
+            .sheet(item: $editingTransaction) { tx in
+                CreateTransactionModal(
+                    isPresented: Binding(
+                        get: { true },
+                        set: { if !$0 { editingTransaction = nil } }
+                    ),
+                    editingTransaction: tx
+                )
                 .environmentObject(transactionStore)
                 .environmentObject(categoryStore)
                 .environmentObject(currencyStore)
                 .environmentObject(friendStore)
+                .environmentObject(receiptItemStore)
+            }
+        }
+        // After the editor dismisses (binding setter has already
+        // zeroed `editingTransaction`), tear down the detail sheet
+        // beneath it so the user lands back on Insights in one
+        // step. Small delay lets iOS finish the editor's dismiss
+        // animation first — collapsing both at the same instant
+        // had previously hung the sheet stack.
+        .onChange(of: editingTransaction) { oldValue, newValue in
+            if oldValue != nil && newValue == nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    showTransactionDetail = false
+                }
+            }
         }
     }
 
@@ -120,15 +179,18 @@ struct BigPurchaseCard: View {
 
     // MARK: - Narrative
 
-    /// Bold sentence with **amount** and **multiplier** emphasized
-    /// in the warm accent. Wording reads as a single conversational
-    /// statement: the date is woven into the subject ("This
-    /// purchase, on Apr 15, was…"), and the comparison clause
-    /// starts with "it's" so the second half flows naturally from
-    /// the dash. "Your usual <category> purchase" keeps the
-    /// per-purchase comparison transparent.
+    /// Bold single-paragraph narrative. Two-colour Insights
+    /// vocabulary keeps the bright orange `accent` reserved for
+    /// clickable elements; non-clickable emphasis (date, amount,
+    /// multiplier, category) uses `accentBold` — the deep warm
+    /// sienna variant of the accent, noticeable enough to make the
+    /// numbers/nouns pop against the `textPrimary` prose, but
+    /// muted enough that it doesn't compete with the clickable
+    /// orange CTAs. Amount uses the transaction's own currency —
+    /// the user thinks of a $400 ticket as "$400", not as the
+    /// RSD-equivalent rounded number.
     private func narrative(for p: CategoryAnalyticsService.BigPurchase) -> some View {
-        let amount = formatAmount(p.convertedAmount)
+        let amount = formatAmount(p.transaction.amount, currency: p.transaction.currency)
         let mult = formatMultiplier(p.multiplier)
         let date = formatDate(p.transaction.date)
 
@@ -136,19 +198,19 @@ struct BigPurchaseCard: View {
             Text("This purchase, on ")
                 .foregroundColor(AppColors.textPrimary)
             + Text(date)
-                .foregroundColor(AppColors.textPrimary)
+                .foregroundColor(AppColors.accentBold)
             + Text(", was ")
                 .foregroundColor(AppColors.textPrimary)
             + Text(amount)
-                .foregroundColor(AppColors.reminderAccent)
+                .foregroundColor(AppColors.accentBold)
             + Text(" — it's ")
                 .foregroundColor(AppColors.textPrimary)
             + Text("\(mult)× more")
-                .foregroundColor(AppColors.reminderAccent)
+                .foregroundColor(AppColors.accentBold)
             + Text(" than your usual ")
                 .foregroundColor(AppColors.textPrimary)
             + Text(p.categoryTitle)
-                .foregroundColor(AppColors.textPrimary)
+                .foregroundColor(AppColors.accentBold)
             + Text(" purchase.")
                 .foregroundColor(AppColors.textPrimary)
         )
@@ -160,10 +222,19 @@ struct BigPurchaseCard: View {
 
     // MARK: - Formatting
 
-    private func formatAmount(_ value: Double) -> String {
+    /// Glues integer/decimal/currency together with **non-breaking
+    /// spaces** (`\u{00A0}`) so the entire amount wraps as one unit
+    /// — when the narrative line breaks, "10 000 RSD" stays whole on
+    /// whichever line it lands on rather than splitting between
+    /// "10" and "000 RSD". `NumberFormatting.integerPart` itself
+    /// emits a regular space as the group separator, so we sweep
+    /// the assembled string to swap every space (group separator +
+    /// the one before the currency code) for the non-breaking
+    /// equivalent.
+    private func formatAmount(_ value: Double, currency: String) -> String {
         let int = NumberFormatting.integerPart(value)
         let dec = NumberFormatting.decimalPartIfAny(value)
-        return "\(int)\(dec) \(context.targetCurrency)"
+        return "\(int)\(dec) \(currency)".replacingOccurrences(of: " ", with: "\u{00A0}")
     }
 
     private func formatMultiplier(_ mult: Double) -> String {

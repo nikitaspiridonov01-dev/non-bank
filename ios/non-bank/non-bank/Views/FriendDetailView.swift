@@ -7,6 +7,7 @@ struct FriendDetailView: View {
     @EnvironmentObject var currencyStore: CurrencyStore
     @EnvironmentObject var friendStore: FriendStore
     @EnvironmentObject var categoryStore: CategoryStore
+    @EnvironmentObject var receiptItemStore: ReceiptItemStore
 
     @State private var selectedTransaction: Transaction? = nil
     @State private var showTransactionDetail: Bool = false
@@ -15,6 +16,25 @@ struct FriendDetailView: View {
     /// view so the participant prefill (you + this friend) flows
     /// directly through `CreateTransactionModal`'s init parameters.
     @State private var showCreateSplit: Bool = false
+    /// Drives the "Settle up" CTA's create-transaction sheet. Set
+    /// when the user taps the button under the debt row; carries the
+    /// prefill payload (amount, currency, who pays) so the modal opens
+    /// at a transaction that already zeros out the debt.
+    @State private var pendingSettleUp: CreateTransactionModal.SettleUpPrefill? = nil
+
+    /// True when the currently-presented detail sheet has a backing
+    /// transaction that's still a split. Mirror of the same hook in
+    /// `DebtSummaryView` — when the user edits a split here to "Pay
+    /// for yourself" and saves, `splitInfo` goes nil and the
+    /// `.debts` detail layout has nothing to render, so we close the
+    /// sheet instead of leaving an empty card on screen.
+    private var selectedTransactionIsSplit: Bool {
+        guard let selected = selectedTransaction,
+              let tx = transactionStore.transactions.first(where: { $0.id == selected.id }) else {
+            return false
+        }
+        return tx.splitInfo != nil
+    }
 
     private var convert: (Double, String, String) -> Double {
         { [currencyStore] amount, from, to in
@@ -48,6 +68,7 @@ struct FriendDetailView: View {
             VStack(alignment: .leading, spacing: 0) {
                 profileHeader
                 debtStatusRow
+                settleUpCTA
                 transactionsSection
                 Spacer().frame(height: 40)
             }
@@ -63,13 +84,30 @@ struct FriendDetailView: View {
         .sheet(isPresented: $showCreateSplit) {
             CreateTransactionModal(
                 isPresented: $showCreateSplit,
-                initialTab: .split,
+                autoOpenSplitFlow: true,
                 prefilledFriendIDs: [friend.id]
             )
             .environmentObject(categoryStore)
             .environmentObject(transactionStore)
             .environmentObject(currencyStore)
             .environmentObject(friendStore)
+        }
+        // Settle-up CTA target — opens create-transaction modal with
+        // amount + payer + category prefilled so the new transaction
+        // zeros out the existing debt on save.
+        .sheet(item: $pendingSettleUp) { prefill in
+            CreateTransactionModal(
+                isPresented: Binding(
+                    get: { pendingSettleUp != nil },
+                    set: { if !$0 { pendingSettleUp = nil } }
+                ),
+                settleUpPrefill: prefill
+            )
+            .environmentObject(categoryStore)
+            .environmentObject(transactionStore)
+            .environmentObject(currencyStore)
+            .environmentObject(friendStore)
+            .environmentObject(receiptItemStore)
         }
         .sheet(isPresented: Binding(
             get: { showTransactionDetail && selectedTransaction != nil },
@@ -102,6 +140,7 @@ struct FriendDetailView: View {
                 .environmentObject(transactionStore)
                 .environmentObject(friendStore)
                 .environmentObject(currencyStore)
+                .environmentObject(receiptItemStore)
                 .sheet(item: $editingTransaction) { editTx in
                     CreateTransactionModal(
                         isPresented: Binding(
@@ -115,6 +154,18 @@ struct FriendDetailView: View {
                     .environmentObject(currencyStore)
                     .environmentObject(friendStore)
                 }
+            }
+        }
+        // Close the detail sheet when the underlying transaction stops
+        // being a split (typically: user opened the debt-side detail
+        // card, hit Edit, switched to "Pay for yourself", and saved).
+        // Without this hook `TransactionDetailView` re-renders for the
+        // updated (non-split) transaction with all its breakdown
+        // sections gated out, surfacing as an empty grey card.
+        .onChange(of: selectedTransactionIsSplit) { isSplit in
+            if !isSplit && showTransactionDetail {
+                showTransactionDetail = false
+                selectedTransaction = nil
             }
         }
     }
@@ -160,6 +211,56 @@ struct FriendDetailView: View {
 
         DebtRowView(kind: kind, currency: currency, isConnected: friend.isConnected)
             .padding(.horizontal, AppSpacing.pageHorizontal)
+    }
+
+    // MARK: - Settle Up CTA
+
+    /// "Settle up" button shown under the debt row whenever there's a
+    /// non-zero balance with this friend. Tapping it opens the create-
+    /// transaction modal pre-configured as a settle-up transaction —
+    /// amount = |debt|, payer side flipped so the new transaction
+    /// zeros out whichever direction the debt currently runs.
+    @ViewBuilder
+    private var settleUpCTA: some View {
+        let amount = myDebt?.amount ?? 0
+        if abs(amount) >= 0.005 {
+            Button {
+                pendingSettleUp = CreateTransactionModal.SettleUpPrefill(
+                    friendID: friend.id,
+                    amount: abs(amount),
+                    currency: currencyStore.selectedCurrency,
+                    // Positive (you lent) → friend pays you back.
+                    // Negative (you borrowed) → you pay the friend.
+                    direction: amount > 0 ? .friendPaysMe : .iPayFriend
+                )
+            } label: {
+                HStack(spacing: AppSpacing.xs) {
+                    // Same glyph the mode picker uses for `.settleUp`
+                    // — keeps the CTA and the mode chip visually
+                    // linked when the user lands inside the create
+                    // modal.
+                    Image(systemName: "arrow.right.circle.fill")
+                        .font(AppFonts.bodyEmphasized)
+                    Text("Settle up")
+                        .font(AppFonts.bodyEmphasized)
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+                        // `splitAccentBold` is the same saturated
+                        // violet in both light and dark mode so the
+                        // white label stays at ~5:1 contrast. The
+                        // adaptive `splitAccent` would fade to pale
+                        // lavender at night and the button lost
+                        // weight against the dark surface.
+                        .fill(AppColors.splitAccentBold)
+                )
+            }
+            .padding(.horizontal, AppSpacing.pageHorizontal)
+            .padding(.top, AppSpacing.md)
+        }
     }
 
     // MARK: - Transactions Section

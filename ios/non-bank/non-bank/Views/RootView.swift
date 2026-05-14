@@ -8,13 +8,9 @@ import SwiftUI
 ///  - On every cold launch (and on every scene re-entry from a hard
 ///    swipe-up), shows `SplashView` first.
 ///  - Holds the splash for **at least 1.5 seconds** (per spec) so the
-///    brand moment registers, then cross-fades into `MainTabView`.
-///  - If the device is fast enough that 1.5 s is the bottleneck,
-///    that's fine — async stores keep loading in the background and
-///    the data is ready by the time the user sees the home tab.
-///  - If the device is slow and 1.5 s isn't enough for SwiftUI to
-///    finish first-frame layout, that's also fine — the splash stays
-///    until `splashDone` flips, never shorter than the 1.5 s floor.
+///    brand moment registers, then cross-fades into the next screen.
+///  - After the splash floor, first-launch users go through
+///    `OnboardingView`; everyone else lands directly in `MainTabView`.
 ///
 /// We deliberately use a value-based `if` swap (not a `ZStack` overlay)
 /// so the splash view tree is fully torn down once gone — no hidden
@@ -25,6 +21,10 @@ struct RootView: View {
     /// the splash is always the first thing users see.
     @State private var splashDone: Bool = false
 
+    /// First-launch onboarding gate. Sits between splash and tab view
+    /// so the user can't bypass it by force-quitting mid-flow.
+    @ObservedObject private var onboarding = OnboardingService.shared
+
     /// Minimum on-screen duration for the splash. The owner asked for
     /// "не короче, чем 1.5 секунды" so we use 1.5 here. Adjust here
     /// (and only here) if the brand moment ever needs tuning.
@@ -33,8 +33,13 @@ struct RootView: View {
     var body: some View {
         Group {
             if splashDone {
-                MainTabView()
-                    .transition(.opacity)
+                if onboarding.isCompleted {
+                    MainTabView()
+                        .transition(.opacity)
+                } else {
+                    OnboardingView()
+                        .transition(.opacity)
+                }
             } else {
                 SplashView()
                     .transition(.opacity)
@@ -50,5 +55,6 @@ struct RootView: View {
                     }
             }
         }
+        .animation(.easeInOut(duration: 0.35), value: onboarding.isCompleted)
     }
 }

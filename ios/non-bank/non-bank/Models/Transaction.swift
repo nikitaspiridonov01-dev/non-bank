@@ -34,6 +34,13 @@ struct Transaction: Identifiable, Codable, Equatable {
     /// before this feature shipped.
     let payloadChecksum: String?
 
+    /// User-controlled flag: when true, this transaction never contributes
+    /// to insights / analytics aggregates regardless of the global
+    /// "include potential expenses" setting. Toggled from the detail
+    /// view or a swipe action; persisted and synced. Defaults to false
+    /// (counted in insights) for new and imported transactions.
+    let excludedFromInsights: Bool
+
     init(
         id: Int,
         syncID: String = UUID().uuidString,
@@ -50,7 +57,8 @@ struct Transaction: Identifiable, Codable, Equatable {
         repeatInterval: RepeatInterval? = nil,
         parentReminderID: Int? = nil,
         splitInfo: SplitInfo? = nil,
-        payloadChecksum: String? = nil
+        payloadChecksum: String? = nil,
+        excludedFromInsights: Bool = false
     ) {
         self.id = id
         self.syncID = syncID
@@ -68,6 +76,7 @@ struct Transaction: Identifiable, Codable, Equatable {
         self.parentReminderID = parentReminderID
         self.splitInfo = splitInfo
         self.payloadChecksum = payloadChecksum
+        self.excludedFromInsights = excludedFromInsights
     }
 
     /// Convenience accessor — derived from `type`, not stored separately.
@@ -114,7 +123,49 @@ struct Transaction: Identifiable, Codable, Equatable {
             repeatInterval: repeatInterval,
             parentReminderID: nil,
             splitInfo: splitInfo,
-            payloadChecksum: payloadChecksum
+            payloadChecksum: payloadChecksum,
+            excludedFromInsights: excludedFromInsights
         )
+    }
+
+    /// Returns a copy with `excludedFromInsights` toggled to the given
+    /// value and `lastModified` bumped. Used by the detail view's
+    /// include/exclude toggle and the row swipe action.
+    func settingExcludedFromInsights(_ excluded: Bool) -> Transaction {
+        Transaction(
+            id: id,
+            syncID: syncID,
+            emoji: emoji,
+            category: category,
+            title: title,
+            description: description,
+            amount: amount,
+            currency: currency,
+            date: date,
+            type: type,
+            tags: tags,
+            lastModified: Date(),
+            repeatInterval: repeatInterval,
+            parentReminderID: parentReminderID,
+            splitInfo: splitInfo,
+            payloadChecksum: payloadChecksum,
+            excludedFromInsights: excluded
+        )
+    }
+
+    /// The amount to render as the primary number in transaction rows
+    /// and cards on home / reminders / category lists. For split
+    /// transactions in include-potential mode, this is `myShare` —
+    /// matching the "Your share" label the row displays in that mode.
+    /// Otherwise the stored `amount` (== `paidByMe` for splits).
+    ///
+    /// Analytics totals do NOT go through this helper — they go through
+    /// `AnalyticsContext.normaliseForInsights`, which both rewrites the
+    /// amount AND filters out `excludedFromInsights` rows in one pass.
+    func displayPrimaryAmount(includePotentialExpenses: Bool) -> Double {
+        if includePotentialExpenses, let split = splitInfo {
+            return split.myShare
+        }
+        return amount
     }
 }

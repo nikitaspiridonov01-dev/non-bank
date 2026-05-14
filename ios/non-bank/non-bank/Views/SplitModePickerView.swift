@@ -1,10 +1,23 @@
 import SwiftUI
 
+/// Bottom-sheet picker showing the three live split modes (`evenly`,
+/// `byItems`, `byAmount`). Used both as the first-time mode selector
+/// (after `who to split with`) and as the change-mode entry from the
+/// chip in the create modal.
+///
+/// Picking `byItems` without a scanned receipt is allowed — the caller
+/// is expected to chain into the scan flow on `onSelect`. The row shows
+/// a small subtitle hint in that state so the consequence is visible
+/// before the tap.
 struct SplitModePickerView: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var selectedMode: SplitMode?
     var friendCount: Int = 1
-    var youIncluded: Bool = true
+    /// True when the create flow already has a scanned receipt with more
+    /// than one product line. When false, picking `.byItems` triggers
+    /// the scan flow rather than going straight to assignment — the row
+    /// subtitle reflects this so the user knows what happens.
+    var hasUsableReceipt: Bool = false
     var onSelect: (() -> Void)? = nil
 
     var body: some View {
@@ -28,53 +41,39 @@ struct SplitModePickerView: View {
         .presentationDetents([.medium])
     }
 
-    private func isModeEnabled(_ mode: SplitMode) -> Bool {
-        mode == .fiftyFifty
-    }
-
     private func displayLabel(for mode: SplitMode) -> String {
-        if mode == .fiftyFifty {
+        if mode == .evenly {
             return friendCount == 1 ? "50/50" : "Evenly"
         }
         return mode.displayLabel
     }
 
     private func helpText(for mode: SplitMode) -> String {
-        if mode == .fiftyFifty {
+        if mode == .evenly {
             return "Split evenly between people"
+        }
+        if mode == .byItems && !hasUsableReceipt {
+            return "Scan a receipt to assign items"
         }
         return mode.helpText
     }
 
     private func modeButton(mode: SplitMode) -> some View {
-        let enabled = isModeEnabled(mode)
-        return Button {
+        Button {
             selectedMode = mode
             onSelect?()
             dismiss()
         } label: {
             HStack(spacing: 14) {
                 SplitModeIcon(mode: mode, size: 36)
-                    .opacity(enabled ? 1 : 0.4)
 
                 VStack(alignment: .leading, spacing: AppSpacing.xxs) {
-                    HStack(spacing: 6) {
-                        Text(displayLabel(for: mode))
-                            .font(AppFonts.labelPrimary)
-                            .foregroundColor(enabled ? AppColors.textPrimary : AppColors.textDisabled)
-                        if !enabled {
-                            Text("Soon")
-                                .font(AppFonts.badgeLabel)
-                                .foregroundColor(AppColors.textDisabled)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, AppSpacing.xxs)
-                                .background(AppColors.backgroundElevated)
-                                .clipShape(Capsule())
-                        }
-                    }
+                    Text(displayLabel(for: mode))
+                        .font(AppFonts.labelPrimary)
+                        .foregroundColor(AppColors.textPrimary)
                     Text(helpText(for: mode))
                         .font(AppFonts.rowDescription)
-                        .foregroundColor(enabled ? AppColors.textTertiary : AppColors.textDisabled)
+                        .foregroundColor(AppColors.textTertiary)
                 }
 
                 Spacer()
@@ -90,6 +89,5 @@ struct SplitModePickerView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!enabled)
     }
 }

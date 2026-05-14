@@ -24,15 +24,18 @@ final class ReceiptLineFilterTests: XCTestCase {
         XCTAssertEqual(ReceiptLineFilter.classify("Sub-total $35"), .skipNonProduct)
     }
 
-    func testClassify_taxesAcrossLanguages() {
-        XCTAssertEqual(ReceiptLineFilter.classify("VAT 18% 12.50"), .skipNonProduct)
-        XCTAssertEqual(ReceiptLineFilter.classify("Tax 5.00"), .skipNonProduct)
-        XCTAssertEqual(ReceiptLineFilter.classify("TVA 20%"), .skipNonProduct)
-        XCTAssertEqual(ReceiptLineFilter.classify("IVA 21,00"), .skipNonProduct)
-        XCTAssertEqual(ReceiptLineFilter.classify("MwSt. 7,50"), .skipNonProduct)
-        XCTAssertEqual(ReceiptLineFilter.classify("НДС 18% 12,50"), .skipNonProduct)
-        XCTAssertEqual(ReceiptLineFilter.classify("PDV 50,00"), .skipNonProduct)
-        XCTAssertEqual(ReceiptLineFilter.classify("Podatek VAT 5,00"), .skipNonProduct)
+    func testClassify_taxesAcrossLanguages_returnTaxVerdict() {
+        // Phase 2: tax lines used to be silently dropped via nonProductWords.
+        // They're now kept as their own `.tax` verdict so the split-by-items
+        // calculator can distribute them proportionally across participants.
+        XCTAssertEqual(ReceiptLineFilter.classify("VAT 18% 12.50"), .tax)
+        XCTAssertEqual(ReceiptLineFilter.classify("Tax 5.00"), .tax)
+        XCTAssertEqual(ReceiptLineFilter.classify("TVA 20%"), .tax)
+        XCTAssertEqual(ReceiptLineFilter.classify("IVA 21,00"), .tax)
+        XCTAssertEqual(ReceiptLineFilter.classify("MwSt. 7,50"), .tax)
+        XCTAssertEqual(ReceiptLineFilter.classify("НДС 18% 12,50"), .tax)
+        XCTAssertEqual(ReceiptLineFilter.classify("PDV 50,00"), .tax)
+        XCTAssertEqual(ReceiptLineFilter.classify("Podatek VAT 5,00"), .tax)
     }
 
     func testClassify_paymentMethodsAcrossLanguages() {
@@ -88,13 +91,73 @@ final class ReceiptLineFilterTests: XCTestCase {
         XCTAssertEqual(ReceiptLineFilter.classify("Total discount -5,00"), .discount)
     }
 
-    func testClassify_tipsAndService() {
-        XCTAssertEqual(ReceiptLineFilter.classify("Tip 10.00"), .skipNonProduct)
-        XCTAssertEqual(ReceiptLineFilter.classify("Service charge 15%"), .skipNonProduct)
-        XCTAssertEqual(ReceiptLineFilter.classify("Чаевые 100"), .skipNonProduct)
-        XCTAssertEqual(ReceiptLineFilter.classify("Mancia 5"), .skipNonProduct)
-        XCTAssertEqual(ReceiptLineFilter.classify("Napojnica 2"), .skipNonProduct)
-        XCTAssertEqual(ReceiptLineFilter.classify("Napiwek 5"), .skipNonProduct)
+    func testClassify_tipsAndService_returnTipVerdict() {
+        // Phase 2: tip / gratuity / service-charge lines now route to the
+        // `.tip` verdict (they're kept in the items list so the
+        // by-items split calculator distributes them proportionally).
+        XCTAssertEqual(ReceiptLineFilter.classify("Tip 10.00"), .tip)
+        XCTAssertEqual(ReceiptLineFilter.classify("Service charge 15%"), .tip)
+        XCTAssertEqual(ReceiptLineFilter.classify("Чаевые 100"), .tip)
+        XCTAssertEqual(ReceiptLineFilter.classify("Mancia 5"), .tip)
+        XCTAssertEqual(ReceiptLineFilter.classify("Napojnica 2"), .tip)
+        XCTAssertEqual(ReceiptLineFilter.classify("Napiwek 5"), .tip)
+    }
+
+    func testClassify_feesAcrossLanguages_returnFeeVerdict() {
+        // Phase 2: fee / surcharge lines are kept as `.fee`-kinded items
+        // so they're distributed proportionally in the split calculator.
+        XCTAssertEqual(ReceiptLineFilter.classify("Service fee 3.50"), .fee)
+        XCTAssertEqual(ReceiptLineFilter.classify("Delivery fee 2,00"), .fee)
+        XCTAssertEqual(ReceiptLineFilter.classify("Сбор 1,50"), .fee)
+        XCTAssertEqual(ReceiptLineFilter.classify("Gebühr 4,00"), .fee)
+        XCTAssertEqual(ReceiptLineFilter.classify("Frais de service 2,50"), .fee)
+    }
+
+    // MARK: - Round C-3: fragile OCR separator + missing-keyword coverage
+
+    func testClassify_serviceChargeFlexibleSeparator_returnsTipVerdict() {
+        // Real OCR often emits multi-word phrases with mangled
+        // whitespace (double space, tab) or a hyphen between words.
+        // The `[\s\-]+` separator in `WordRegex` keeps the literal
+        // single-space match working while picking these up too.
+        XCTAssertEqual(ReceiptLineFilter.classify("Service  Charge 5,00"), .tip)
+        XCTAssertEqual(ReceiptLineFilter.classify("Service\tCharge 5,00"), .tip)
+        XCTAssertEqual(ReceiptLineFilter.classify("Service-Charge 5,00"), .tip)
+        // Abbreviated fee forms — "svc fee" / "svc. charge"
+        XCTAssertEqual(ReceiptLineFilter.classify("Svc fee 2,00"), .fee)
+        XCTAssertEqual(ReceiptLineFilter.classify("Svc. charge 2,00"), .fee)
+    }
+
+    func testClassify_russianServiceFee_returnsFeeVerdict() {
+        // "Обслуживание" / "За обслуживание" are the most common
+        // Russian service-fee phrasings on cafe and restaurant
+        // receipts and weren't matched by any of the explicit fee
+        // literals (which all use "сбор" or "доставка"). Covered now
+        // by the `обслуживан` Cyrillic stem.
+        XCTAssertEqual(ReceiptLineFilter.classify("Обслуживание 5%"), .fee)
+        XCTAssertEqual(ReceiptLineFilter.classify("За обслуживание 200"), .fee)
+        XCTAssertEqual(ReceiptLineFilter.classify("Обслуживания 150"), .fee)
+    }
+
+    func testClassify_xChargeCompoundsAreFee() {
+        // The bare word "charge" is too risky to add globally (real
+        // items like "Charging pad" would collide), so the specific
+        // "... charge" fee compounds we see on receipts are
+        // enumerated explicitly.
+        XCTAssertEqual(ReceiptLineFilter.classify("Cover charge 3,00"), .fee)
+        XCTAssertEqual(ReceiptLineFilter.classify("Booking charge 5,00"), .fee)
+        XCTAssertEqual(ReceiptLineFilter.classify("Extra charge 2,00"), .fee)
+        XCTAssertEqual(ReceiptLineFilter.classify("Minimum charge 10,00"), .fee)
+    }
+
+    func testClassify_chargingPad_isItem_notFee() {
+        // Regression guard for the false-positive risk we accepted
+        // when adding "... charge" compounds. An item whose name
+        // contains "charging" or "charger" must still classify as
+        // `.keep` since the compound list requires a qualifier word
+        // and the bare `charge` token is not on it.
+        XCTAssertEqual(ReceiptLineFilter.classify("Charging pad 19,99"), .keep)
+        XCTAssertEqual(ReceiptLineFilter.classify("Phone charger 25,00"), .keep)
     }
 
     func testClassify_loyaltyPoints() {
@@ -181,16 +244,24 @@ final class ReceiptLineFilterTests: XCTestCase {
         XCTAssertEqual(ReceiptLineFilter.classify("Конобара: Marko"), .skipNonProduct)
     }
 
-    func testClassify_serbianCyrillicTaxAndAdmin_isNonProduct() {
-        // Sub-headers and tax words on Serbian fiscal receipts.
+    func testClassify_serbianCyrillicAdmin_isNonProduct() {
+        // Sub-headers on Serbian fiscal receipts that aren't tax — these
+        // stay routed to `.skipNonProduct` (they're admin labels, not
+        // splittable items).
         XCTAssertEqual(ReceiptLineFilter.classify("Артикли промет продаја"), .skipNonProduct)
-        XCTAssertEqual(ReceiptLineFilter.classify("Назив Кол. Укупно"), .skipNonProduct)  // promet would also match... actually "укупно" is an anchor — but "артикли"/"назив" stems should win first
+        XCTAssertEqual(ReceiptLineFilter.classify("Назив Кол. Укупно"), .skipNonProduct)
         XCTAssertEqual(ReceiptLineFilter.classify("Ознака Име О-ПДВ Стопа"), .skipNonProduct)
         XCTAssertEqual(ReceiptLineFilter.classify("ПФР време: 12345"), .skipNonProduct)
         XCTAssertEqual(ReceiptLineFilter.classify("Броач рачуна: 72983"), .skipNonProduct)
-        // Tax line: "Порез" + "пореза" forms.
-        XCTAssertEqual(ReceiptLineFilter.classify("Укупан износ пореза: 3.743,33"), .skipNonProduct)
-        XCTAssertEqual(ReceiptLineFilter.classify("20,00% 3.743,33 Порез"), .skipNonProduct)
+    }
+
+    func testClassify_serbianCyrillicTax_returnsTaxVerdict() {
+        // Phase 2: Serbian Cyrillic tax stems (порез, пореска) moved
+        // from the nonProduct list to the tax-stem list — these are
+        // legitimate tax lines that the by-items calculator distributes
+        // proportionally.
+        XCTAssertEqual(ReceiptLineFilter.classify("Укупан износ пореза: 3.743,33"), .tax)
+        XCTAssertEqual(ReceiptLineFilter.classify("20,00% 3.743,33 Порез"), .tax)
     }
 
     func testClassify_serbianCyrillicGrandTotal_isAnchor() {

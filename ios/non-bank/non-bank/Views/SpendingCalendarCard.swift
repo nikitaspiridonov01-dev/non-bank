@@ -37,8 +37,12 @@ struct SpendingCalendarCard: View {
     /// and vice versa.
     @Binding var period: InsightsPeriod
 
-    /// Specific-month vs. averages-by-day-of-month.
-    enum Mode: Hashable { case month, averages }
+    /// Three views over the same calendar surface:
+    ///   • `.month` (UI: "Explore") — heatmap of one specific month.
+    ///   • `.averages` (UI: "Avg. month") — average per day-of-month.
+    ///   • `.weekAverages` (UI: "Avg. week") — average per weekday
+    ///     across the user's full history.
+    enum Mode: Hashable { case month, averages, weekAverages }
     @State private var mode: Mode = .month
 
     /// Identifiable wrapper so SwiftUI's `.sheet(item:)` can re-key
@@ -111,12 +115,23 @@ struct SpendingCalendarCard: View {
         context.averageDailyByDayOfMonth
     }
 
+    private var weekAveragesData: [CategoryAnalyticsService.DayOfWeekAverage] {
+        context.averageDailyByDayOfWeek
+    }
+
     private var allTimeMaxDaily: Double {
         context.maxDailyExpenseEver
     }
 
     private var averagesMax: Double {
         averagesData.map(\.average).max() ?? 0
+    }
+
+    /// Local max for the weekday heatmap so the busiest weekday sits
+    /// at full red and the quietest at full green — same scale-by-tab
+    /// rule the day-of-month averages tab uses.
+    private var weekAveragesMax: Double {
+        weekAveragesData.map(\.average).max() ?? 0
     }
 
     // MARK: - Body
@@ -126,18 +141,22 @@ struct SpendingCalendarCard: View {
             headline
             modePicker
 
-            if mode == .month {
+            switch mode {
+            case .month:
                 monthHeader
                 weekdayRow
                 monthGrid
-            } else {
+            case .averages:
                 averagesDescription
                 averagesGrid
+            case .weekAverages:
+                weekAveragesDescription
+                weekAveragesGrid
             }
         }
         .insightCardShell()
         // Reset presentation when mode flips so a stale sheet from
-        // .month doesn't bleed into .averages (and vice versa).
+        // one tab doesn't bleed into another.
         .onChange(of: mode) { _ in presentedDay = nil }
         .onChange(of: period) { _ in presentedDay = nil }
         .sheet(item: $presentedDay) { selection in
@@ -160,8 +179,9 @@ struct SpendingCalendarCard: View {
 
     private var modePicker: some View {
         Picker("Mode", selection: $mode) {
-            Text("Month").tag(Mode.month)
-            Text("Averages").tag(Mode.averages)
+            Text("Explore").tag(Mode.month)
+            Text("Avg. month").tag(Mode.averages)
+            Text("Avg. week").tag(Mode.weekAverages)
         }
         .pickerStyle(.segmented)
     }
@@ -170,6 +190,16 @@ struct SpendingCalendarCard: View {
 
     private var averagesDescription: some View {
         Text("This is how much you spend on average on each day of the month, considering the entire history of spending for all months.")
+            .font(AppFonts.caption)
+            .foregroundColor(AppColors.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Week averages mode description
+
+    private var weekAveragesDescription: some View {
+        Text("This is how much you spend on average on each day of the week, considering the entire history of your activity.")
             .font(AppFonts.caption)
             .foregroundColor(AppColors.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -317,6 +347,49 @@ struct SpendingCalendarCard: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: - Week averages grid
+
+    /// 7 cells in a single row — one per weekday — using the same
+    /// heatmap shape as the day-of-month grid so the visual language
+    /// stays consistent across tabs. Cells are rotated to start from
+    /// the locale's first-day-of-week (matches `weekdayRow` above so
+    /// users who flip back to "Explore" see Mondays / Sundays in the
+    /// same column position).
+    private var weekAveragesGrid: some View {
+        let firstWeekday = Calendar.current.firstWeekday
+        let rotated: [Int] = (0..<7).map { i in
+            ((firstWeekday - 1 + i) % 7) + 1   // returns 1…7 (Sun…Sat)
+        }
+        return LazyVGrid(
+            columns: Array(repeating: GridItem(.flexible(), spacing: AppSpacing.xs), count: 7),
+            spacing: 4
+        ) {
+            ForEach(rotated, id: \.self) { weekday in
+                weekAverageCell(weekday: weekday)
+            }
+        }
+    }
+
+    private func weekAverageCell(weekday: Int) -> some View {
+        let entry = weekAveragesData.first(where: { $0.dayOfWeek == weekday })
+        let amount = entry?.average ?? 0
+        let label = Calendar.current.veryShortStandaloneWeekdaySymbols[weekday - 1]
+        // `presentedDay.day` doubles as a weekday index here (1…7);
+        // `daySheet` switches on the current `mode` to decide how to
+        // interpret it. Reusing the same state avoids a parallel
+        // sheet-binding for what is essentially the same affordance.
+        return Button {
+            presentedDay = DaySelection(day: weekday)
+        } label: {
+            cellShape(
+                amount: amount,
+                maxValue: weekAveragesMax,
+                label: label
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - Cell shape
 
     /// Square-aspect circle filled with the heatmap colour, day
@@ -362,6 +435,12 @@ struct SpendingCalendarCard: View {
                 } else {
                     sheetFallback(title: "Day \(day)", subtitle: nil)
                 }
+            case .weekAverages:
+                if let entry = weekAveragesData.first(where: { $0.dayOfWeek == day }) {
+                    weekAverageDaySheet(entry: entry)
+                } else {
+                    sheetFallback(title: "Day \(day)", subtitle: nil)
+                }
             }
         }
         // Small detent so the sheet feels lightweight — the user
@@ -371,7 +450,10 @@ struct SpendingCalendarCard: View {
         .presentationDetents([.height(220)])
         .presentationDragIndicator(.visible)
         .presentationBackground(AppColors.backgroundElevated)
-        .presentationCornerRadius(24)
+        // Drop the explicit 24pt — iOS-26's default sheet radius is
+        // more rounded and matches the rest of the detent sheets in
+        // the app (`WhoPaidPickerView` etc.) instead of reading as a
+        // visibly squarer tray.
     }
 
     /// Month-mode sheet: full date + total spend on that day.
@@ -399,6 +481,23 @@ struct SpendingCalendarCard: View {
             subtitle: hasData ? "Average across your spending history" : nil,
             amount: entry.average,
             emptyMessage: "No data yet for this day"
+        )
+    }
+
+    /// Week-averages sheet: full weekday name + average spend on
+    /// that weekday. `standaloneWeekdaySymbols` returns "Sunday",
+    /// "Monday" etc. so the sheet reads as a sentence rather than
+    /// a code (`day.dayOfWeek == 2` would be opaque on its own).
+    private func weekAverageDaySheet(
+        entry: CategoryAnalyticsService.DayOfWeekAverage
+    ) -> some View {
+        let dayName = Calendar.current.standaloneWeekdaySymbols[entry.dayOfWeek - 1]
+        let hasData = entry.daysCounted > 0 && entry.average > 0
+        return sheetLayout(
+            title: dayName,
+            subtitle: hasData ? "Average across your spending history" : nil,
+            amount: entry.average,
+            emptyMessage: "No data yet for this weekday"
         )
     }
 

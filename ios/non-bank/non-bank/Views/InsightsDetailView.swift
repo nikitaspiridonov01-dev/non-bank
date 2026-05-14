@@ -17,6 +17,11 @@ struct InsightsDetailView: View {
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var currencyStore: CurrencyStore
 
+    /// Observed so this screen rebuilds when the user changes the
+    /// "include potential expenses" switch in Settings while the
+    /// detail is pushed.
+    @ObservedObject private var insightsSettings = InsightsSettings.shared
+
     /// Navbar title — short, e.g. "Top spending" / "Top earning".
     let navTitle: String
 
@@ -128,7 +133,19 @@ struct InsightsDetailView: View {
                         accentColor: accentColor
                     )
                 } label: {
-                    CategoryAmountRow(row: row, currency: currencyStore.selectedCurrency)
+                    // No `insightCardShell` parent here — rows sit
+                    // directly on `backgroundPrimary` (the brighter
+                    // cream page). The default `insightRowFill` is
+                    // tuned to pop *above* the deeper `insightCard`
+                    // surface inside cards; on the page it reads as
+                    // the same colour and the pills disappear.
+                    // `backgroundElevated` is one shade darker than
+                    // the page → the row sits visibly above it.
+                    CategoryAmountRow(
+                        row: row,
+                        currency: currencyStore.selectedCurrency,
+                        fill: AppColors.backgroundElevated
+                    )
                 }
                 .buttonStyle(.plain)
             }

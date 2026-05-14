@@ -35,6 +35,55 @@ class CreateTransactionViewModel: ObservableObject {
     @Published var payers: [Payer] = []
     @Published var youIncludedInSplit: Bool = true
 
+    /// Manually-entered per-participant shares for `splitMode == .byAmount`.
+    /// Keyed by participant ID — `"me"` for the user (matches the
+    /// `WhoPaidPicker` sentinel), `Friend.id` for everyone else. Empty
+    /// means "user hasn't opened the share picker yet"; in that state
+    /// `buildTransaction` falls back to an even split so the user can
+    /// still save without a picker round-trip.
+    @Published var byAmountShares: [String: Double] = [:]
+
+    /// True when the saved `byAmountShares` sum to the current
+    /// `parsedAmount` within the same tolerance the picker enforces.
+    /// Drives the indicator next to the split-mode chip — green check
+    /// when balanced, warning glyph when stale (e.g. user typed a new
+    /// amount on the numpad after entering shares, leaving them out of
+    /// sync with the new total).
+    var byAmountSharesBalanced: Bool {
+        guard !byAmountShares.isEmpty else { return false }
+        let sum = byAmountShares.values.reduce(0, +)
+        let tolerance = 0.01 * Double(max(byAmountShares.count, 1))
+        return abs(sum - parsedAmount) <= tolerance
+    }
+
+    /// True when at least one receipt item carries an item-assignee.
+    /// Used in tandem with `splitMode == .byItems` to drive the chip
+    /// indicator and re-open behaviour.
+    var byItemsHasAssignments: Bool {
+        pendingReceiptItems.contains { !$0.assignedParticipantIDs.isEmpty }
+    }
+
+    /// True when the computed by-items shares (via
+    /// `SplitShareCalculator`) sum to within tolerance of the current
+    /// `parsedAmount`. False when the receipt total has drifted from
+    /// the transaction amount — the most common cause is the user
+    /// editing items via the badge after assignment, which Phase 4.6
+    /// will auto-chain into a re-balance prompt.
+    var byItemsBalanced: Bool {
+        guard byItemsHasAssignments else { return false }
+        var participantIDs: Set<String> = Set(selectedFriends.map(\.id))
+        if youIncludedInSplit {
+            participantIDs.insert(ReceiptItem.selfParticipantID)
+        }
+        let computed = SplitShareCalculator.compute(
+            items: pendingReceiptItems,
+            participants: participantIDs
+        )
+        let sum = computed.values.reduce(0, +)
+        let tolerance = 0.01 * Double(max(computed.count, 1))
+        return abs(sum - parsedAmount) <= tolerance
+    }
+
     // MARK: - Receipt State
 
     /// Items captured during the optional receipt scan flow. Persisted to
@@ -42,7 +91,8 @@ class CreateTransactionViewModel: ObservableObject {
     /// `CreateTransactionModal.commitTransaction`).
     @Published var pendingReceiptItems: [ReceiptItem] = []
 
-    let maxDecimalDigits = 2
+    static let maxDecimalDigits = 2
+    var maxDecimalDigits: Int { Self.maxDecimalDigits }
 
     // MARK: - Validation
 
@@ -179,6 +229,88 @@ class CreateTransactionViewModel: ObservableObject {
         }
     }
 
+    /// Paste a freeform amount string from the clipboard (or any
+    /// other source) into the numpad's `amount` state.
+    ///
+    /// Delegates the messy parsing — currency symbols, ISO codes,
+    /// thousands separators, no-break spaces, accounting parens — to
+    /// `ImportFieldParser.parseAmountString`, then re-formats the
+    /// result to the `"123.45"` shape the keypad expects and clamps
+    /// it to the same magnitude/precision bounds tap-input enforces
+    /// (max 8 integer digits, `maxDecimalDigits` after the dot).
+    ///
+    /// The sign is intentionally discarded: income/expense is a
+    /// separate control on the create screen, and silently flipping
+    /// the user's choice during a paste would be surprising. Returns
+    /// `true` on success, `false` when the input can't be parsed as
+    /// a number or overflows the 8-digit integer budget — caller
+    /// uses the flag to decide between a success / error haptic.
+    @discardableResult
+    func pasteAmount(_ raw: String) -> Bool {
+        guard let value = ImportFieldParser.parseAmountString(raw) else {
+            playHaptic(style: .rigid)
+            return false
+        }
+        // `abs()` because the sign is owned by `isIncome` on this
+        // form, not by the amount string.
+        let magnitude = abs(value)
+        guard let formatted = Self.formatAmountForKeypad(magnitude) else {
+            playHaptic(style: .rigid)
+            return false
+        }
+        amount = formatted
+        playHaptic(style: .light)
+        return true
+    }
+
+    /// Re-render a parsed `Double` as the keypad's `"123.45"` /
+    /// `"123"` string form, applying the same limits the digit
+    /// handler enforces. Returns `nil` when the magnitude exceeds
+    /// what the form allows (more than 8 integer digits) so the
+    /// caller can surface an error rather than silently chopping
+    /// off the most-significant digits.
+    private static func formatAmountForKeypad(_ value: Double) -> String? {
+        let rounded = (value * 100).rounded() / 100
+        // Decimal-place truncation: same `.2` precision the rest of
+        // the app stores. We render with the C printf path to avoid
+        // locale-based grouping/decimal-comma surprises.
+        let asString = String(format: "%.\(Self.maxDecimalDigits)f", rounded)
+        let parts = asString.split(separator: ".", omittingEmptySubsequences: false)
+        var intPart = String(parts.first ?? "0")
+        var decPart = parts.count > 1 ? String(parts[1]) : ""
+
+        // Strip insignificant leading zeros so "0007.50" doesn't
+        // come out of paste — we want "7.50".
+        while intPart.count > 1 && intPart.hasPrefix("0") {
+            intPart.removeFirst()
+        }
+        // 8-digit integer cap: matches the tap-input guard at
+        // `handleKeyPress` so paste can never produce a value the
+        // keypad couldn't.
+        guard intPart.count <= 8 else { return nil }
+
+        // Mirror the keypad's own convention of trimming trailing
+        // zeros — a freshly entered "7" stays "7" not "7.00", and a
+        // pasted "100.50" lands as "100.5" not "100.50". Without
+        // this the round-trip introduces a phantom trailing zero
+        // and the cents-font ".50" looks wider than what the user
+        // pasted. Middle zeros stay put ("100.05" → "100.05").
+        while decPart.hasSuffix("0") {
+            decPart.removeLast()
+        }
+        return decPart.isEmpty ? intPart : "\(intPart).\(decPart)"
+    }
+
+    /// Clears the amount field. Mirrors the long-press → "Clear"
+    /// context-menu action on the amount block. Separate from
+    /// backspace because Clear should drop the whole value at once
+    /// (no per-digit haptic spam).
+    func clearAmount() {
+        guard !amount.isEmpty else { return }
+        amount = ""
+        playHaptic(style: .light)
+    }
+
     func handleKeyPress(
         _ key: String,
         onSave: @escaping () -> Void
@@ -240,18 +372,89 @@ class CreateTransactionViewModel: ObservableObject {
         // Build split info if in split mode
         var splitInfo: SplitInfo? = nil
         if isSplitMode && (totalParticipantCount > 0) {
-            let totalPeople = Double(totalParticipantCount)
-            let perPerson = total / totalPeople
-            let myShare = youIncludedInSplit ? perPerson : 0
+            // Per-participant shares depend on the chosen split mode.
+            // `.byAmount` honours the picker-entered dictionary when
+            // populated; otherwise (and for `.byItems` until Phase 4
+            // wires assignment-based math) we fall back to even split,
+            // so the create flow always has a sane saveable state.
+            let resolvedMode = splitMode ?? .evenly
+            let myShare: Double
+            let friendShares: [FriendShare]
+
+            if resolvedMode == .byAmount && !byAmountShares.isEmpty {
+                myShare = youIncludedInSplit ? (byAmountShares["me"] ?? 0) : 0
+                friendShares = selectedFriends.map { friend in
+                    let paidAmount = payers.first(where: { $0.id == friend.id })?.amount ?? 0
+                    return FriendShare(
+                        friendID: friend.id,
+                        share: byAmountShares[friend.id] ?? 0,
+                        paidAmount: paidAmount
+                    )
+                }
+            } else if resolvedMode == .byItems && pendingReceiptItems.contains(where: { !$0.assignedParticipantIDs.isEmpty }) {
+                // `byItems` math runs through the calculator —
+                // assignments live on each `ReceiptItem` and items use
+                // `ReceiptItem.selfParticipantID` for the user (NOT the
+                // `"me"` sentinel that `WhoPaidPicker` uses, since
+                // those were introduced separately and we kept each
+                // domain's convention rather than refactoring callers).
+                var participantIDs: Set<String> = Set(selectedFriends.map(\.id))
+                if youIncludedInSplit {
+                    participantIDs.insert(ReceiptItem.selfParticipantID)
+                }
+                let computed = SplitShareCalculator.compute(
+                    items: pendingReceiptItems,
+                    participants: participantIDs
+                )
+                myShare = youIncludedInSplit ? (computed[ReceiptItem.selfParticipantID] ?? 0) : 0
+                friendShares = selectedFriends.map { friend in
+                    let paidAmount = payers.first(where: { $0.id == friend.id })?.amount ?? 0
+                    return FriendShare(
+                        friendID: friend.id,
+                        share: computed[friend.id] ?? 0,
+                        paidAmount: paidAmount
+                    )
+                }
+            } else if resolvedMode == .settleUp {
+                // Settle-up has a unique shape: ONE party pays the
+                // full amount and ONE (different) party receives the
+                // full amount. The `payers` array carries who paid;
+                // by the invariant established at commitSettleUp /
+                // prefill time it has exactly one entry. Everything
+                // else is zero.
+                //
+                // We compute shares deterministically here rather
+                // than letting the evenly fallback split the total
+                // 50/50 — that produced the "you pay for yourself"
+                // bug: with equal shares (50 vs 50) the downstream
+                // `normaliseSettleUp` tie-broke the receiver back to
+                // "me", which collapsed the settle-up into a solo
+                // self-paid expense.
+                let payerID = payers.first?.id ?? "me"
+                let mePays = payerID == "me"
+                myShare = mePays ? 0 : total
+                friendShares = selectedFriends.map { friend in
+                    FriendShare(
+                        friendID: friend.id,
+                        // Friend is the receiver when "me" paid;
+                        // they're the payer when they paid (and
+                        // their share is then 0).
+                        share: mePays ? total : 0,
+                        paidAmount: friend.id == payerID ? total : 0
+                    )
+                }
+            } else {
+                let totalPeople = Double(totalParticipantCount)
+                let perPerson = total / totalPeople
+                myShare = youIncludedInSplit ? perPerson : 0
+                friendShares = selectedFriends.map { friend in
+                    let paidAmount = payers.first(where: { $0.id == friend.id })?.amount ?? 0
+                    return FriendShare(friendID: friend.id, share: perPerson, paidAmount: paidAmount)
+                }
+            }
 
             let paidByMe = myPaidAmount
             let lentAmount = max(paidByMe - myShare, 0)
-
-            // Build friend shares from selectedFriends with actual payer amounts
-            let friendShares = selectedFriends.map { friend in
-                let paidAmount = payers.first(where: { $0.id == friend.id })?.amount ?? 0
-                return FriendShare(friendID: friend.id, share: perPerson, paidAmount: paidAmount)
-            }
 
             // Also include payers who are NOT in selectedFriends (e.g. "someone else paid")
             let selectedFriendIDs = Set(selectedFriends.map(\.id))
@@ -261,14 +464,56 @@ class CreateTransactionViewModel: ObservableObject {
                     FriendShare(friendID: payer.id, share: 0, paidAmount: payer.amount)
                 }
 
-            splitInfo = SplitInfo(
-                totalAmount: total,
+            // Coerce to `.settleUp` whenever the resulting shape matches:
+            // exactly one party paid, exactly one (different) party
+            // bears the full share. The user might land here either by
+            // explicitly picking settle-up in the mode picker or by
+            // sculpting another mode into a 100/0 configuration — UX
+            // expectations are the same in both cases ("X pays for Y"),
+            // so the stored mode reflects the resolved intent rather
+            // than the original picker pick.
+            let allFriendShares = friendShares + extraPayerShares
+            let resolvedSplitMode = Self.resolveStoredSplitMode(
+                requested: splitMode,
                 paidByMe: paidByMe,
                 myShare: myShare,
-                lentAmount: lentAmount,
-                friends: friendShares + extraPayerShares,
-                splitMode: splitMode
+                friends: allFriendShares
             )
+
+            // Hard settle-up invariant. When the resolved mode is
+            // `.settleUp`, normalise the payload so:
+            //   - exactly one party has `paidAmount = totalAmount`,
+            //   - exactly one (different) party has `share = totalAmount`,
+            //   - everyone else is zeroed.
+            // Without this clamp a stale `vm.payers` from a previous
+            // mode (e.g. the user picked evenly with 2 friends, then
+            // switched to settle-up and re-picked the payer / receiver)
+            // could leave the second friend with a non-zero
+            // `paidAmount` from the old draft — and `resolveStoredSplitMode`
+            // would still coerce to `.settleUp` based on the legitimate
+            // payer/receiver pair, while the spurious second payer
+            // silently halves the debt later because the debt math
+            // credits both "payers". This branch is the single source
+            // of truth that the write path can't violate the shape.
+            let finalSplitInfo: SplitInfo
+            if resolvedSplitMode == .settleUp {
+                finalSplitInfo = Self.normaliseSettleUp(
+                    total: total,
+                    paidByMe: paidByMe,
+                    myShare: myShare,
+                    friends: allFriendShares
+                )
+            } else {
+                finalSplitInfo = SplitInfo(
+                    totalAmount: total,
+                    paidByMe: paidByMe,
+                    myShare: myShare,
+                    lentAmount: lentAmount,
+                    friends: allFriendShares,
+                    splitMode: resolvedSplitMode
+                )
+            }
+            splitInfo = finalSplitInfo
         }
 
         // The recorded amount is what I actually paid (paidByMe for splits)
@@ -365,7 +610,44 @@ class CreateTransactionViewModel: ObservableObject {
             if reconstructedPayers.isEmpty {
                 reconstructedPayers.append(Payer(id: "me", name: "You", amount: totalAmount))
             }
+
+            // Settle-up guard. Reading a corrupted (pre-fix) row that
+            // somehow has two non-zero `paidAmount`s would otherwise
+            // surface as two payers on the edit screen, and saving
+            // again would write the same shape back. Snap the array
+            // to a single payer (largest `amount` wins, ties → me)
+            // when the stored mode is `.settleUp` so editing a
+            // damaged transaction silently heals it.
+            if split.splitMode == .settleUp && reconstructedPayers.count > 1 {
+                let winner = reconstructedPayers.max(by: { $0.amount < $1.amount })
+                if let winner {
+                    reconstructedPayers = [
+                        Payer(
+                            id: winner.id,
+                            name: winner.name,
+                            amount: totalAmount  // canonical: the single payer covers the whole sum
+                        )
+                    ]
+                }
+            }
             payers = reconstructedPayers
+
+            // Reconstruct `byAmountShares` for `byAmount` transactions so
+            // re-opening the share picker shows the saved amounts. For
+            // every other mode the dictionary stays empty (which means
+            // "use even split" downstream).
+            if split.splitMode == .byAmount {
+                var shares: [String: Double] = [:]
+                if split.myShare > 0 {
+                    shares["me"] = split.myShare
+                }
+                for f in split.friends where f.share > 0 {
+                    shares[f.friendID] = f.share
+                }
+                byAmountShares = shares
+            } else {
+                byAmountShares = [:]
+            }
         } else {
             if tx.amount.truncatingRemainder(dividingBy: 1) == 0 {
                 amount = String(format: "%.0f", tx.amount)
@@ -379,18 +661,161 @@ class CreateTransactionViewModel: ObservableObject {
 
     private static let lastSplitModeKey = "lastUsedSplitMode"
 
-    /// Resolves the default split mode based on selected friends.
+    /// Picks the `SplitMode` to persist on a `SplitInfo`. Auto-coerces
+    /// any 1-payer + 1-share-bearer configuration into `.settleUp` so
+    /// the UI ("X pays for Y", debt summary) reads the same regardless
+    /// of which mode the user picked first. Pure function — `nonisolated`
+    /// so tests (and other call sites that aren't on the main actor)
+    /// can call it without ceremony, and so we don't pay an actor hop
+    /// during `buildTransaction`.
+    ///
+    /// Detection rule: count distinct parties with `paidAmount > 0`
+    /// (paying side) and parties with `share > 0` (receiving side). When
+    /// both equal 1 and they're different parties, the shape is settle-
+    /// up. The "different parties" check guards against a degenerate
+    /// you-pay-you-share single-person split (1 payer, 1 share-bearer,
+    /// but it's the same person — that's not a settle-up, that's a
+    /// solo expense the user shouldn't have flagged as split).
+    nonisolated static func resolveStoredSplitMode(
+        requested: SplitMode?,
+        paidByMe: Double,
+        myShare: Double,
+        friends: [FriendShare]
+    ) -> SplitMode? {
+        let payerThreshold = 0.001
+        let shareThreshold = 0.001
+
+        let mePays = paidByMe > payerThreshold
+        let meShares = myShare > shareThreshold
+        let payingFriends = friends.filter { $0.paidAmount > payerThreshold }
+        let sharingFriends = friends.filter { $0.share > shareThreshold }
+
+        let payerCount = (mePays ? 1 : 0) + payingFriends.count
+        let shareCount = (meShares ? 1 : 0) + sharingFriends.count
+
+        guard payerCount == 1, shareCount == 1 else { return requested }
+
+        // Confirm payer and share-bearer are distinct parties.
+        if mePays && meShares { return requested }
+        if let payer = payingFriends.first, let receiver = sharingFriends.first,
+           payer.friendID == receiver.friendID {
+            return requested
+        }
+
+        return .settleUp
+    }
+
+    /// Enforce the settle-up shape on a `SplitInfo` before it goes
+    /// to SQLite. Picks the **single** payer (the one with the
+    /// largest `paidAmount`, breaking ties towards "me") and the
+    /// single receiver (the largest `share`, ties again towards
+    /// "me"); zeroes everyone else. Without this clamp the write
+    /// path could let a stale `vm.payers` from a previous draft slip
+    /// a second non-zero `paidAmount` through — the debt summary
+    /// then credits both "payers" and the user sees their debt
+    /// halved.
+    ///
+    /// Inputs already passed `resolveStoredSplitMode == .settleUp`,
+    /// so they are guaranteed to encode a valid pair. The helper
+    /// re-asserts the invariant deterministically so a regression
+    /// upstream (multiple non-zero payers / receivers) gets
+    /// re-normalised rather than written through.
+    nonisolated static func normaliseSettleUp(
+        total: Double,
+        paidByMe: Double,
+        myShare: Double,
+        friends: [FriendShare]
+    ) -> SplitInfo {
+        let payerThreshold = 0.001
+
+        // Pick the payer: largest non-zero `paidAmount` wins. Ties
+        // break toward "me" because `paidByMe` is the explicit "you
+        // paid" signal from the create UI.
+        let friendPayer = friends
+            .filter { $0.paidAmount > payerThreshold }
+            .max(by: { $0.paidAmount < $1.paidAmount })
+        let mePaysWins: Bool
+        if paidByMe > payerThreshold, let f = friendPayer {
+            mePaysWins = paidByMe >= f.paidAmount
+        } else {
+            mePaysWins = paidByMe > payerThreshold
+        }
+
+        // Pick the receiver: same rule on `share`.
+        let friendReceiver = friends
+            .filter { $0.share > payerThreshold }
+            .max(by: { $0.share < $1.share })
+        let meReceives: Bool
+        if myShare > payerThreshold, let f = friendReceiver {
+            meReceives = myShare >= f.share
+        } else {
+            meReceives = myShare > payerThreshold
+        }
+
+        // Normalise: the winning payer gets the full total, the
+        // winning receiver gets the full total as their share,
+        // everyone else is zero.
+        let payerID: String = mePaysWins ? "me" : (friendPayer?.friendID ?? "me")
+        let receiverID: String = meReceives ? "me" : (friendReceiver?.friendID ?? "")
+
+        let normalisedPaidByMe: Double = (payerID == "me") ? total : 0
+        let normalisedMyShare: Double = (receiverID == "me") ? total : 0
+
+        // Build the friend list. We keep every friend that was in
+        // the original payload so participant references survive,
+        // but zero their amounts unless they're the picked payer or
+        // receiver. That way the debt graph still resolves but
+        // can't be double-counted.
+        let normalisedFriends: [FriendShare] = friends.map { friend in
+            let isPayer = !mePaysWins && friend.friendID == payerID
+            let isReceiver = !meReceives && friend.friendID == receiverID
+            return FriendShare(
+                friendID: friend.friendID,
+                share: isReceiver ? total : 0,
+                paidAmount: isPayer ? total : 0,
+                isSettled: friend.isSettled
+            )
+        }
+
+        // Lent amount on a settle-up is the full total when "me"
+        // paid (the user is fronting the receiver's share in cash)
+        // or zero otherwise.
+        let normalisedLent: Double = max(normalisedPaidByMe - normalisedMyShare, 0)
+
+        return SplitInfo(
+            totalAmount: total,
+            paidByMe: normalisedPaidByMe,
+            myShare: normalisedMyShare,
+            lentAmount: normalisedLent,
+            friends: normalisedFriends,
+            splitMode: .settleUp
+        )
+    }
+
+    /// Resolves the default split mode for a freshly created split.
+    /// `byAmount` is intentionally never returned as a default — it
+    /// requires per-participant amounts that the user can only enter
+    /// AFTER the friend picker, so the create flow always lands on
+    /// `evenly` (or `byItems` once Phase 4 lands) and lets the user
+    /// promote to `byAmount` via the share picker. Existing
+    /// `byAmount` transactions still load their saved mode through the
+    /// edit-prefill path; this helper only governs new-split defaults.
     func resolvedSplitMode() -> SplitMode {
-        // Single friend with assigned split mode → use that
-        if selectedFriends.count == 1, let mode = selectedFriends.first?.splitMode {
+        // Single friend with assigned split mode → use that, unless
+        // they had `byAmount` saved (the friend-level default also
+        // can't be byAmount — same per-participant-amount problem).
+        if selectedFriends.count == 1,
+           let mode = selectedFriends.first?.splitMode,
+           mode != .byAmount {
             return mode
         }
-        // Otherwise → last used, or fallback to 50/50
+        // Otherwise → last used, but skip byAmount for the same reason.
         if let raw = UserDefaults.standard.string(forKey: Self.lastSplitModeKey),
-           let mode = SplitMode(rawValue: raw) {
+           let mode = SplitMode(rawValue: raw),
+           mode != .byAmount {
             return mode
         }
-        return .fiftyFifty
+        return .evenly
     }
 
     /// Called after friend picker confirms selection.
@@ -411,9 +836,13 @@ class CreateTransactionViewModel: ObservableObject {
         }
     }
 
-    /// Persist the last-used split mode for future defaults.
+    /// Persist the last-used split mode for future defaults. Skips
+    /// `byAmount` — that mode requires per-participant amounts that
+    /// can't be defaulted at create-time, so it must never be the
+    /// "remembered" choice for a fresh transaction (see
+    /// `resolvedSplitMode` for the symmetric guard on the read side).
     func persistLastUsedSplitMode() {
-        guard let mode = splitMode else { return }
+        guard let mode = splitMode, mode != .byAmount else { return }
         UserDefaults.standard.set(mode.rawValue, forKey: Self.lastSplitModeKey)
     }
 
@@ -447,8 +876,16 @@ class CreateTransactionViewModel: ObservableObject {
     /// for persistence on commit, fill the amount field with their total, and
     /// — if the parser detected a known currency — switch to it (only when
     /// the user hasn't typed an amount yet, so we never overwrite manual
-    /// edits).
-    func applyReceiptItems(_ items: [ReceiptItem], total: Double, currency: String?) {
+    /// edits). When the cloud parser supplies a `suggestedCategory`, we try
+    /// to match it against the user's existing category list and pre-select
+    /// it; nothing happens if there's no match (we never invent a new one).
+    func applyReceiptItems(
+        _ items: [ReceiptItem],
+        total: Double,
+        currency: String?,
+        suggestedCategory: String? = nil,
+        availableCategories: [Category] = []
+    ) {
         pendingReceiptItems = items
         // Clamp to >= 0 — `total` may be the net of items minus discounts,
         // and a negative net is nonsensical for the amount keypad. Negative
@@ -457,15 +894,145 @@ class CreateTransactionViewModel: ObservableObject {
         if let currency, !currency.isEmpty, CurrencyInfo.byCode[currency] != nil {
             selectedCurrency = currency
         }
+        // Auto-pick a matching category if the cloud LLM suggested one.
+        // Only override when the user hasn't manually picked something —
+        // a manual pick should always win, even after a re-scan.
+        if let suggestion = suggestedCategory,
+           !suggestion.isEmpty,
+           !userHasManuallySelectedCategory,
+           let match = matchCategory(named: suggestion, in: availableCategories) {
+            selectedCategory = match
+        }
         if isSplitMode {
             updatePayerAmountsForTotal()
         }
+    }
+
+    /// Tolerant title match — exact (case-insensitive) first, then a
+    /// best-effort substring fallback so "Restaurants" still matches the
+    /// user's "Food & Restaurants" or vice versa. Returns `nil` if nothing
+    /// is a clear winner — better to leave the user's default in place than
+    /// to silently put a transaction in the wrong category.
+    private func matchCategory(named query: String, in pool: [Category]) -> Category? {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return nil }
+        if let exact = pool.first(where: { $0.title.lowercased() == q }) {
+            return exact
+        }
+        let contains = pool.filter {
+            let t = $0.title.lowercased()
+            return t.contains(q) || q.contains(t)
+        }
+        // Only return a substring match when it's unambiguous.
+        return contains.count == 1 ? contains.first : nil
     }
 
     /// Drop a previously-captured receipt — used if the user wipes the amount
     /// or scans a new image.
     func clearPendingReceiptItems() {
         pendingReceiptItems = []
+    }
+
+    // MARK: - Paid-extra placeholder (driven by WhoPaid exceed flow)
+
+    /// Suffix that marks an item auto-inserted by the WhoPaid exceed flow.
+    /// Naming markers for the auto-added overage placeholder line.
+    /// Two shapes:
+    /// - Friend exceeded → `"{name}'s extra"` (suffix-based match)
+    /// - User exceeded   → `"Extra"` (exact match — no possessive form
+    ///   reads naturally on the user's own row)
+    /// Used by `reconcilePaidExtra` to find/replace the previous
+    /// placeholder across repeated exceed-confirms instead of
+    /// stacking duplicates. Renaming an auto-added item via the items
+    /// editor "graduates" it to a normal user-owned line — subsequent
+    /// exceeds will add a fresh placeholder rather than rewrite the
+    /// renamed one.
+    static let paidExtraSuffix = "'s extra"
+    static let paidExtraSelfName = "Extra"
+
+    static func isPaidExtraItem(_ item: ReceiptItem) -> Bool {
+        item.name == paidExtraSelfName || item.name.hasSuffix(paidExtraSuffix)
+    }
+
+    /// Reconcile the placeholder so that
+    ///   Σ (items, including the placeholder) == newTotal.
+    /// Called from `WhoPaidPickerView` callbacks after the user confirms
+    /// payers (whether they exceeded the receipt total or not). The caller
+    /// picks `payerName` per its own attribution rule:
+    ///   • exceed-confirm path → the row that drove the overage (the
+    ///     picker locks every other row once the sum hits the target so
+    ///     there's a single unambiguous exceeder per edit session)
+    ///   • non-exceed path → fallback to the largest payer (re-attribution
+    ///     when payers change without re-triggering exceed)
+    /// Idempotent — the amount is recomputed from the non-placeholder items
+    /// every time, so re-confirming exceed updates the placeholder rather
+    /// than accumulating bad totals.
+    func reconcilePaidExtra(payerName: String, newTotal: Double) {
+        guard !pendingReceiptItems.isEmpty else { return }
+        let baseSum = pendingReceiptItems
+            .filter { !Self.isPaidExtraItem($0) }
+            .reduce(0) { $0 + $1.lineTotal }
+        let excess = newTotal - baseSum
+        // Tolerance matches the editor's `exactMatchEpsilon` so we don't
+        // create a "0.001 paid extra" line from float noise.
+        if excess > 0.005 {
+            upsertPaidExtraItem(payerName: payerName, amount: excess)
+        } else {
+            // newTotal landed at or below the receipt items' actual sum —
+            // any leftover placeholder from a prior exceed is now stale.
+            pendingReceiptItems.removeAll { Self.isPaidExtraItem($0) }
+        }
+    }
+
+    private func upsertPaidExtraItem(payerName: String, amount: Double) {
+        // Self ("me" payer, conventionally named "You") reads better as
+        // a bare "Extra" row — possessive "You's extra" is awkward.
+        // Friends use `{name}'s extra`.
+        let name: String
+        if payerName == "You" {
+            name = Self.paidExtraSelfName
+        } else {
+            name = "\(payerName)\(Self.paidExtraSuffix)"
+        }
+        if let idx = pendingReceiptItems.firstIndex(where: { Self.isPaidExtraItem($0) }) {
+            // In-place update — preserve persistence fields (`syncID`,
+            // `position`) so the SQLite layer treats this as an edit, not
+            // a delete-then-insert that would rotate the row id.
+            let existing = pendingReceiptItems[idx]
+            pendingReceiptItems[idx] = ReceiptItem(
+                name: name,
+                quantity: nil,
+                price: nil,
+                total: amount,
+                persistedID: existing.persistedID,
+                transactionID: existing.transactionID,
+                syncID: existing.syncID,
+                position: existing.position,
+                lastModified: Date()
+            )
+        } else {
+            pendingReceiptItems.append(
+                ReceiptItem(
+                    name: name,
+                    quantity: nil,
+                    price: nil,
+                    total: amount,
+                    position: pendingReceiptItems.count
+                )
+            )
+        }
+        // Either branch leaves the placeholder unassigned (ADD appends a
+        // fresh row, UPDATE rebuilds the row without preserving
+        // `assignedParticipantIDs`) — and on UPDATE the exceeding payer
+        // may even differ from the previous one, so the prior assignee
+        // would be wrong anyway. Drop every assignment so the create
+        // screen's orange-warning fires (`byItemsNeedsAssignments`) and
+        // re-entering the orchestrator seeds back to `.itemAssignment(0)`
+        // for a fresh walk that covers the new row alongside everything
+        // else.
+        for index in pendingReceiptItems.indices {
+            pendingReceiptItems[index].assignedParticipantIDs = []
+        }
     }
 
     /// Format a `Double` total into the keypad-friendly string the amount

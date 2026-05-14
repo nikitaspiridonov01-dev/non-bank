@@ -23,7 +23,7 @@ final class SharedTransactionLinkTests: XCTestCase {
             myShare: 50,
             lentAmount: 50,
             friends: [FriendShare(friendID: friend.id, share: 50, paidAmount: 0)],
-            splitMode: .fiftyFifty
+            splitMode: .evenly
         )
         let tx = Transaction(
             id: 1,
@@ -55,7 +55,7 @@ final class SharedTransactionLinkTests: XCTestCase {
                 FriendShare(friendID: f1.id, share: 30, paidAmount: 0),
                 FriendShare(friendID: f2.id, share: 30, paidAmount: 0)
             ],
-            splitMode: .unequalExact
+            splitMode: .byAmount
         )
         let tx = Transaction(
             id: 2,
@@ -178,7 +178,7 @@ final class SharedTransactionLinkTests: XCTestCase {
         let split = SplitInfo(
             totalAmount: 50, paidByMe: 50, myShare: 25, lentAmount: 25,
             friends: [FriendShare(friendID: "ghost-fox-Z9Z9", share: 25, paidAmount: 0)],
-            splitMode: .fiftyFifty
+            splitMode: .evenly
         )
         let tx = Transaction(
             id: 3, syncID: "tx-sync-orphan",
@@ -231,7 +231,7 @@ final class SharedTransactionLinkTests: XCTestCase {
         let payload = try SharedTransactionLink.decode(url: url)
         XCTAssertEqual(payload.f.map(\.n), ["Boris", "Cara"])
         XCTAssertEqual(payload.f.map(\.sh), [30, 30])
-        XCTAssertEqual(payload.sm, "Unequally, exact amounts")
+        XCTAssertEqual(payload.sm, "byAmount")
     }
 
     func testRoundTrip_cyrillicAndEmojiInTextFields() throws {
@@ -241,7 +241,7 @@ final class SharedTransactionLinkTests: XCTestCase {
         let split = SplitInfo(
             totalAmount: 1500, paidByMe: 1500, myShare: 750, lentAmount: 750,
             friends: [FriendShare(friendID: f.id, share: 750, paidAmount: 0)],
-            splitMode: .fiftyFifty
+            splitMode: .evenly
         )
         let tx = Transaction(
             id: 4, syncID: "tx-sync-rus",

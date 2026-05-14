@@ -6,7 +6,11 @@ import UniformTypeIdentifiers
 enum ImportState: Equatable {
     case idle
     case loading
+    /// Generic JSON file — user goes through the manual mapping wizard.
     case parsed(fields: [String], records: [[String: Any]], preview: String)
+    /// Native non-bank envelope — the wizard is skipped entirely and the
+    /// user lands straight on the review screen.
+    case parsedNative(NonBankExport)
     case error(String)
 
     static func == (lhs: ImportState, rhs: ImportState) -> Bool {
@@ -15,6 +19,10 @@ enum ImportState: Equatable {
         case (.error(let a), .error(let b)): return a == b
         case (.parsed(let f1, let r1, _), .parsed(let f2, let r2, _)):
             return f1 == f2 && r1.count == r2.count
+        case (.parsedNative(let a), .parsedNative(let b)):
+            return a.transactions.count == b.transactions.count &&
+                   a.friends.count == b.friends.count &&
+                   a.receiptItems.count == b.receiptItems.count
         default: return false
         }
     }
@@ -26,6 +34,8 @@ struct ImportTransactionsView: View {
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var currencyStore: CurrencyStore
+    @EnvironmentObject var friendStore: FriendStore
+    @EnvironmentObject var receiptItemStore: ReceiptItemStore
     @EnvironmentObject var router: NavigationRouter
 
     @Binding var isFlowActive: Bool
@@ -39,16 +49,27 @@ struct ImportTransactionsView: View {
             List {
                 // File selection
                 Section {
+                    // Explicit title/icon styling — `Label("...",
+                    // systemImage:)` inside a `Button` tints the
+                    // whole label with accent, dropping contrast on
+                    // the text against the cream row fill. Mirrors
+                    // the Settings `Currencies` / `Categories`
+                    // pattern: dark text + accent-coloured icon.
                     Button {
                         showFilePicker = true
                     } label: {
-                        Label("Import JSON File", systemImage: "doc.badge.plus")
+                        Label {
+                            Text("Choose a file").foregroundColor(AppColors.textPrimary)
+                        } icon: {
+                            Image(systemName: "doc.badge.plus").foregroundColor(.accentColor)
+                        }
                     }
                 } footer: {
-                    Text("Select a JSON file containing an array of transactions.")
+                    Text("JSON, CSV or Excel (.xlsx).")
                         .font(AppFonts.metaRegular)
                         .foregroundColor(AppColors.textSecondary)
                 }
+                .listRowBackground(AppColors.backgroundElevated)
 
                 // Status
                 switch importState {
@@ -64,9 +85,10 @@ struct ImportTransactionsView: View {
                                 .foregroundColor(AppColors.textSecondary)
                         }
                     }
+                    .listRowBackground(AppColors.backgroundElevated)
 
                 case .parsed(let fields, let records, _):
-                    Section(header: Text("File Info")) {
+                    Section(header: Text("File Info").foregroundColor(AppColors.textSecondary)) {
                         if !fileName.isEmpty {
                             HStack {
                                 Text("File")
@@ -92,13 +114,63 @@ struct ImportTransactionsView: View {
                                 .fontWeight(.medium)
                         }
                     }
+                    .listRowBackground(AppColors.backgroundElevated)
 
-                    Section(header: Text("Detected Fields")) {
+                    Section(header: Text("Detected Fields").foregroundColor(AppColors.textSecondary)) {
                         ForEach(fields, id: \.self) { field in
                             Text(field)
                                 .font(.system(size: 15, design: .monospaced))
                         }
                     }
+                    .listRowBackground(AppColors.backgroundElevated)
+
+                case .parsedNative(let envelope):
+                    Section(header: Text("File Info").foregroundColor(AppColors.textSecondary)) {
+                        if !fileName.isEmpty {
+                            HStack {
+                                Text("File")
+                                    .foregroundColor(AppColors.textSecondary)
+                                Spacer()
+                                Text(fileName)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                        }
+                        HStack {
+                            Text("Format")
+                                .foregroundColor(AppColors.textSecondary)
+                            Spacer()
+                            Label("non-bank export", systemImage: "checkmark.seal.fill")
+                                .font(AppFonts.metaRegular)
+                                .foregroundColor(.accentColor)
+                        }
+                        HStack {
+                            Text("Transactions")
+                                .foregroundColor(AppColors.textSecondary)
+                            Spacer()
+                            Text("\(envelope.transactions.count)")
+                                .fontWeight(.medium)
+                        }
+                        if !envelope.friends.isEmpty {
+                            HStack {
+                                Text("Friends")
+                                    .foregroundColor(AppColors.textSecondary)
+                                Spacer()
+                                Text("\(envelope.friends.count)")
+                                    .fontWeight(.medium)
+                            }
+                        }
+                        if !envelope.receiptItems.isEmpty {
+                            HStack {
+                                Text("Receipt items")
+                                    .foregroundColor(AppColors.textSecondary)
+                                Spacer()
+                                Text("\(envelope.receiptItems.count)")
+                                    .fontWeight(.medium)
+                            }
+                        }
+                    }
+                    .listRowBackground(AppColors.backgroundElevated)
 
                 case .error(let message):
                     Section {
@@ -112,6 +184,7 @@ struct ImportTransactionsView: View {
                         }
                         .padding(.vertical, AppSpacing.xs)
                     }
+                    .listRowBackground(AppColors.backgroundElevated)
                 }
             }
             .listStyle(.insetGrouped)
@@ -130,11 +203,48 @@ struct ImportTransactionsView: View {
                         .environmentObject(categoryStore)
                         .environmentObject(currencyStore)
                     } label: {
+                        // Same `accentBold` swap as the other wizard
+                        // CTAs — white-on-light-accent only hit ~2.6:1
+                        // in dark mode.
                         Text("Continue to Field Mapping")
                             .font(AppFonts.bodyEmphasized)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
-                            .background(Color.accentColor)
+                            .background(AppColors.accentBold)
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
+                    }
+                    .padding(.horizontal, AppSpacing.pageHorizontal)
+                    .padding(.vertical, AppSpacing.rowVertical)
+                }
+                .background(AppColors.backgroundElevated)
+            } else if case .parsedNative(let envelope) = importState {
+                VStack(spacing: 0) {
+                    Divider()
+                    NavigationLink {
+                        ImportSummaryView(
+                            source: .native(envelope: envelope),
+                            isFlowActive: $isFlowActive
+                        )
+                        .environmentObject(transactionStore)
+                        .environmentObject(categoryStore)
+                        .environmentObject(currencyStore)
+                        .environmentObject(friendStore)
+                        .environmentObject(receiptItemStore)
+                    } label: {
+                        // `accentBold` (not `Color.accentColor`) — the
+                        // lighter `Color.accentColor` only hits ~2.6:1
+                        // against white text and reads as a pale peach
+                        // chip in dark mode. `accentBold` is the
+                        // deeper variant designed for **filled** CTAs
+                        // where the label sits inside; lands ≥3:1 in
+                        // both themes. Same swap as the onboarding /
+                        // settle-up CTAs.
+                        Text("Review Import")
+                            .font(AppFonts.bodyEmphasized)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(AppColors.accentBold)
                             .foregroundColor(.white)
                             .cornerRadius(12)
                     }
@@ -151,11 +261,29 @@ struct ImportTransactionsView: View {
         .onAppear { router.hideTabBar = true }
         .fileImporter(
             isPresented: $showFilePicker,
-            allowedContentTypes: [UTType.json],
+            // Three accepted entry-points: JSON (native envelope or
+            // generic), CSV (interchange with Excel / Numbers / Sheets),
+            // and `.xlsx` (Office Open XML). The parser picks the
+            // codec based on file extension at decode time so a user
+            // who renamed a CSV to .json doesn't accidentally land
+            // in the JSON wizard.
+            allowedContentTypes: Self.allowedImportContentTypes,
             allowsMultipleSelection: false
         ) { result in
             handleFileSelection(result)
         }
+    }
+
+    /// UTTypes accepted by the file picker. `xlsx` and `csv` aren't in
+    /// the standard `UTType` constants — we resolve them by MIME / file
+    /// extension so any iOS version supports them. Wrapped in an
+    /// `if let` array build so we fall back gracefully on the rare
+    /// device where one fails to register.
+    private static var allowedImportContentTypes: [UTType] {
+        var types: [UTType] = [.json]
+        if let csv = UTType(filenameExtension: "csv") { types.append(csv) }
+        if let xlsx = UTType(filenameExtension: "xlsx") { types.append(xlsx) }
+        return types
     }
 
     // MARK: - File handling
@@ -169,10 +297,22 @@ struct ImportTransactionsView: View {
             }
             fileName = url.lastPathComponent
             importState = .loading
-            parseJSON(at: url)
+            parseFile(at: url)
 
         case .failure(let error):
             importState = .error(error.localizedDescription)
+        }
+    }
+
+    /// Format dispatcher. Sniffs the file extension and routes to the
+    /// matching codec; falls back to JSON parsing for unknown
+    /// extensions so a user who renamed `.json` to `.txt` still works.
+    private func parseFile(at url: URL) {
+        let ext = url.pathExtension.lowercased()
+        switch ext {
+        case "csv":  parseCSV(at: url)
+        case "xlsx": parseXLSX(at: url)
+        default:     parseJSON(at: url)
         }
     }
 
@@ -186,6 +326,14 @@ struct ImportTransactionsView: View {
 
         do {
             let data = try Data(contentsOf: url)
+
+            // First: try the native non-bank envelope. If the file
+            // decodes cleanly into `NonBankExport`, skip the manual
+            // wizard and jump straight to the review screen.
+            if let envelope = decodeNativeEnvelope(from: data) {
+                importState = .parsedNative(envelope)
+                return
+            }
 
             guard let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
                 importState = .error("The file must contain a JSON array of objects.\n\nExample:\n[\n  { \"title\": \"...\", \"amount\": 100 },\n  ...\n]")
@@ -227,6 +375,101 @@ struct ImportTransactionsView: View {
         } catch {
             importState = .error("Failed to parse JSON: \(error.localizedDescription)")
         }
+    }
+
+    /// CSV file → manual import flow. CSV doesn't carry split / sync
+    /// metadata, so it always goes through the field-mapping wizard
+    /// (same path as a third-party JSON file). The codec's pre-set
+    /// header gives the auto-mapping step an obvious starting point.
+    private func parseCSV(at url: URL) {
+        guard url.startAccessingSecurityScopedResource() else {
+            importState = .error("Cannot access the selected file. Please try again.")
+            return
+        }
+        defer { url.stopAccessingSecurityScopedResource() }
+        do {
+            let data = try Data(contentsOf: url)
+            guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+                importState = .error("The CSV file isn't readable as text. Try saving it as UTF-8.")
+                return
+            }
+            guard let records = CSVCodec.decode(text), !records.isEmpty else {
+                importState = .error("Couldn't parse rows from the CSV. Make sure the first line is a header.")
+                return
+            }
+            promoteRecordsForManualImport(records)
+        } catch {
+            importState = .error("Failed to read CSV: \(error.localizedDescription)")
+        }
+    }
+
+    /// `.xlsx` file → manual import flow, same as CSV. Excel-saved
+    /// files use DEFLATE-compressed ZIP entries; the codec handles
+    /// both STORE and DEFLATE so user-edited Excel exports work.
+    private func parseXLSX(at url: URL) {
+        guard url.startAccessingSecurityScopedResource() else {
+            importState = .error("Cannot access the selected file. Please try again.")
+            return
+        }
+        defer { url.stopAccessingSecurityScopedResource() }
+        do {
+            let data = try Data(contentsOf: url)
+            guard let records = XLSXCodec.decode(data), !records.isEmpty else {
+                importState = .error("Couldn't parse rows from the Excel file. Make sure the first sheet has a header row.")
+                return
+            }
+            promoteRecordsForManualImport(records)
+        } catch {
+            importState = .error("Failed to read Excel file: \(error.localizedDescription)")
+        }
+    }
+
+    /// Convert decoded CSV / XLSX rows into the wizard's existing
+    /// `(fields, records)` state and validate the same amount-column
+    /// heuristic the JSON path uses. Pulled out so both flat-table
+    /// importers stay in sync with the JSON one.
+    private func promoteRecordsForManualImport(_ records: [[String: Any]]) {
+        var fieldSet = Set<String>()
+        for record in records { fieldSet.formUnion(record.keys) }
+        let fields = fieldSet.sorted()
+
+        let hasAmountCandidate = fields.contains { jsonField in
+            let sampleSize = min(records.count, 10)
+            guard sampleSize > 0 else { return false }
+            var matches = 0
+            for i in 0..<sampleSize {
+                if let value = records[i][jsonField], ImportFieldParser.parseAmount(value) != nil {
+                    matches += 1
+                }
+            }
+            return Double(matches) / Double(sampleSize) > 0.3
+        }
+        guard hasAmountCandidate else {
+            importState = .error("None of the columns in your file can be used as a transaction amount.\n\nMake sure your file has a numeric amount column.")
+            return
+        }
+        importState = .parsed(fields: fields, records: records, preview: "")
+    }
+
+    /// Try to read the file as a native non-bank export. Returns `nil`
+    /// when the top-level isn't a `NonBankExport`-shaped object, when
+    /// `schemaVersion` doesn't match what we know how to read, or when
+    /// any required field on the transactions array fails to decode.
+    /// Falling back to `nil` is the signal for "treat this as a generic
+    /// third-party JSON file and use the manual mapping wizard."
+    private func decodeNativeEnvelope(from data: Data) -> NonBankExport? {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let envelope = try? decoder.decode(NonBankExport.self, from: data) else {
+            return nil
+        }
+        guard envelope.schemaVersion == NonBankExport.currentSchemaVersion else {
+            return nil
+        }
+        guard !envelope.transactions.isEmpty else {
+            return nil
+        }
+        return envelope
     }
 }
 
@@ -397,10 +640,11 @@ struct FieldMappingView: View {
                         .buttonStyle(.plain)
                     }
                 }
+                .listRowBackground(AppColors.backgroundElevated)
 
                 // Default currency picker (step 2 only, when no field selected)
                 if currentField == .currency && mapping[.currency] == nil {
-                    Section(header: Text("Default Currency")) {
+                    Section(header: Text("Default Currency").foregroundColor(AppColors.textSecondary)) {
                         Picker("Currency for all transactions", selection: $defaultCurrency) {
                             ForEach(currencyStore.currencyOptions, id: \.self) { code in
                                 Text("\(CurrencyInfo.byCode[code]?.emoji ?? "💱") \(code)")
@@ -409,11 +653,12 @@ struct FieldMappingView: View {
                         }
                         .pickerStyle(.menu)
                     }
+                    .listRowBackground(AppColors.backgroundElevated)
                 }
 
                 // Date format hint (step 4 only, when ambiguous dates detected)
                 if currentField == .date && needsDateFormatHint {
-                    Section(header: Text("Date Format")) {
+                    Section(header: Text("Date Format").foregroundColor(AppColors.textSecondary)) {
                         Picker("Which format does your file use?", selection: $dateFormatHint) {
                             ForEach(DateFormatHint.allCases) { hint in
                                 Text(hint.rawValue).tag(hint)
@@ -421,6 +666,7 @@ struct FieldMappingView: View {
                         }
                         .pickerStyle(.segmented)
                     }
+                    .listRowBackground(AppColors.backgroundElevated)
                 }
             }
             .listStyle(.insetGrouped)
@@ -508,21 +754,28 @@ struct FieldMappingView: View {
                 // Final step → go to summary
                 NavigationLink {
                     ImportSummaryView(
-                        jsonRecords: jsonRecords,
-                        mapping: mapping,
-                        defaultCurrency: defaultCurrency,
-                        dateFormatHint: dateFormatHint,
+                        source: .manual(
+                            records: jsonRecords,
+                            mapping: mapping,
+                            defaultCurrency: defaultCurrency,
+                            dateFormatHint: dateFormatHint
+                        ),
                         isFlowActive: $isFlowActive
                     )
                     .environmentObject(transactionStore)
                     .environmentObject(categoryStore)
                     .environmentObject(currencyStore)
                 } label: {
+                    // `accentBold` for the enabled-state fill — see
+                    // the parallel comment on the native-flow CTA
+                    // above. The disabled fill stays on
+                    // `controlDisabled` (neutral grey) since text
+                    // colour shifts to `iconInactive` in that branch.
                     Text("Review Import")
                         .font(AppFonts.bodyEmphasized)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(continueEnabled ? Color.accentColor : AppColors.controlDisabled)
+                        .background(continueEnabled ? AppColors.accentBold : AppColors.controlDisabled)
                         .foregroundColor(continueEnabled ? .white : AppColors.iconInactive)
                         .cornerRadius(12)
                 }
@@ -533,11 +786,14 @@ struct FieldMappingView: View {
                 Button {
                     withAnimation { currentStep += 1 }
                 } label: {
+                    // Same `accentBold` swap as the Review Import
+                    // CTA above — the per-step "Next" button shared
+                    // the same low-contrast peach surface.
                     Text(buttonLabel)
                         .font(AppFonts.bodyEmphasized)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(continueEnabled ? Color.accentColor : AppColors.controlDisabled)
+                        .background(continueEnabled ? AppColors.accentBold : AppColors.controlDisabled)
                         .foregroundColor(continueEnabled ? .white : AppColors.iconInactive)
                         .cornerRadius(12)
                 }
@@ -693,17 +949,28 @@ enum ImportMode: String, CaseIterable {
     case replace = "Replace all"
 }
 
+// MARK: - Import Source
+
+/// What the review screen is summarising. Manual files go through
+/// `ImportFieldParser` (one row at a time, with fallback values for
+/// unmapped fields). Native non-bank files arrive already-decoded —
+/// transactions keep their split/recurrence/`excludedFromInsights`
+/// state, and any attached friends and receipt items ride along.
+enum ImportSource {
+    case manual(records: [[String: Any]], mapping: [AppField: String], defaultCurrency: String, dateFormatHint: DateFormatHint)
+    case native(envelope: NonBankExport)
+}
+
 // MARK: - Import Summary & Execution (Phase 5)
 
 struct ImportSummaryView: View {
-    let jsonRecords: [[String: Any]]
-    let mapping: [AppField: String]
-    let defaultCurrency: String
-    let dateFormatHint: DateFormatHint
+    let source: ImportSource
 
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var currencyStore: CurrencyStore
+    @EnvironmentObject var friendStore: FriendStore
+    @EnvironmentObject var receiptItemStore: ReceiptItemStore
     @EnvironmentObject var router: NavigationRouter
 
     @Binding var isFlowActive: Bool
@@ -716,22 +983,69 @@ struct ImportSummaryView: View {
 
     // MARK: - Computed
 
+    /// Transaction count for the summary header, regardless of source.
+    private var transactionCount: Int {
+        switch source {
+        case .manual: return parsedRows.count
+        case .native(let envelope): return envelope.transactions.count
+        }
+    }
+
+    /// Categories not yet present locally that the import will create.
+    /// For manual rows we walk the parser output; for native files we
+    /// walk the decoded transactions directly (each carries its own
+    /// `category` + `emoji`, no fallback needed).
     private var newCategoriesWithEmojis: [(name: String, emoji: String)] {
         let existing = Set(categoryStore.categories.map { $0.title.lowercased() })
         var usedEmojis = Set(categoryStore.categories.map { $0.emoji })
         var seen = Set<String>()
         var result: [(name: String, emoji: String)] = []
-        for row in parsedRows {
-            let key = row.category.lowercased()
+        let pairs: [(category: String, emoji: String)] = {
+            switch source {
+            case .manual:
+                return parsedRows.map { ($0.category, $0.emoji) }
+            case .native(let envelope):
+                return envelope.transactions.map { ($0.category, $0.emoji) }
+            }
+        }()
+        for pair in pairs {
+            let key = pair.category.lowercased()
             if !existing.contains(key) && !seen.contains(key) {
                 seen.insert(key)
-                // Always assign a guaranteed-unique emoji
-                let emoji = uniqueEmoji(preferring: row.emoji, excluding: usedEmojis)
+                let emoji = uniqueEmoji(preferring: pair.emoji, excluding: usedEmojis)
                 usedEmojis.insert(emoji)
-                result.append((name: row.category, emoji: emoji))
+                result.append((name: pair.category, emoji: emoji))
             }
         }
         return result
+    }
+
+    /// Friends in the import that aren't in the local store yet (will
+    /// be inserted) — only relevant for native files.
+    private var newFriendsCount: Int {
+        guard case .native(let envelope) = source else { return 0 }
+        let existing = Set(friendStore.friends.map { $0.id })
+        return envelope.friends.filter { !existing.contains($0.id) }.count
+    }
+
+    /// Friends in the import that match a local record (will be
+    /// upserted if their `lastModified` is newer).
+    private var updatedFriendsCount: Int {
+        guard case .native(let envelope) = source else { return 0 }
+        let existingByID = Dictionary(
+            uniqueKeysWithValues: friendStore.friends.map { ($0.id, $0) }
+        )
+        return envelope.friends.filter { incoming in
+            guard let local = existingByID[incoming.id] else { return false }
+            return incoming.lastModified > local.lastModified
+        }.count
+    }
+
+    private var receiptItemsCount: Int {
+        if case .native(let envelope) = source {
+            return envelope.receiptItems.count
+        }
+        return 0
     }
 
     private var warnings: [String] {
@@ -761,7 +1075,7 @@ struct ImportSummaryView: View {
                         Text("Transactions to import")
                             .foregroundColor(AppColors.textSecondary)
                         Spacer()
-                        Text("\(parsedRows.count)")
+                        Text("\(transactionCount)")
                             .fontWeight(.medium)
                             .foregroundColor(AppColors.textPrimary)
                     }
@@ -772,6 +1086,39 @@ struct ImportSummaryView: View {
                                 .foregroundColor(AppColors.textSecondary)
                             Spacer()
                             Text("\(newCategoriesWithEmojis.count)")
+                                .fontWeight(.medium)
+                                .foregroundColor(AppColors.textPrimary)
+                        }
+                        .listRowBackground(AppColors.backgroundElevated)
+                    }
+                    if newFriendsCount > 0 {
+                        HStack {
+                            Text("New friends")
+                                .foregroundColor(AppColors.textSecondary)
+                            Spacer()
+                            Text("\(newFriendsCount)")
+                                .fontWeight(.medium)
+                                .foregroundColor(AppColors.textPrimary)
+                        }
+                        .listRowBackground(AppColors.backgroundElevated)
+                    }
+                    if updatedFriendsCount > 0 {
+                        HStack {
+                            Text("Friends to update")
+                                .foregroundColor(AppColors.textSecondary)
+                            Spacer()
+                            Text("\(updatedFriendsCount)")
+                                .fontWeight(.medium)
+                                .foregroundColor(AppColors.textPrimary)
+                        }
+                        .listRowBackground(AppColors.backgroundElevated)
+                    }
+                    if receiptItemsCount > 0 {
+                        HStack {
+                            Text("Receipt items")
+                                .foregroundColor(AppColors.textSecondary)
+                            Spacer()
+                            Text("\(receiptItemsCount)")
                                 .fontWeight(.medium)
                                 .foregroundColor(AppColors.textPrimary)
                         }
@@ -808,7 +1155,7 @@ struct ImportSummaryView: View {
                 }
 
                 // Import mode
-                if !parsedRows.isEmpty {
+                if transactionCount > 0 {
                     Section(header: Text("Import Mode").foregroundColor(AppColors.textSecondary)) {
                         Picker("Mode", selection: $importMode) {
                             ForEach(ImportMode.allCases, id: \.self) { mode in
@@ -818,16 +1165,22 @@ struct ImportSummaryView: View {
                         .pickerStyle(.segmented)
                         .listRowBackground(AppColors.backgroundElevated)
                         if importMode == .replace {
-                            Text("All existing transactions will be deleted before import.")
+                            // Was `AppColors.warning` (system orange) —
+                            // poor contrast on cream and on the
+                            // accent-tinted segmented control above.
+                            // Dark text reads cleanly; the destructive
+                            // semantic is already telegraphed by the
+                            // selected segment label ("Replace all").
+                            Text("All existing transactions will be deleted before import. Local friends are kept.")
                                 .font(AppFonts.metaRegular)
-                                .foregroundColor(AppColors.warning)
+                                .foregroundColor(AppColors.textPrimary)
                                 .listRowBackground(AppColors.backgroundElevated)
                         }
                     }
                 }
 
                 // Import button or empty message
-                if parsedRows.isEmpty {
+                if transactionCount == 0 {
                     Section {
                         Text("No valid transactions found.")
                             .font(AppFonts.emojiSmall)
@@ -850,7 +1203,7 @@ struct ImportSummaryView: View {
                                         .font(AppFonts.bodyEmphasized)
                                         .foregroundColor(AppColors.accentBold)
                                 } else {
-                                    Label("Import \(parsedRows.count) Transactions", systemImage: "square.and.arrow.down")
+                                    Label("Import \(transactionCount) Transactions", systemImage: "square.and.arrow.down")
                                         .font(AppFonts.bodyEmphasized)
                                         .foregroundColor(AppColors.accentBold)
                                 }
@@ -878,15 +1231,23 @@ struct ImportSummaryView: View {
     // MARK: - Parse
 
     private func runParse() {
-        let result = ImportFieldParser.parseAll(
-            records: jsonRecords,
-            mapping: mapping,
-            defaultCurrency: defaultCurrency,
-            dateHint: dateFormatHint,
-            existingCategories: categoryStore.categories
-        )
-        parsedRows = result.rows
-        failedCount = result.failedCount
+        switch source {
+        case .manual(let records, let mapping, let defaultCurrency, let dateFormatHint):
+            let result = ImportFieldParser.parseAll(
+                records: records,
+                mapping: mapping,
+                defaultCurrency: defaultCurrency,
+                dateHint: dateFormatHint,
+                existingCategories: categoryStore.categories
+            )
+            parsedRows = result.rows
+            failedCount = result.failedCount
+        case .native:
+            // No parsing needed — `Transaction.Codable` already gave us
+            // typed values when we decoded the envelope.
+            parsedRows = []
+            failedCount = 0
+        }
         didParse = true
     }
 
@@ -895,18 +1256,50 @@ struct ImportSummaryView: View {
     private func executeImport() {
         isImporting = true
 
-        // 0. Replace all existing transactions if overwrite mode
-        if importMode == .replace {
-            transactionStore.deleteAll()
-        }
-
-        // 1. Create new categories (using pre-computed unique emojis)
+        // 1. Create new categories (using pre-computed unique emojis).
+        //    These don't race with transaction inserts and are quick
+        //    enough to fire synchronously.
         for item in newCategoriesWithEmojis {
             let newCat = Category(emoji: item.emoji, title: item.name)
             categoryStore.addCategory(newCat)
         }
 
-        // 2. Batch-add all transactions (single DB write + single reload)
+        // 2. Sequence the wipe (replace mode) and the batch insert
+        //    inside a single Task so we can `await` each step. The
+        //    previous shape fired `transactionStore.deleteAll()` and
+        //    `transactionStore.addBatch(...)` as parallel
+        //    fire-and-forget Tasks, which raced on the SQLite queue —
+        //    a late-finishing delete (slow because it pre-fetches
+        //    every transaction's receipt items) could eat the
+        //    freshly-inserted rows and the user would land on Home
+        //    with 0 transactions despite the review showing "ready
+        //    to import: 20". `showImportComplete` only fires after
+        //    every row is persisted so the success screen reflects
+        //    the actual DB state.
+        Task {
+            if importMode == .replace {
+                await transactionStore.deleteAllAndWait()
+            }
+            switch source {
+            case .manual:
+                await executeManualImport()
+                await MainActor.run {
+                    isImporting = false
+                    router.showImportComplete(count: parsedRows.count)
+                }
+            case .native(let envelope):
+                await executeNativeImport(envelope: envelope)
+                // executeNativeImport handles its own isImporting /
+                // showImportComplete on the MainActor at the end.
+            }
+        }
+    }
+
+    private func executeManualImport() async {
+        // Manual flow imports only the fields the user explicitly
+        // mapped in the wizard. Split / recurrence / parent-reminder
+        // links are deliberately omitted — those ride the native
+        // envelope path only.
         let transactions = parsedRows.map { row in
             Transaction(
                 id: 0,
@@ -918,16 +1311,79 @@ struct ImportSummaryView: View {
                 currency: row.currency,
                 date: row.date,
                 type: row.type,
-                tags: nil,
-                repeatInterval: row.repeatInterval,
-                parentReminderID: row.parentReminderID,
-                splitInfo: row.splitInfo
+                tags: nil
             )
         }
-        transactionStore.addBatch(transactions)
+        // We use `addBatchAndReturnSyncIDMap` (and discard the map)
+        // rather than the fire-and-forget `addBatch` so the import
+        // pipeline can await persistence. The single-tx `addBatch`
+        // wrapper still exists for non-import callers that don't
+        // care to wait.
+        _ = await transactionStore.addBatchAndReturnSyncIDMap(transactions)
+    }
 
-        isImporting = false
-        router.showImportComplete(count: parsedRows.count)
+    private func executeNativeImport(envelope: NonBankExport) async {
+        // Upsert friends. New ones are inserted; existing ones are
+        // updated only when the incoming `lastModified` is newer (so a
+        // freshly-renamed contact on this device doesn't get
+        // overwritten by a stale export from another device).
+        let existingByID = Dictionary(
+            uniqueKeysWithValues: friendStore.friends.map { ($0.id, $0) }
+        )
+        for friend in envelope.friends {
+            if let local = existingByID[friend.id] {
+                if friend.lastModified > local.lastModified {
+                    friendStore.update(friend)
+                }
+            } else {
+                await friendStore.add(friend)
+            }
+        }
+
+        // Re-stamp every transaction with a fresh local `id` (the
+        // exported value is the source device's autoincrement — useless
+        // here) but keep its `syncID` so we can wire receipt items up
+        // after the insert.
+        let toInsert = envelope.transactions.map { tx in
+            Transaction(
+                id: 0,
+                syncID: tx.syncID,
+                emoji: tx.emoji,
+                category: tx.category,
+                title: tx.title,
+                description: tx.description,
+                amount: tx.amount,
+                currency: tx.currency,
+                date: tx.date,
+                type: tx.type,
+                tags: tx.tags,
+                lastModified: tx.lastModified,
+                repeatInterval: tx.repeatInterval,
+                parentReminderID: tx.parentReminderID,
+                splitInfo: tx.splitInfo,
+                payloadChecksum: tx.payloadChecksum,
+                excludedFromInsights: tx.excludedFromInsights
+            )
+        }
+        let syncIDToNewID = await transactionStore.addBatchAndReturnSyncIDMap(toInsert)
+
+        // Group receipt items by their parent transaction's syncID,
+        // then save each group with the new local transaction id.
+        let itemsByTxSyncID = Dictionary(grouping: envelope.receiptItems) {
+            $0.transactionSyncID
+        }
+        for (txSyncID, exportedItems) in itemsByTxSyncID {
+            guard let newTxID = syncIDToNewID[txSyncID] else { continue }
+            let items = exportedItems
+                .sorted { $0.position < $1.position }
+                .map { $0.toReceiptItem() }
+            await receiptItemStore.saveItems(items, for: newTxID)
+        }
+
+        await MainActor.run {
+            isImporting = false
+            router.showImportComplete(count: envelope.transactions.count)
+        }
     }
 
     /// Returns a unique emoji: uses `preferred` if it's not taken, otherwise picks from a large curated pool.
@@ -1001,18 +1457,20 @@ struct ValidExamplesSheet: View {
                                         .font(.system(size: 15, design: .monospaced))
                                 }
                             }
+                            .listRowBackground(AppColors.backgroundElevated)
                         }
                         .listStyle(.insetGrouped)
                         .scrollContentBackground(.hidden)
                     }
                 } else {
                     List {
-                        Section(header: Text("Supported Formats")) {
+                        Section(header: Text("Supported Formats").foregroundColor(AppColors.textSecondary)) {
                             ForEach(examples(for: field), id: \.self) { example in
                                 Text(example)
                                     .font(.system(size: 15, design: .monospaced))
                             }
                         }
+                        .listRowBackground(AppColors.backgroundElevated)
                     }
                     .listStyle(.insetGrouped)
                     .scrollContentBackground(.hidden)
@@ -1131,11 +1589,14 @@ struct ImportSuccessScreen: View {
                 Button {
                     onDone()
                 } label: {
+                    // Same `accentBold` swap as the wizard CTAs —
+                    // the success-screen Done button shares the same
+                    // white-on-warm fill pattern.
                     Text("Done")
                         .font(AppFonts.bodyEmphasized)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(Color.accentColor)
+                        .background(AppColors.accentBold)
                         .foregroundColor(.white)
                         .cornerRadius(12)
                 }

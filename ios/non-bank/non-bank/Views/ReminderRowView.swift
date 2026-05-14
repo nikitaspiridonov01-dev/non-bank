@@ -3,13 +3,40 @@ import SwiftUI
 struct ReminderRowView: View {
     let transaction: Transaction
     let emoji: String
-    let nextDateLabel: String
     let isLast: Bool
     var onTap: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
 
+    /// Observed so split reminder rows redraw when the user toggles the
+    /// global insights mode. Reminders themselves don't contribute to
+    /// analytics aggregates, but the display rule for "what number to
+    /// show in the row" is the same as for past transactions.
+    @ObservedObject private var insightsSettings = InsightsSettings.shared
+
+    /// Used to commit the per-tx insights flag flip triggered by the
+    /// leading swipe. Mirrors `TransactionRowView`'s injection — keeps
+    /// the action local to the row so parents don't need to thread a
+    /// new callback through.
+    @EnvironmentObject private var transactionStore: TransactionStore
+
+    private var displayAmount: Double {
+        transaction.displayPrimaryAmount(includePotentialExpenses: insightsSettings.includePotentialExpenses)
+    }
+
+    private var leadingSwipeAction: SwipeRowLeadingAction {
+        let isExcluded = transaction.excludedFromInsights
+        return SwipeRowLeadingAction(
+            iconSystemName: isExcluded ? "chart.bar.xaxis" : "eye.slash",
+            tint: UIColor(AppColors.splitAccent),
+            onTap: {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                transactionStore.update(transaction.settingExcludedFromInsights(!isExcluded))
+            }
+        )
+    }
+
     var body: some View {
-        SwipeToDeleteRow(onDelete: { onDelete?() }) {
+        SwipeToDeleteRow(onDelete: { onDelete?() }, leadingAction: leadingSwipeAction) {
             VStack(spacing: 0) {
                 HStack(alignment: .center, spacing: 14) {
                     Text(emoji)
@@ -23,10 +50,13 @@ struct ReminderRowView: View {
                             .lineLimit(1)
                             .truncationMode(.tail)
 
-                        Text(nextDateLabel)
-                            .font(AppFonts.rowDescription)
-                            .foregroundColor(AppColors.textSecondary)
-                            .lineLimit(1)
+                        if let desc = transaction.description, !desc.isEmpty {
+                            Text(desc)
+                                .font(AppFonts.rowDescription)
+                                .foregroundColor(AppColors.textSecondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
 
                         HStack(spacing: 6) {
                             if transaction.isSplit {
@@ -47,24 +77,12 @@ struct ReminderRowView: View {
 
                     Spacer(minLength: 8)
 
-                    HStack(alignment: .firstTextBaseline, spacing: 0) {
-                        Text(transaction.isIncome ? "+" : "-")
-                            .font(AppFonts.rowAmountSign)
-                            .foregroundColor(AppColors.textSecondary)
-                        Text(NumberFormatting.integerPart(transaction.amount))
-                            .font(AppFonts.rowAmountInteger)
-                            .foregroundColor(AppColors.textPrimary)
-                        Text(NumberFormatting.decimalPartIfAny(transaction.amount))
-                            .font(AppFonts.rowAmountCurrency)
-                            .foregroundColor(AppColors.textSecondary)
-                        Text(transaction.currency)
-                            .font(AppFonts.rowAmountCurrency)
-                            .foregroundColor(AppColors.textSecondary)
-                            .padding(.leading, 3)
-                    }
-                    .lineLimit(1)
+                    AmountView(
+                        amount: displayAmount,
+                        isIncome: transaction.isIncome,
+                        currency: transaction.currency
+                    )
                     .layoutPriority(1)
-                    .fixedSize(horizontal: true, vertical: false)
                 }
                 .padding(.vertical, AppSizes.reminderRowVerticalPadding)
                 .padding(.horizontal, AppSpacing.pageHorizontal)

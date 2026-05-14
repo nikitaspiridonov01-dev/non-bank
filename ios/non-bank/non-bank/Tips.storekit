@@ -1,0 +1,80 @@
+{
+  "identifier" : "8B3E1F2A-4D6C-4B0A-9C2D-7E5F6A8B9C0D",
+  "nonRenewingSubscriptions" : [],
+  "products" : [
+    {
+      "displayPrice" : "0.99",
+      "familyShareable" : false,
+      "internalID" : "1001",
+      "localizations" : [
+        {
+          "description" : "A coffee for the dev",
+          "displayName" : "Coffee",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.nonbank.tip.coffee",
+      "referenceName" : "Tip Coffee",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "2.99",
+      "familyShareable" : false,
+      "internalID" : "1002",
+      "localizations" : [
+        {
+          "description" : "Croissant and a flat white",
+          "displayName" : "Croissant",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.nonbank.tip.croissant",
+      "referenceName" : "Tip Croissant",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : false,
+      "internalID" : "1003",
+      "localizations" : [
+        {
+          "description" : "A pizza for the team",
+          "displayName" : "Pizza",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.nonbank.tip.pizza",
+      "referenceName" : "Tip Pizza",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "9.99",
+      "familyShareable" : false,
+      "internalID" : "1004",
+      "localizations" : [
+        {
+          "description" : "Chef's table — fuel for a whole sprint",
+          "displayName" : "Chef's table",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.nonbank.tip.chefstable",
+      "referenceName" : "Tip Chef's Table",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "",
+    "_developerTeamID" : "",
+    "_failTransactionsEnabled" : false,
+    "_lastSynchronizedDate" : 0,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : []
+  },
+  "subscriptionGroups" : [],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

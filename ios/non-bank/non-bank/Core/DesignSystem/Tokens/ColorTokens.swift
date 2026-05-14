@@ -116,17 +116,39 @@ enum AppColors {
         )
     }
 
-    // Text intended to be placed on top of the accent gradient / filled buttons
-    static var textOnAccent: Color { Color.white }
+    // Text intended to be placed on top of the accent gradient / filled buttons.
+    // Dynamic because accent fills flip intensity per theme: deep saturated
+    // tones in light mode (need white) vs. brightened pastels in dark mode
+    // (need a dark ink). Plain `Color.white` rendered as low-contrast on the
+    // dark-mode accent — e.g. the lavender `splitAccent` pill faded out.
+    static var textOnAccent: Color {
+        dynamic(
+            UIColor.white,
+            UIColor(red: 0.10, green: 0.08, blue: 0.10, alpha: 1.0)
+        )
+    }
 
     // MARK: - Balance
-    // Sign and decimal stay subtle gray; currency code is metadata
-    // (no longer call-to-action) so it picks up `secondaryLabel`.
+    // Sign and decimal stay subtle, but warm — earlier `UIColor.systemGray`
+    // / `systemGray2` in light mode pulled in iOS's cool blue-grey
+    // (~#8E8E93 / #AEAEB2) which clashed with the warm cream page and
+    // made the leading `+` / `.44` decimal stand out as alien against
+    // the warm-near-black integer digits. Warm RGB tuned to match the
+    // `textTertiary` / `textQuaternary` rungs of the warm scale so the
+    // whole balance display sits inside one coherent warm hierarchy.
+    // Dark stays on the hand-tuned RGB it had — already correct against
+    // the dark surfaces.
     static var balanceSign: Color {
-        dynamic(UIColor.systemGray, UIColor(red: 0.49, green: 0.53, blue: 0.56, alpha: 1.0))
+        dynamic(
+            UIColor(red: 0.50, green: 0.43, blue: 0.36, alpha: 1.0),  // ~#806D5C warm medium grey (matches `textTertiary`)
+            UIColor(red: 0.49, green: 0.53, blue: 0.56, alpha: 1.0)
+        )
     }
     static var balanceDecimal: Color {
-        dynamic(UIColor.systemGray2, UIColor(red: 0.64, green: 0.66, blue: 0.71, alpha: 1.0))
+        dynamic(
+            UIColor(red: 0.62, green: 0.55, blue: 0.48, alpha: 1.0),  // ~#9E8C7B warm light grey (matches `textQuaternary`)
+            UIColor(red: 0.64, green: 0.66, blue: 0.71, alpha: 1.0)
+        )
     }
     /// Currency code chip next to balance digits ("USD"). Picks up
     /// the warm primary `accent` so the chip telegraphs "interactive"
@@ -241,6 +263,16 @@ enum AppColors {
             UIColor(red: 110/255, green: 70/255, blue: 180/255, alpha: 1.0),   // ~#6E46B4 deeper violet
             UIColor(red: 200/255, green: 175/255, blue: 225/255, alpha: 1.0)   // brighter for dark
         )
+    }
+
+    /// Saturated violet that does **not** shift in dark mode. Used
+    /// for solid-fill CTAs (e.g. the friend-detail Settle Up button)
+    /// where the dark-mode `splitAccent` becomes too pale to host
+    /// white foreground text at a readable contrast ratio. Same
+    /// `#6E46B4` as the light-mode `splitAccent` — pairs cleanly
+    /// with `.white` text in both themes (~5:1 WCAG AA).
+    static var splitAccentBold: Color {
+        Color(red: 110/255, green: 70/255, blue: 180/255)
     }
 
     /// Reminder card background — warm cream in light, warm near-black in dark.

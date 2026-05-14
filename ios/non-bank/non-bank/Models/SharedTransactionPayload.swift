@@ -95,6 +95,14 @@ struct SharedTransactionPayload: Codable, Equatable {
     /// names in the same sequence.
     let f: [Participant]
 
+    /// Recurring rule, when the shared transaction is a recurring
+    /// reminder. Optional — non-recurring transactions omit it. New
+    /// in v1.1 (additive — existing v1 decoders ignore unknown keys
+    /// per Swift Codable defaults, so this stays backwards compatible).
+    /// The receiver applies it to `Transaction.repeatInterval` so the
+    /// imported reminder behaves the same as a locally-created one.
+    let r: SharedRecurring?
+
     struct Participant: Codable, Equatable {
         /// Sharer's stable ID for this friend (`FriendIDGenerator` format,
         /// e.g. `"amber-lynx-7K2D"`). Receivers may match against their
@@ -109,6 +117,127 @@ struct SharedTransactionPayload: Codable, Equatable {
         /// (`FriendShare.paidAmount`). Usually 0 — the sharer often pays
         /// for everyone.
         let pa: Double
+    }
+
+    // Custom memberwise init — Swift's synthesized one doesn't support
+    // default values, so once `r` was added every existing call site
+    // (encoder + tests) would need updating. Defaulting `r` to nil
+    // here keeps non-recurring callers building without changes; the
+    // encoder explicitly passes its computed value.
+    init(
+        v: Int,
+        id: String,
+        s: String,
+        ta: Double,
+        pa: Double,
+        ms: Double,
+        c: String,
+        d: TimeInterval,
+        k: String,
+        t: String,
+        cn: String,
+        ce: String,
+        sm: String?,
+        sn: String?,
+        f: [Participant],
+        r: SharedRecurring? = nil
+    ) {
+        self.v = v
+        self.id = id
+        self.s = s
+        self.ta = ta
+        self.pa = pa
+        self.ms = ms
+        self.c = c
+        self.d = d
+        self.k = k
+        self.t = t
+        self.cn = cn
+        self.ce = ce
+        self.sm = sm
+        self.sn = sn
+        self.f = f
+        self.r = r
+    }
+}
+
+// MARK: - Recurring rule (compact wire format)
+
+/// Compact, share-link-friendly representation of `RepeatInterval`. We
+/// don't reuse the iOS enum directly because Swift's Codable
+/// synthesises tagged-union JSON that's verbose (`{"daily":{...}}`); a
+/// flat struct with short keys keeps the URL tighter.
+///
+/// Wire shape (only the fields relevant to the kind are emitted):
+///   daily   → `{"k":"d","h":9,"mn":0}`
+///   weekly  → `{"k":"w","h":9,"mn":0,"dw":[2,5]}`
+///   monthly → `{"k":"m","h":9,"mn":0,"dm":[1,15]}`
+///   yearly  → `{"k":"y","h":9,"mn":0,"mo":3,"dy":15}`
+struct SharedRecurring: Codable, Equatable {
+    /// Kind: `"d"` daily, `"w"` weekly, `"m"` monthly, `"y"` yearly.
+    let k: String
+    /// Hour of day (0–23).
+    let h: Int
+    /// Minute of hour (0–59). Named `mn` (not `m`) so it can't be
+    /// confused with `"m"` (monthly) on the kind axis.
+    let mn: Int
+    /// Days of week (1=Sunday … 7=Saturday). Only set when `k == "w"`.
+    let dw: [Int]?
+    /// Days of month (1–31). Only set when `k == "m"`.
+    let dm: [Int]?
+    /// Month of year (1=Jan … 12=Dec). Only set when `k == "y"`.
+    let mo: Int?
+    /// Day of month (1–31). Only set when `k == "y"`.
+    let dy: Int?
+
+    // MARK: Conversion
+
+    /// Build the wire format from a `RepeatInterval`. One direction —
+    /// the encoder (sharer side) calls this; the receiver decodes via
+    /// the reverse helper below.
+    init?(from interval: RepeatInterval) {
+        switch interval {
+        case .daily(let hour, let minute):
+            self.k = "d"; self.h = hour; self.mn = minute
+            self.dw = nil; self.dm = nil; self.mo = nil; self.dy = nil
+        case .weekly(let hour, let minute, let days):
+            self.k = "w"; self.h = hour; self.mn = minute
+            self.dw = days.map(\.rawValue)
+            self.dm = nil; self.mo = nil; self.dy = nil
+        case .monthly(let hour, let minute, let days):
+            self.k = "m"; self.h = hour; self.mn = minute
+            self.dm = days
+            self.dw = nil; self.mo = nil; self.dy = nil
+        case .yearly(let hour, let minute, let month, let day):
+            self.k = "y"; self.h = hour; self.mn = minute
+            self.mo = month.rawValue; self.dy = day
+            self.dw = nil; self.dm = nil
+        }
+    }
+
+    /// Decode back into a `RepeatInterval`. Returns nil for an
+    /// unknown kind so a v1.2 sharer that emits a new kind doesn't
+    /// crash an older receiver — they get the transaction without
+    /// the recurring flag, same as a non-recurring share.
+    func toRepeatInterval() -> RepeatInterval? {
+        switch k {
+        case "d":
+            return .daily(hour: h, minute: mn)
+        case "w":
+            let days = (dw ?? []).compactMap { DayOfWeek(rawValue: $0) }
+            guard !days.isEmpty else { return nil }
+            return .weekly(hour: h, minute: mn, daysOfWeek: days)
+        case "m":
+            let days = dm ?? []
+            guard !days.isEmpty else { return nil }
+            return .monthly(hour: h, minute: mn, daysOfMonth: days)
+        case "y":
+            guard let moRaw = mo, let month = MonthOfYear(rawValue: moRaw),
+                  let day = dy else { return nil }
+            return .yearly(hour: h, minute: mn, month: month, dayOfMonth: day)
+        default:
+            return nil
+        }
     }
 }
 

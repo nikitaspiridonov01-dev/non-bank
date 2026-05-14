@@ -57,6 +57,72 @@ final class ImportFieldParserTests: XCTestCase {
         XCTAssertEqual(ImportFieldParser.parseAmount("1,000"), 1000)
     }
 
+    // MARK: - Round R-1: messy clipboard pastes
+    //
+    // Same parser backs both file imports and the create-transaction
+    // screen's clipboard paste. These cases exercise the formats that
+    // real users hit — currency symbols/codes, accounting parens,
+    // no-break spaces from European bank statements, single-dot
+    // thousands ("1.500" → 1500). The whole set was empirically
+    // exercised against an audit script (38 cases) before the test
+    // file landed.
+
+    func testParseAmount_currencySymbolStripped() {
+        XCTAssertEqual(ImportFieldParser.parseAmount("$100"), 100)
+        XCTAssertEqual(ImportFieldParser.parseAmount("€1.234,56"), 1234.56)
+        XCTAssertEqual(ImportFieldParser.parseAmount("₽999"), 999)
+    }
+
+    func testParseAmount_isoCodeStripped() {
+        // ISO codes anywhere on the line drop out — they're just
+        // letters once the allowlist filter runs.
+        XCTAssertEqual(ImportFieldParser.parseAmount("100 USD"), 100)
+        XCTAssertEqual(ImportFieldParser.parseAmount("RUB 1 234,56"), 1234.56)
+        XCTAssertEqual(ImportFieldParser.parseAmount("-USD 1,234.50"), -1234.50)
+    }
+
+    func testParseAmount_accountingParens_negative() {
+        XCTAssertEqual(ImportFieldParser.parseAmount("(100.50)"), -100.50)
+        XCTAssertEqual(ImportFieldParser.parseAmount("(1.234,56)"), -1234.56)
+    }
+
+    func testParseAmount_noBreakSpaceThousands() {
+        // Non-breaking space (`\u{00A0}`) and narrow no-break space
+        // (`\u{202F}`) — common in European bank statements + macOS
+        // pasteboard rendering of grouping separators.
+        XCTAssertEqual(
+            ImportFieldParser.parseAmount("1\u{00A0}000,50"),
+            1000.50
+        )
+        XCTAssertEqual(
+            ImportFieldParser.parseAmount("1\u{202F}234,56"),
+            1234.56
+        )
+    }
+
+    func testParseAmount_singleDotThousands() {
+        // "1.500" → 1500 (single dot followed by ≥3 digits == thousands).
+        // Matches the comma-only disambiguation already in place; without
+        // it a European amount like "1.500" lossily collapsed to 1.5.
+        XCTAssertEqual(ImportFieldParser.parseAmount("1.500"), 1500)
+        XCTAssertEqual(ImportFieldParser.parseAmount("1.234.567"), 1234567)
+    }
+
+    func testParseAmount_singleDotDecimal_stillWorks() {
+        // Guard against the disambiguation breaking the standard
+        // case — "1.5" / "99.50" must stay decimal.
+        XCTAssertEqual(ImportFieldParser.parseAmount("1.5"), 1.5)
+        XCTAssertEqual(ImportFieldParser.parseAmount("99.50"), 99.50)
+        XCTAssertEqual(ImportFieldParser.parseAmount("0.5"), 0.5)
+    }
+
+    func testParseAmount_garbageReturnsNil() {
+        XCTAssertNil(ImportFieldParser.parseAmount("abc"))
+        XCTAssertNil(ImportFieldParser.parseAmount("USD"))
+        XCTAssertNil(ImportFieldParser.parseAmount("---"))
+        XCTAssertNil(ImportFieldParser.parseAmount("   "))
+    }
+
     // MARK: - parseCurrency
 
     func testParseCurrency_valid() {

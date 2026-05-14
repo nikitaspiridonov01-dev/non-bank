@@ -16,27 +16,47 @@ final class NavigationRouter: ObservableObject {
 
     @Published var showTransactionEditor: Bool = false
     @Published private(set) var editingTransaction: Transaction? = nil
-    /// Optional starting tab for the create flow — `nil` falls back to the
-    /// modal's default (.expense). Used by empty-state CTAs that want to
-    /// drop the user straight into the Split tab.
-    @Published private(set) var initialCreateTab: TransactionTab? = nil
-    /// Friend IDs to pre-select as split participants when opening in
-    /// `.split` mode. Empty when the empty-state CTA isn't friend-scoped.
+    /// When true, the create modal auto-opens the split orchestrator
+    /// after appearing. Used by friend-scoped CTAs ("Add split with
+    /// X") so the user lands directly inside the split flow without
+    /// having to find the chip on the modal. Defaults to `false`.
+    @Published private(set) var autoOpenSplitFlow: Bool = false
+    /// When true, the create modal pops the receipt source picker
+    /// (Camera / Photo Library) as soon as the modal finishes its
+    /// appear animation. Used by the Home / Debts toolbar scan
+    /// buttons so a tap takes the user straight to capturing.
+    @Published private(set) var autoOpenScanFlow: Bool = false
+    /// When true, the create modal pre-arms `byItems` split mode —
+    /// participants from `prefilledFriendIDs` (plus the user) get
+    /// selected and the orchestrator opens at the item-assignment
+    /// step after the scan finishes. Used by the Debts / Friend
+    /// scan-receipt buttons. Defaults to `false`.
+    @Published private(set) var autoSplitByItems: Bool = false
+    /// Friend IDs to pre-select as split participants when
+    /// `autoOpenSplitFlow` or `autoSplitByItems` is true. Empty when
+    /// the CTA isn't friend-scoped (e.g. a generic "+ Add split"
+    /// empty-state, or the Debts toolbar scan).
     @Published private(set) var prefilledFriendIDs: [String] = []
 
     func showCreateTransaction(
-        initialTab: TransactionTab? = nil,
+        autoOpenSplitFlow: Bool = false,
+        autoOpenScanFlow: Bool = false,
+        autoSplitByItems: Bool = false,
         prefilledFriendIDs: [String] = []
     ) {
         editingTransaction = nil
-        self.initialCreateTab = initialTab
+        self.autoOpenSplitFlow = autoOpenSplitFlow
+        self.autoOpenScanFlow = autoOpenScanFlow
+        self.autoSplitByItems = autoSplitByItems
         self.prefilledFriendIDs = prefilledFriendIDs
         showTransactionEditor = true
     }
 
     func showEditTransaction(_ transaction: Transaction) {
         editingTransaction = transaction
-        initialCreateTab = nil
+        autoOpenSplitFlow = false
+        autoOpenScanFlow = false
+        autoSplitByItems = false
         prefilledFriendIDs = []
         showTransactionEditor = true
     }
@@ -44,7 +64,9 @@ final class NavigationRouter: ObservableObject {
     func dismissTransactionEditor() {
         showTransactionEditor = false
         editingTransaction = nil
-        initialCreateTab = nil
+        autoOpenSplitFlow = false
+        autoOpenScanFlow = false
+        autoSplitByItems = false
         prefilledFriendIDs = []
     }
 
@@ -56,5 +78,22 @@ final class NavigationRouter: ObservableObject {
     func showImportComplete(count: Int) {
         importedCount = count
         showImportSuccess = true
+    }
+
+    // MARK: - Split share prompt
+
+    /// `syncID` of a freshly-created split transaction that the user
+    /// hasn't been prompted to share yet. Set when `CreateTransactionModal`
+    /// saves a new split row; observed by `MainTabView` to present
+    /// `ShareSplitPromptSheet`. Cleared when the user dismisses the
+    /// prompt or shares.
+    @Published var pendingSplitShareSyncID: String? = nil
+
+    func promptSplitShare(syncID: String) {
+        pendingSplitShareSyncID = syncID
+    }
+
+    func dismissSplitSharePrompt() {
+        pendingSplitShareSyncID = nil
     }
 }

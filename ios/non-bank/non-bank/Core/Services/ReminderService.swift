@@ -127,7 +127,13 @@ enum ReminderService {
             lastModified: Date(),
             repeatInterval: nil, // Child does NOT repeat
             parentReminderID: parent.id,
-            splitInfo: parent.splitInfo
+            splitInfo: parent.splitInfo,
+            // Inherit the exclude-from-insights flag from the parent
+            // reminder: when the user hid the template from analytics,
+            // every spawned occurrence should follow the same rule.
+            // They can still flip it back per-child via the row or
+            // detail view if they want one specific occurrence counted.
+            excludedFromInsights: parent.excludedFromInsights
         )
     }
 

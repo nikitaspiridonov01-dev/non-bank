@@ -1,0 +1,38 @@
+name = "non-bank-receipt-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Workers AI binding — runs Llama 3.2 11B Vision on the same Worker
+# (this is provider #3 in the routing pool; zero network hop).
+[ai]
+binding = "AI"
+
+# D1 database — quota counters + per-device rate limits.
+# Replace `database_id` after running `npm run db:create`.
+[[d1_databases]]
+binding = "DB"
+database_name = "non-bank-receipts"
+database_id = "66a766fd-a957-4f01-bbb4-7e80968ac7eb"
+migrations_dir = "migrations"
+
+# Public env (non-secret). Secret API keys are added via:
+#   wrangler secret put GEMINI_API_KEY        # Google AI Studio
+#   wrangler secret put GROQ_API_KEY          # console.groq.com
+#   wrangler secret put OPENROUTER_API_KEY    # openrouter.ai
+#   wrangler secret put MISTRAL_API_KEY       # console.mistral.ai
+#   wrangler secret put SAMBANOVA_API_KEY     # cloud.sambanova.ai
+#   wrangler secret put NVIDIA_API_KEY        # build.nvidia.com
+#   wrangler secret put HUGGINGFACE_API_KEY   # huggingface.co/settings/tokens
+[vars]
+ENV = "production"
+PER_DEVICE_DAILY_LIMIT = "60"
+LOG_LEVEL = "info"
+
+# Note: the [limits] section was removed because cpu_ms is a paid-plan
+# feature (the Cloudflare API rejects it on Free with code 100328). The
+# Free tier already enforces a 10ms CPU budget, which is plenty here —
+# our hot path is `await fetch(provider)` and fetch wait time doesn't
+# count against CPU. If you ever upgrade to Workers Paid, you can re-add:
+#   [limits]
+#   cpu_ms = 30000

@@ -37,6 +37,10 @@ struct CategoryHistoryView: View {
     @EnvironmentObject var currencyStore: CurrencyStore
     @EnvironmentObject var categoryStore: CategoryStore
 
+    /// Observed so the chart & list rebuild when the user changes the
+    /// "include potential expenses" switch in Settings.
+    @ObservedObject private var insightsSettings = InsightsSettings.shared
+
     /// Chart window — 6 *fully completed* months. The chart excludes
     /// the in-progress current month so an early-in-the-month bar
     /// doesn't render misleadingly short next to its peers. ~55pt

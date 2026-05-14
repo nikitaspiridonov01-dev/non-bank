@@ -97,7 +97,7 @@ struct FilterSheetView: View {
         NavigationView {
             Form {
                 // Date — jump to date navigation
-                Section(header: Text("Jump to date")) {
+                Section(header: Text("Jump to date").foregroundColor(AppColors.textSecondary)) {
                     Button(action: {
                         displayedMonth = pickedDate
                         showDatePicker = true
@@ -112,6 +112,7 @@ struct FilterSheetView: View {
                         }
                     }
                     .foregroundColor(AppColors.textPrimary)
+                    .listRowBackground(AppColors.backgroundElevated)
                     .sheet(isPresented: $showDatePicker) {
                         VStack(spacing: 0) {
                             // Month navigation
@@ -221,7 +222,7 @@ struct FilterSheetView: View {
                 }
 
                 // Categories — with emoji, sorted by frequency
-                Section(header: Text("Categories")) {
+                Section(header: Text("Categories").foregroundColor(AppColors.textSecondary)) {
                     let cats = sortedCategories
                     let displayCategories = showAllCategories ? cats : Array(cats.prefix(5))
                     ForEach(displayCategories, id: \.self) { cat in
@@ -246,9 +247,10 @@ struct FilterSheetView: View {
                         }
                     }
                 }
+                .listRowBackground(AppColors.backgroundElevated)
 
                 // Transaction Type — plain text, no emoji
-                Section(header: Text("Transaction Type")) {
+                Section(header: Text("Transaction Type").foregroundColor(AppColors.textSecondary)) {
                     ForEach(TransactionType.allCases, id: \.self) { type in
                         Button(action: {
                             if selectedTransactionTypes.contains(type) {
@@ -272,6 +274,7 @@ struct FilterSheetView: View {
                         .foregroundColor(AppColors.textPrimary)
                     }
                 }
+                .listRowBackground(AppColors.backgroundElevated)
 
             }
             .scrollContentBackground(.hidden)

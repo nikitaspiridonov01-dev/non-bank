@@ -58,7 +58,12 @@ struct ActiveFilterChip: View {
         }
         .padding(.horizontal, AppSizes.chipHorizontalPadding)
         .padding(.vertical, AppSizes.chipVerticalPadding)
-        .background(AppColors.backgroundChip)
+        // `backgroundElevated` instead of `backgroundChip` — the
+        // chip token (~10% darker cream) was reading as a heavy
+        // band against the page; the elevated cream matches the
+        // numpad / category-pill / split-chip family and keeps the
+        // active-filter row visually lighter.
+        .background(AppColors.backgroundElevated)
         .cornerRadius(AppRadius.large)
         .overlay(
             RoundedRectangle(cornerRadius: AppRadius.large)

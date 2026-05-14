@@ -260,18 +260,32 @@ struct ReceiptLineFilter {
         "taxa de serviço", "taxa de entrega",
         // Polish
         "opłata", "oplata", "dostawa",
-        // Serbian (Latin) / Croatian
-        "naknada", "dostava"
+        // Serbian (Latin) / Croatian. `servis` standalone catches the
+        // common restaurant shorthand for service charge (the longer
+        // `servisna naknada` is already covered transitively via the
+        // bare `naknada` token below). Plain `\b…\b` word boundaries
+        // ensure it doesn't accidentally match item-name compounds
+        // like `servisni dodatak` or `servisiranje`.
+        "servis", "naknada", "dostava"
     ]
 
     /// Cyrillic stems for fee detection. `обслуживан` covers all case
     /// forms of "service" on Russian receipts (обслуживание, обслуживания,
-    /// обслуживанию, etc.) — caught two ways now: this stem and the
-    /// `сбор` / `доставка` literals above. Empirically every Russian
-    /// non-bank receipt seen so far prints the service-fee row as one
-    /// of these three.
+    /// обслуживанию, etc.). `услуг` and `сервис` catch the standalone
+    /// Serbian/Russian Cyrillic service-charge labels that some
+    /// restaurants print (`Услуга`, `Сервис`, `Услуге`) — without the
+    /// stems they fell through every list and ended up as `.item`,
+    /// which is the bug this paragraph commemorates. Some legitimate
+    /// product names on service-business receipts may now be tagged
+    /// as `.fee` (e.g. `Услуга стрижки` on a salon receipt); the
+    /// trade-off is intentional — false-positive .fee on a salon row
+    /// is a wrong icon the user can fix in the editor, whereas
+    /// false-negative on a restaurant service charge silently inflates
+    /// every participant's "by items" share.
     private static let feeCyrillicStems: [String] = [
-        "обслуживан"
+        "обслуживан",
+        "услуг",
+        "сервис"
     ]
 
     private static let feeRegex = WordRegex(words: feeWords, stems: feeCyrillicStems)

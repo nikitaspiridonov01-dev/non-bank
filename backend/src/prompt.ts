@@ -31,7 +31,7 @@ ITEMS — what to SKIP:
 - Tax / VAT / NDS / TVA / IVA / MwSt / IGV / PVN / KDV lines
 - Subtotal / sub-total / Zwischensumme / Międzysuma / Подытог
 - Grand total / TOTAL / Итого / Gesamt / Razem — NEVER include as an item
-- Tip / gratuity / service charge — these are payments, not items
+- Tip / gratuity / service charge in ANY language. Recognise variants like "service charge", "svc fee", "obsługa" / "napiwek" (Polish), "servis" / "servisna naknada" / "napojnica" (Serbian Latin), "обслуживание" / "сервисный сбор" / "услуга" or "сервис" as a standalone line (Cyrillic), "mancia" / "coperto" (Italian), "pourboire" (French), "trinkgeld" (German), "propina" (Spanish), "gorjeta" (Portuguese). These are payments, not items.
 - Cash / card / Visa / Mastercard / "Card *1234" payment rows
 - Change / refund / Сдача / Rückgeld / Reszta / Vuelto
 - Phone / address / tax ID / receipt number / waiter / table / cashier

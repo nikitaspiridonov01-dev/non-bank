@@ -127,7 +127,13 @@ actor ReceiptParserService {
     - Tax / VAT / NDS / TVA / IVA / MwSt lines
     - Subtotal / sub-total / Zwischensumme / Międzysuma
     - Grand total / TOTAL / Итого / Gesamt — NEVER include as an item
-    - Tip / gratuity / service charge — these are payments, not items
+    - Tip / gratuity / service charge in ANY language. Variants include
+      "service charge", "svc fee", "obsługa", "napiwek" (Polish), "servis",
+      "servisna naknada", "napojnica" (Serbian Latin), "обслуживание",
+      "сервисный сбор", "услуга" / "сервис" as a standalone line (Cyrillic),
+      "mancia", "coperto" (Italian), "pourboire" (French), "trinkgeld"
+      (German), "propina" (Spanish), "gorjeta" (Portuguese). These are
+      payments, not items.
     - Cash / card / Visa / Mastercard / "Card *1234" payment rows
     - Change / refund / Сдача / Rückgeld / Reszta
     - Phone / address / tax ID / receipt number / waiter / table / cashier

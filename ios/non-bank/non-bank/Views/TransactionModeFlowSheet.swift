@@ -139,7 +139,7 @@ struct TransactionModeFlowSheet: View {
     @State private var isParsingReceipt: Bool = false
     @State private var receiptParseError: String? = nil
     @State private var showReceiptParseError: Bool = false
-    @State private var showDocumentScanner: Bool = false
+    @State private var showCamera: Bool = false
     @State private var showPhotosPicker: Bool = false
     /// Multi-image gallery picker — same 3-photo cap as the parent
     /// modal so a long receipt that didn't fit in one shot can still
@@ -173,20 +173,20 @@ struct TransactionModeFlowSheet: View {
         // orchestrator visually during capture and tear back down to
         // the same step on dismissal regardless of where the user
         // launched them from.
-        .fullScreenCover(isPresented: $showDocumentScanner) {
-            DocumentScannerView(
+        .fullScreenCover(isPresented: $showCamera) {
+            PlainCameraView(
                 onScan: { image in
-                    showDocumentScanner = false
+                    showCamera = false
                     handleScannedImage(image)
                 },
                 onCancel: {
                     // Cancel anywhere in the scan flow closes the
                     // whole orchestrator (option (a) from the spec).
-                    showDocumentScanner = false
+                    showCamera = false
                     dismiss()
                 },
                 onError: { error in
-                    showDocumentScanner = false
+                    showCamera = false
                     receiptParseError = error.localizedDescription
                     showReceiptParseError = true
                 }
@@ -606,7 +606,13 @@ struct TransactionModeFlowSheet: View {
         ReceiptSourcePickerView(
             wrapInNavigationStack: false,
             onPickCamera: {
-                showDocumentScanner = true
+                // Simulator / no-camera guard — same as the
+                // top-of-modal scan path. `UIImagePickerController`
+                // crashes if `.camera` source isn't available; the
+                // user can pick Library from the same picker instead.
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    showCamera = true
+                }
             },
             onPickLibrary: {
                 showPhotosPicker = true

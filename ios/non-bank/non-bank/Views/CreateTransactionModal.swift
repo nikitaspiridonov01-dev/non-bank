@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import UIKit
 
 // MARK: - Transaction Tab
 //
@@ -28,7 +29,7 @@ private struct ReceiptReviewPayload: Identifiable {
 /// top of the existing sheet zoo.
 private struct ReceiptScanFlowModifier: ViewModifier {
     @Binding var showSourceDialog: Bool
-    @Binding var showDocumentScanner: Bool
+    @Binding var showCamera: Bool
     @Binding var showPhotosPicker: Bool
     @Binding var photosPickerItems: [PhotosPickerItem]
     @Binding var reviewPayload: ReceiptReviewPayload?
@@ -64,7 +65,19 @@ private struct ReceiptScanFlowModifier: ViewModifier {
                     wrapInNavigationStack: true,
                     onPickCamera: {
                         showSourceDialog = false
-                        showDocumentScanner = true
+                        // Guard the simulator / no-camera-device case —
+                        // `UIImagePickerController` crashes if presented
+                        // with `sourceType = .camera` on a device that
+                        // doesn't have one. The receipt flow falls back
+                        // to the source picker's other option (Photos)
+                        // implicitly: the picker has already dismissed,
+                        // so the user re-taps the scan button and picks
+                        // Library instead.
+                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                            showCamera = true
+                        } else {
+                            onScanCancelled()
+                        }
                     },
                     onPickLibrary: {
                         showSourceDialog = false
@@ -75,18 +88,18 @@ private struct ReceiptScanFlowModifier: ViewModifier {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
             }
-            .fullScreenCover(isPresented: $showDocumentScanner) {
-                DocumentScannerView(
+            .fullScreenCover(isPresented: $showCamera) {
+                PlainCameraView(
                     onScan: { image in
-                        showDocumentScanner = false
+                        showCamera = false
                         onScannedImage(image)
                     },
                     onCancel: {
-                        showDocumentScanner = false
+                        showCamera = false
                         onScanCancelled()
                     },
                     onError: { error in
-                        showDocumentScanner = false
+                        showCamera = false
                         receiptParseError = error.localizedDescription
                         showReceiptParseError = true
                         onScanCancelled()
@@ -332,7 +345,7 @@ struct CreateTransactionModal: View {
     // MARK: - Receipt Scan Flow
     private static let scanFeatureEnabled = true
     @State private var showReceiptSourceDialog: Bool = false
-    @State private var showDocumentScanner: Bool = false
+    @State private var showCamera: Bool = false
     // Multi-image gallery picker: the user can grab up to 3 photos of
     // a single receipt at once (e.g. the back of a long restaurant
     // tape that didn't fit in one shot). One pick = original behaviour;
@@ -1417,7 +1430,7 @@ struct CreateTransactionModal: View {
             }
             .modifier(ReceiptScanFlowModifier(
                 showSourceDialog: $showReceiptSourceDialog,
-                showDocumentScanner: $showDocumentScanner,
+                showCamera: $showCamera,
                 showPhotosPicker: $showPhotosPicker,
                 photosPickerItems: $photosPickerItems,
                 reviewPayload: $reviewPayload,

@@ -81,15 +81,23 @@ struct non_bankApp: App {
                 .environmentObject(categoryStore)
                 .environmentObject(friendStore)
                 .environmentObject(receiptItemStore)
-                // Both deep-link channels:
-                //  - `onOpenURL` fires for custom-scheme links (`nonbank://share?p=…`)
-                //    AND for Universal Links (`https://share.nonbank.app/s/?p=…`)
-                //    on iOS 14+. We filter inside the coordinator via
-                //    `SharedTransactionLink.isShareURL`.
-                //  - `onContinueUserActivity` is the legacy hook needed only
-                //    if the app is launched COLD by a Universal Link tap.
-                //    Hooking both keeps behaviour consistent across
-                //    cold-start and warm-resume.
+                // Both deep-link channels — current and dormant:
+                //  - `onOpenURL` fires for the active path
+                //    (`nonbank://share?p=…` — the in-page JS on the
+                //    Cloudflare share preview hands off to this
+                //    scheme), and would also fire for Universal Links
+                //    (`https://<universalLinkHost>/transaction/?p=…`)
+                //    once those are activated. See the top-of-file
+                //    doc in `SharedTransactionLink.swift` for the
+                //    activation checklist. We filter inside the
+                //    coordinator via `SharedTransactionLink.isShareURL`.
+                //  - `onContinueUserActivity` is the legacy hook for
+                //    cold-start Universal-Link taps; it's a no-op
+                //    today (no `associated-domains` entitlement →
+                //    iOS never delivers user activities of this type)
+                //    but stays wired so the moment Universal Links
+                //    flip on, cold-start handling works without an
+                //    app-update.
                 .onOpenURL { url in
                     shareLinkCoordinator.handle(url: url)
                 }

@@ -2,55 +2,90 @@ import Foundation
 
 // MARK: - Shared Transaction Link
 
-/// Encoder + decoder for share-link URLs. The format is intentionally
-/// boring: `https://<host>/s/?p=<base64url(JSON)>` where `<host>` is a
-/// statically hosted page that ALSO carries the `apple-app-site-association`
-/// file (Universal Link routes the URL into the app when installed) and a
-/// rendered HTML fallback (read-only preview when not).
+/// Encoder + decoder for share-link URLs.
 ///
-/// Both halves of this enum are pure functions — no I/O, no network, no
-/// dependencies on any app singletons. That's what makes them trivially
-/// unit-testable and lets Phase 4 (the receiver-side flow) plug them in
-/// without bringing in extra collaborators.
+/// ## What's actually live (active production path)
+///
+/// `.webBackend` style → `https://<cloudflare-worker-host>/share?p=<base64url(JSON)>`.
+/// The Worker (`backend/src/share.ts`) renders an HTML preview for
+/// recipients without the app; its inline JS auto-redirects to
+/// `nonbank://share?p=…` (custom URL scheme, registered in `Info.plist`)
+/// so installed apps open directly via `onOpenURL`.
+///
+/// ## What's NOT live (dormant configuration)
+///
+/// `.universalLink` style is wired through the encoder/decoder so the
+/// machinery is unit-tested, BUT it has never been the default and
+/// is currently unreachable in practice for two compounding reasons:
+///   1. `non-bank.entitlements` does NOT include
+///      `com.apple.developer.associated-domains` — Apple's free
+///      Personal Team provisioning rejects that entitlement (see the
+///      commented block in the entitlements file). Without it, iOS
+///      doesn't even attempt Universal-Link resolution.
+///   2. `defaultURLStyle` is `.webBackend`, so every URL the app
+///      emits points at the Cloudflare Worker host, not at the
+///      Universal-Link host below.
+///
+/// The legacy AASA file at `https://nikitaspiridonov01-dev.github.io/
+/// .well-known/apple-app-site-association` is real and serves the
+/// right JSON — it's just inert until both conditions above flip.
+/// Activation steps when ready:
+///   • Pay the Apple Developer Program (~$99/yr)
+///   • Uncomment the `associated-domains` block in
+///     `non-bank.entitlements` and replace the host with the live one
+///   • Host an AASA file at `https://<host>/.well-known/apple-app-site-association`
+///     (the Cloudflare Worker can serve this directly — preferred
+///     over GitHub Pages for parity with a custom domain)
+///   • Flip `defaultURLStyle = .universalLink`
+///
+/// ## Why keep the dormant code at all
+///
+/// Both halves of the enum are pure functions — no I/O, no network,
+/// no app singletons — so the encode/decode mechanism for
+/// `.universalLink` costs nothing to keep tested. When we eventually
+/// activate it the only changes are the entitlement, the host string,
+/// and the `defaultURLStyle` flip.
 enum SharedTransactionLink {
 
     // MARK: - Configuration
 
-    /// Custom URL scheme for the **interim** mechanism — works without
-    /// any hosting and lets us test the encoder/decoder/receiver pipeline
-    /// end-to-end during development. When a real Universal Link domain
-    /// goes live, the encoder will switch to `https://...` URLs but the
-    /// app keeps registering this scheme so old `nonbank://` links keep
-    /// opening the app.
+    /// Custom URL scheme registered in `Info.plist`. This is what the
+    /// in-page JS on the Cloudflare share preview ultimately invokes
+    /// (`window.location.href = "nonbank://share?p=…"`) to hand off
+    /// from Safari into the installed app. Also a valid value for
+    /// `URLStyle.customScheme` when you want to generate a deep-link
+    /// directly (e.g. from an in-app share sheet target that knows
+    /// the recipient has the app).
     static let customScheme = "nonbank"
 
     /// Custom-scheme host segment. Pseudo-path component since custom
     /// schemes have no real hostname; we treat it as the "share" route.
     static let customSchemeHost = "share"
 
-    /// Universal Link host (the GitHub Pages site that hosts the
-    /// `apple-app-site-association` file). Tied to the entitlements:
-    /// `applinks:nikitaspiridonov01-dev.github.io`. Pointing at a real
-    /// host means iOS Safari resolves the link by:
-    ///   1. Loading `https://<host>/.well-known/apple-app-site-association`
-    ///   2. Confirming our `appIDs` whitelist contains
-    ///      `28PGV25T47.nikitaspiridonov.non-bank`
-    ///   3. Routing `https://<host>/transaction/...` URLs straight into
-    ///      the app via `onContinueUserActivity` / `onOpenURL`.
-    /// When the app isn't installed Safari just loads the page at the URL
-    /// — that page is a tiny App Store redirect (see Phase 5 plan).
+    /// **DORMANT** — Host the encoder would target if `URLStyle`
+    /// were `.universalLink`. Currently a legacy GitHub Pages site
+    /// hosting the AASA file from an earlier setup; iOS never queries
+    /// it because the active path is `.webBackend` AND the
+    /// Associated-Domains entitlement is disabled. Kept as the
+    /// placeholder value so the existing unit tests for the
+    /// `.universalLink` encode path stay green; replace with the
+    /// live domain when Universal Links are activated (see the
+    /// top-of-file activation checklist).
     static let universalLinkHost = "nikitaspiridonov01-dev.github.io"
 
-    /// Path component for universal-link share URLs. Matched in the AASA
-    /// file as `/transaction/*` so iOS only intercepts share routes —
-    /// any other future page on the same domain stays in Safari.
+    /// Path component for Universal-Link share URLs. The AASA file
+    /// at `universalLinkHost` matches `/transaction/*` so iOS only
+    /// intercepts share routes — any other page on the same host
+    /// stays in Safari. Unused until `.universalLink` becomes the
+    /// active style.
     static let universalLinkPath = "/transaction/"
 
-    /// Cloudflare Worker host that serves the `/share` HTML preview for
-    /// recipients without the iOS app installed. Same Worker that hosts
-    /// `/v1/parse-receipt` etc. — see `backend/src/share.ts`. Update
-    /// this if you ever migrate to a custom domain; for now it points
-    /// at the deployed `*.workers.dev` subdomain.
+    /// **ACTIVE** — Cloudflare Worker host serving the `/share` HTML
+    /// preview and (separately) the `/v1/parse-receipt` LLM proxy.
+    /// See `backend/src/share.ts`. Currently the workers.dev
+    /// subdomain; swap to your custom domain after binding it in
+    /// the Cloudflare dashboard's Workers → Custom Domains panel
+    /// (no code-side changes beyond this constant).
     static let webBackendHost = "non-bank-receipt-proxy.non-bank-ai.workers.dev"
 
     /// Path on the Worker. Lives at the root (not under `/v1/`) because
@@ -64,43 +99,35 @@ enum SharedTransactionLink {
     /// Schema version emitted by the encoder.
     static let currentSchemaVersion: Int = 1
 
-    /// Current default URL scheme used by `encode(...)`. Switched between
-    /// `.customScheme` (works with a free Apple ID — the `nonbank://`
-    /// scheme is registered in Info.plist and routes through SwiftUI's
-    /// `onOpenURL`) and `.universalLink` (production — opens the app
-    /// from anywhere via AASA, but requires the paid Apple Developer
-    /// Program for the Associated Domains entitlement).
-    ///
-    /// Currently `.webBackend` — the Worker renders an HTML preview for
-    /// recipients without the iOS app, AND the page deep-links to
-    /// `nonbank://share?p=…` for those who have the app. Best of both:
-    /// shareable in any messenger, opens in-app for installed users.
-    ///
-    /// Other styles still work via the decoder (any old `nonbank://`
-    /// link keeps opening the app on `onOpenURL`):
-    ///   • `.customScheme` — only useful if the receiver definitely
-    ///     has the app and you want to skip the web hop.
-    ///   • `.universalLink` — Phase-2 path once Associated Domains
-    ///     entitlement is wired up (paid dev account required).
+    /// Active URL scheme used by `encode(...)`. Set to `.webBackend`
+    /// in production — every generated share URL points at the
+    /// Cloudflare Worker, which then either renders the HTML preview
+    /// or hands off to `nonbank://` for installed apps. See the
+    /// top-of-file doc for what each alternative actually requires
+    /// in order to be activated.
     static var defaultURLStyle: URLStyle = .webBackend
 
     enum URLStyle {
-        /// `nonbank://share?p=…` — works as soon as the app is installed.
-        /// Doesn't gracefully fall back to App Store on iOS Safari, but
-        /// it doesn't depend on any external hosting either.
+        /// `nonbank://share?p=…` — only useful when the receiver
+        /// definitely has the app (skips the web hop). Generated
+        /// directly from in-app share targets that know the recipient
+        /// is an existing user; not used for outbound shares because
+        /// Safari can't open the custom scheme from a link tap.
         case customScheme
-        /// `https://share.nonbank.app/s/?p=…` — requires the
-        /// `apple-app-site-association` file on the host. Falls back to
-        /// the host's web page when the app isn't installed (which we'll
-        /// configure to redirect to App Store).
+
+        /// `https://<universalLinkHost>/transaction/?p=…` —
+        /// **DORMANT** Universal-Link path. See the top-of-file
+        /// activation checklist; production-blocked on the paid
+        /// Apple Developer Program + `associated-domains`
+        /// entitlement, which Personal Team provisioning rejects.
         case universalLink
-        /// `https://<worker-host>/share?p=…` — the Cloudflare Worker
-        /// renders a server-side HTML preview, and the page tries to
-        /// hand off to `nonbank://share?p=…` on tap. Works in every
-        /// browser, on any platform, even when the app isn't installed.
-        /// No Associated Domains entitlement needed (the receiver
-        /// browser opens the URL directly; the app is invoked
-        /// secondarily via the in-page deep-link button).
+
+        /// `https://<worker-host>/share?p=…` — **active** production
+        /// style. Worker renders the HTML preview for recipients
+        /// without the app and the in-page JS deep-links to
+        /// `nonbank://share?p=…` for those who have it. Works in
+        /// every browser on every platform; no Apple entitlement
+        /// needed.
         case webBackend
     }
 
@@ -231,9 +258,11 @@ enum SharedTransactionLink {
     /// silently drop fields — callers see `unsupportedVersion(2)` and can
     /// prompt the user to update.
     ///
-    /// Accepts both `nonbank://share?p=…` (interim custom scheme) and
-    /// `https://share.nonbank.app/s/?p=…` (Universal Link, once hosting
-    /// is set up). Decoder is scheme-agnostic — it only looks for `?p=…`.
+    /// Accepts every URL style the encoder can emit: `nonbank://share?p=…`
+    /// (custom scheme), `https://<webBackendHost>/share?p=…` (active
+    /// production path), and `https://<universalLinkHost>/transaction/?p=…`
+    /// (dormant Universal-Link path — see top-of-file). Decoder is
+    /// scheme-agnostic — it only looks for `?p=…`.
     static func decode(url: URL) throws -> SharedTransactionPayload {
         guard
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false),

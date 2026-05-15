@@ -187,6 +187,11 @@ final class ShareLinkCoordinator: ObservableObject {
     /// Called by the picker view (or by auto-create when `f.count == 1`).
     /// Builds the `ResolvedShare` and writes it to the stores. Transitions
     /// to `.completed` on success or `.errored` on mapper failure.
+    ///
+    /// `receiptItemStore` is read on the update path so the mapper can
+    /// decide whether to keep the receiver's `.byItems` mode (items
+    /// locally → keep) or accept the payload's mode verbatim (no items
+    /// locally → no anchor for `.byItems`, take what's on the wire).
     func pickedParticipant(
         index: Int,
         payload: SharedTransactionPayload,
@@ -194,7 +199,8 @@ final class ShareLinkCoordinator: ObservableObject {
         isUpdate: Bool,
         transactionStore: TransactionStore,
         friendStore: FriendStore,
-        categoryStore: CategoryStore
+        categoryStore: CategoryStore,
+        receiptItemStore: ReceiptItemStore
     ) async {
         // Phantom-upgrade pass: only meaningful for the update path,
         // where the receiver already has a local copy of the
@@ -234,6 +240,15 @@ final class ShareLinkCoordinator: ObservableObject {
             ? transactionStore.transactions.first(where: { $0.id == existingID })
             : nil
 
+        // Items-aware splitMode: the mapper needs to know whether the
+        // receiver has scanned items for this transaction locally.
+        // Pre-check `id` rather than re-deriving inside the mapper so
+        // the mapper stays pure (no `ReceiptItemStore` dependency).
+        let receiverHasLocalItems: Bool = {
+            guard let txID = existingTx?.id else { return false }
+            return !receiptItemStore.items(forTransactionID: txID).isEmpty
+        }()
+
         do {
             let resolved = try ReceivedTransactionMapper.map(
                 payload: payload,
@@ -244,7 +259,8 @@ final class ShareLinkCoordinator: ObservableObject {
                 // any value here gets overwritten. For updates we feed
                 // the existing id so `update(_:)` targets the right row.
                 nextTransactionID: existingID ?? 0,
-                existingTransaction: existingTx
+                existingTransaction: existingTx,
+                receiverHasLocalItemsForTx: receiverHasLocalItems
             )
             // Side-effects in dependency order: friends and category
             // must exist before the transaction references them.
@@ -301,7 +317,8 @@ final class ShareLinkCoordinator: ObservableObject {
         knownParticipantIndex: Int?,
         transactionStore: TransactionStore,
         friendStore: FriendStore,
-        categoryStore: CategoryStore
+        categoryStore: CategoryStore,
+        receiptItemStore: ReceiptItemStore
     ) async {
         if let idx = knownParticipantIndex {
             await pickedParticipant(
@@ -311,7 +328,8 @@ final class ShareLinkCoordinator: ObservableObject {
                 isUpdate: true,
                 transactionStore: transactionStore,
                 friendStore: friendStore,
-                categoryStore: categoryStore
+                categoryStore: categoryStore,
+                receiptItemStore: receiptItemStore
             )
         } else if payload.f.count == 1 {
             await pickedParticipant(
@@ -321,7 +339,8 @@ final class ShareLinkCoordinator: ObservableObject {
                 isUpdate: true,
                 transactionStore: transactionStore,
                 friendStore: friendStore,
-                categoryStore: categoryStore
+                categoryStore: categoryStore,
+                receiptItemStore: receiptItemStore
             )
         } else {
             routingState = .showingPicker(

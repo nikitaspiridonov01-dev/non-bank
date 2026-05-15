@@ -297,7 +297,8 @@ struct MainTabView: View {
                         isUpdate: isUpdate,
                         transactionStore: transactionStore,
                         friendStore: friendStore,
-                        categoryStore: categoryStore
+                        categoryStore: categoryStore,
+                        receiptItemStore: receiptItemStore
                     )
                 }
             case .completed(let txSyncID, _), .identical(let txSyncID):
@@ -334,7 +335,8 @@ struct MainTabView: View {
                                 isUpdate: isUpdate,
                                 transactionStore: transactionStore,
                                 friendStore: friendStore,
-                                categoryStore: categoryStore
+                                categoryStore: categoryStore,
+                                receiptItemStore: receiptItemStore
                             )
                         }
                     },
@@ -355,7 +357,8 @@ struct MainTabView: View {
                             knownParticipantIndex: knownIdx,
                             transactionStore: transactionStore,
                             friendStore: friendStore,
-                            categoryStore: categoryStore
+                            categoryStore: categoryStore,
+                            receiptItemStore: receiptItemStore
                         )
                     }
                 }

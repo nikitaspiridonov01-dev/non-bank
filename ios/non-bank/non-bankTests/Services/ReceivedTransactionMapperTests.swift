@@ -386,40 +386,136 @@ final class ReceivedTransactionMapperTests: XCTestCase {
         XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .byAmount)
     }
 
-    func testMap_updatePath_preservesReceiverSplitMode() throws {
-        // Round-trip preservation: the receiver had `.byItems` locally
-        // (scanned the receipt, items still in their ReceiptItemStore).
-        // The sharer edited their copy and re-shared with `.byAmount`
-        // on the wire. The receiver's mode must stay `.byItems` —
-        // same "receiver's local taxonomy wins" rule that already
-        // protects title / category / emoji on the update path.
-        // Otherwise the update would silently flip the receiver's
-        // detail card from "By items in receipt" to "By amount"
-        // while their items still sit untouched on device.
-        let me = SharedTransactionPayload.Participant(
-            id: "rec-X1", n: "Me", sh: 50, pa: 0
-        )
-        let payload = makePayload(participants: [me], sm: "byAmount")
+    // MARK: - Items-aware splitMode rule (update path)
+    //
+    // The rule, applied by the mapper:
+    //
+    //   Receiver has items locally       Payload sm          → Result
+    //   ─────────────────────────────────────────────────────────────
+    //   true                             byItems/byAmount/nil → .byItems
+    //   true                             evenly               → .evenly
+    //   true                             settleUp             → .settleUp
+    //   false                            byItems              → .byAmount (coerce)
+    //   false                            anything else        → payload's mode
+    //
+    // Rationale: byItems is structurally local (items aren't on the
+    // wire). Items locally + items-shape payload (byAmount is the
+    // wire format for items-backed shares) → preserve the byItems
+    // display. evenly / settleUp from the friend is an explicit
+    // redistribute intent, so the receiver's items-based display
+    // yields to it.
+
+    private func makeExistingByItemsTx(
+        syncID: String,
+        sharerID: String = "sharer-A1B2"
+    ) -> Transaction {
         let existingSplit = SplitInfo(
             totalAmount: 100, paidByMe: 0, myShare: 50, lentAmount: -50,
             friends: [FriendShare(friendID: sharerID, share: 50, paidAmount: 100)],
             splitMode: .byItems
         )
-        let existingTx = Transaction(
-            id: 99, syncID: payload.id,
+        return Transaction(
+            id: 99, syncID: syncID,
             emoji: "🍕", category: "Food", title: "Pizza Friday",
             description: nil, amount: 0, currency: "EUR",
             date: Date(timeIntervalSince1970: 1_700_000_000),
             type: .expenses, tags: nil, splitInfo: existingSplit
         )
+    }
+
+    func testMap_updatePath_itemsLocal_byAmountPayload_keepsByItems() throws {
+        // Receiver had `.byItems` locally with assigned items; sharer
+        // re-shared with `.byAmount` on the wire (the canonical
+        // post-encoder-coercion format for any items-backed share).
+        // Items still anchor a byItems display on the receiver side.
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 50, pa: 0
+        )
+        let payload = makePayload(participants: [me], sm: "byAmount")
+        let existingTx = makeExistingByItemsTx(syncID: payload.id, sharerID: sharerID)
         let resolved = try ReceivedTransactionMapper.map(
             payload: payload, receiverParticipantIndex: 0,
             existingFriends: [], existingCategories: [foodCategory],
             nextTransactionID: 99,
-            existingTransaction: existingTx
+            existingTransaction: existingTx,
+            receiverHasLocalItemsForTx: true
         )
-        XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .byItems,
-            "Receiver's local .byItems must survive a re-share even when the sharer's payload is .byAmount")
+        XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .byItems)
+    }
+
+    func testMap_updatePath_itemsLocal_evenlyPayload_adoptsEvenly() throws {
+        // Receiver had items + `.byItems`; sharer explicitly switched
+        // to `.evenly` and re-shared. That's a deliberate redistribute
+        // intent — receiver's view yields to it. Items stay in the
+        // store (mapper doesn't touch ReceiptItemStore) but no longer
+        // drive the display until the receiver flips back manually.
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 50, pa: 0
+        )
+        let payload = makePayload(participants: [me], sm: "50/50")
+        let existingTx = makeExistingByItemsTx(syncID: payload.id, sharerID: sharerID)
+        let resolved = try ReceivedTransactionMapper.map(
+            payload: payload, receiverParticipantIndex: 0,
+            existingFriends: [], existingCategories: [foodCategory],
+            nextTransactionID: 99,
+            existingTransaction: existingTx,
+            receiverHasLocalItemsForTx: true
+        )
+        XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .evenly)
+    }
+
+    func testMap_updatePath_itemsLocal_settleUpPayload_adoptsSettleUp() throws {
+        // `.settleUp` parallels `.evenly`: explicit redistribute
+        // intent from the sharer overrides the receiver's items
+        // display.
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 100, pa: 0
+        )
+        let payload = makePayload(participants: [me], sm: "settleUp")
+        let existingTx = makeExistingByItemsTx(syncID: payload.id, sharerID: sharerID)
+        let resolved = try ReceivedTransactionMapper.map(
+            payload: payload, receiverParticipantIndex: 0,
+            existingFriends: [], existingCategories: [foodCategory],
+            nextTransactionID: 99,
+            existingTransaction: existingTx,
+            receiverHasLocalItemsForTx: true
+        )
+        XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .settleUp)
+    }
+
+    func testMap_updatePath_itemsLocal_byItemsPayload_keepsByItems() throws {
+        // Legacy sharer (pre-encoder-coercion) emitted "byItems" on
+        // the wire. Receiver has items locally — keep `.byItems`.
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 50, pa: 0
+        )
+        let payload = makePayload(participants: [me], sm: "byItems")
+        let existingTx = makeExistingByItemsTx(syncID: payload.id, sharerID: sharerID)
+        let resolved = try ReceivedTransactionMapper.map(
+            payload: payload, receiverParticipantIndex: 0,
+            existingFriends: [], existingCategories: [foodCategory],
+            nextTransactionID: 99,
+            existingTransaction: existingTx,
+            receiverHasLocalItemsForTx: true
+        )
+        XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .byItems)
+    }
+
+    func testMap_updatePath_noItemsLocal_evenlyPayload_takesEvenly() throws {
+        // No items locally → payload's mode applies verbatim.
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 50, pa: 0
+        )
+        let payload = makePayload(participants: [me], sm: "50/50")
+        let existingTx = makeExistingByItemsTx(syncID: payload.id, sharerID: sharerID)
+        let resolved = try ReceivedTransactionMapper.map(
+            payload: payload, receiverParticipantIndex: 0,
+            existingFriends: [], existingCategories: [foodCategory],
+            nextTransactionID: 99,
+            existingTransaction: existingTx,
+            receiverHasLocalItemsForTx: false
+        )
+        XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .evenly)
     }
 
     // MARK: - Update path: receiver's title + category preserved

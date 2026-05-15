@@ -115,6 +115,14 @@ enum ReceivedTransactionMapper {
         existingCategories: [Category],
         nextTransactionID: Int,
         existingTransaction: Transaction? = nil,
+        /// `true` when the receiver already has scanned receipt items
+        /// for this transaction in their local `ReceiptItemStore` (any
+        /// rows, assigned or not — having scanned represents user
+        /// effort and intent). Drives the items-aware `splitMode`
+        /// resolution below; the caller (`ShareLinkCoordinator`) knows
+        /// the store and passes the precomputed bool so the mapper
+        /// stays pure.
+        receiverHasLocalItemsForTx: Bool = false,
         sharerPlaceholderName: String = "Friend"
     ) throws -> ResolvedShare {
         guard payload.f.indices.contains(receiverParticipantIndex) else {
@@ -210,37 +218,49 @@ enum ReceivedTransactionMapper {
         }
         let receiverFriends = [sharerAsFriend] + otherShares
 
-        // Resolve the receiver-side `splitMode`. Two branches:
+        // Resolve the receiver-side `splitMode` from a 2-axis decision:
+        // does the receiver have local items for this transaction,
+        // and what mode does the payload carry. Receipt items are not
+        // transported in the share URL, so `.byItems` is a strictly
+        // local capability — meaningful only when the receiver has
+        // scanned the receipt themselves.
         //
-        //  1. **Update path** (`existingTransaction != nil`) — keep
-        //     the receiver's local mode. `splitMode` reflects how the
-        //     receiver visualises this split locally: `.byItems`
-        //     requires receipt items on this device, `.byAmount` shows
-        //     pre-computed per-person amounts. A re-share from the
-        //     sharer must not flip that local view (same rule we
-        //     already apply to `title` / `category` / `emoji` above
-        //     for the same "receiver's local taxonomy wins" reason).
-        //     This also fixes the round-trip case where a receiver
-        //     who originally had items + `.byItems` would have their
-        //     mode overwritten to `.byAmount` after the friend's
-        //     update came back through this mapper.
+        // Items locally (`receiverHasLocalItemsForTx == true`):
+        //   • `.byItems` / `.byAmount` / nil payload → keep `.byItems`.
+        //     The friend's wire format is always `.byAmount` for
+        //     items-backed shares (the encoder coerces) — preserving
+        //     `.byItems` keeps the receiver's "Split by receipt"
+        //     display consistent with their items, even after a
+        //     no-op or scalar-only update from the friend.
+        //   • `.evenly` / `.settleUp` payload → adopt that mode. The
+        //     friend made an explicit choice to redistribute; the
+        //     receiver's local item-based view yields to the friend's
+        //     intent (items stay in the store but no longer drive
+        //     the breakdown until the receiver flips back manually).
         //
-        //  2. **First import** — take the payload's mode, but
-        //     defensively coerce `.byItems` to `.byAmount`. Receipt
-        //     items aren't transported in the URL payload, so a
-        //     `.byItems`-tagged transaction with an empty item store
-        //     is internally inconsistent (`CreateTransactionViewModel`
-        //     opens edit in `.byItems` mode with no scanned receipt;
-        //     `ShareDistributionView` labels it "By items in receipt"
-        //     with nothing to point at). Newer sharers coerce on the
-        //     encode side already, but this branch is the defense for
-        //     older sharers that emitted `"byItems"` on the wire.
+        // No items locally (`receiverHasLocalItemsForTx == false`):
+        //   • `.byItems` payload → coerce to `.byAmount`. Items
+        //     don't exist on this device, so `.byItems` is
+        //     structurally impossible — the detail card would label
+        //     "By items in receipt" pointing at an empty list and
+        //     the edit modal would open the receipt-scan affordance
+        //     for a row that can't have one.
+        //   • Any other mode → use the payload's value verbatim.
+        //
+        // First-time import (`existingTransaction == nil`,
+        // `receiverHasLocalItemsForTx == false`): falls naturally
+        // into the "no items locally" branch — no special-case path.
+        let payloadMode = payload.sm.flatMap(SplitMode.init(rawValue:))
         let resolvedSplitMode: SplitMode?
-        if let existingMode = existingTransaction?.splitInfo?.splitMode {
-            resolvedSplitMode = existingMode
+        if receiverHasLocalItemsForTx {
+            switch payloadMode {
+            case .byItems, .byAmount, .none:
+                resolvedSplitMode = .byItems
+            case .evenly, .settleUp:
+                resolvedSplitMode = payloadMode
+            }
         } else {
-            let decoded = payload.sm.flatMap(SplitMode.init(rawValue:))
-            resolvedSplitMode = (decoded == .byItems) ? .byAmount : decoded
+            resolvedSplitMode = (payloadMode == .byItems) ? .byAmount : payloadMode
         }
 
         let receiverSplit = SplitInfo(

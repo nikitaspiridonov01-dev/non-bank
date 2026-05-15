@@ -55,7 +55,8 @@ async function callModel(
   const body = {
     model,
     temperature: 0.1,
-    max_tokens: 2048,
+    // 4096 covers ~65 items (see cloudflare.ts for rationale).
+    max_tokens: 4096,
     messages: [
       { role: "system", content: RECEIPT_SYSTEM_PROMPT },
       {

@@ -43,7 +43,13 @@ export const cloudflareProvider: Provider = {
           { role: "user", content: userPrompt },
         ],
         image: Array.from(req.imageBytes),
-        max_tokens: 2048,
+        // 4096 covers ~65 receipt items at ~60 tokens each, with
+        // overhead for the JSON wrapper + metadata. The previous
+        // 2048 cap truncated the items array mid-emission on
+        // 30+-item receipts, producing malformed JSON the router
+        // logged as `bad_response` and rolled over to the next
+        // provider (which had the same cap).
+        max_tokens: 4096,
         temperature: 0.1,
       })) as { response?: string };
     } catch (e) {

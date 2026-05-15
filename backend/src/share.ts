@@ -27,6 +27,32 @@
 
 import { pixelCatSVG } from "./pixelCat.ts";
 
+/// User-facing app name. Externalised so a future rename doesn't
+/// require chasing every error string and og tag. Storage-key prefixes
+/// (e.g. `nonbank-tried-redirect-…`, the `nonbank://` URL scheme) stay
+/// as their identifier-style literals — those are wire formats, not
+/// display strings.
+const APP_NAME = "non-bank";
+
+/// Allowed BCP-47 language tags for `toLocaleDateString` on this page.
+/// We deliberately don't pass `Accept-Language` verbatim — clients
+/// can send dozens of obscure tags and `Intl.DateTimeFormat` rejects
+/// some, plus we want layout-stable output across languages. Anything
+/// not on this list falls back to `en-US`.
+const SUPPORTED_LOCALES = new Set([
+  "en-US", "en-GB", "en-CA", "en-AU",
+  "ru-RU", "uk-UA",
+  "de-DE", "de-AT", "de-CH",
+  "fr-FR", "fr-CA",
+  "es-ES", "es-MX",
+  "it-IT",
+  "pt-PT", "pt-BR",
+  "pl-PL",
+  "sr-RS", "sr-Latn-RS", "hr-HR",
+  "cs-CZ", "nl-NL",
+  "tr-TR",
+]);
+
 interface SharedParticipant {
   id: string;
   n: string;
@@ -69,26 +95,62 @@ export async function handleSharePage(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const p = url.searchParams.get("p");
   if (!p) {
-    return htmlResponse(errorPage("This share link is missing its payload."), 400);
+    return htmlResponse(errorPage(`This share link is missing its payload.`), 400);
   }
 
   let payload: SharedPayload;
   try {
     const json = base64urlDecodeToString(p);
     payload = JSON.parse(json);
-  } catch {
-    return htmlResponse(errorPage("This share link is malformed and can't be opened."), 400);
+  } catch (e) {
+    // Log so we can spot pattern (truncated paste, bad encoding) in
+    // Worker logs. The user-facing message stays generic.
+    console.error("[share] base64/JSON decode failed:", e instanceof Error ? e.message : String(e));
+    return htmlResponse(errorPage(`This share link is malformed and can't be opened.`), 400);
   }
 
   if (typeof payload !== "object" || payload === null || payload.v !== 1) {
     return htmlResponse(
-      errorPage("This share link uses a newer format. Update non-bank to open it."),
+      errorPage(`This share link uses a newer format. Update ${APP_NAME} to open it.`),
       400,
     );
   }
 
   const appLink = `nonbank://share?p=${p}`;
-  return htmlResponse(renderSharePage(payload, appLink), 200);
+  const locale = pickLocale(req.headers.get("accept-language"));
+  // Canonical URL strips any incidental query params beyond `p` so the
+  // og:url meta-tag stays stable for messengers de-duplicating link
+  // previews by URL.
+  const canonicalURL = `${url.origin}${url.pathname}?p=${encodeURIComponent(p)}`;
+  return htmlResponse(renderSharePage(payload, appLink, locale, canonicalURL), 200);
+}
+
+/// Picks the best supported locale from an `Accept-Language` header.
+/// Handles the standard `lang;q=weight` syntax and falls back to
+/// `en-US` for anything unrecognised. Kept allow-list–driven (see
+/// `SUPPORTED_LOCALES`) so a malformed header can't reach `Intl`
+/// with a value it'll throw on.
+function pickLocale(header: string | null): string {
+  if (!header) return "en-US";
+  const parts = header
+    .split(",")
+    .map((s) => {
+      const [tag, ...rest] = s.trim().split(";");
+      const qPart = rest.find((p) => p.trim().startsWith("q="));
+      const q = qPart ? parseFloat(qPart.trim().slice(2)) : 1;
+      return { tag: tag.trim(), q: isNaN(q) ? 1 : q };
+    })
+    .sort((a, b) => b.q - a.q);
+  for (const { tag } of parts) {
+    if (SUPPORTED_LOCALES.has(tag)) return tag;
+    // Allow the `lang` part to match a `lang-REGION` we support
+    // (e.g. `de` from a browser → `de-DE`).
+    const langOnly = tag.split("-")[0];
+    for (const supported of SUPPORTED_LOCALES) {
+      if (supported.startsWith(langOnly + "-")) return supported;
+    }
+  }
+  return "en-US";
 }
 
 // ─── Domain types & math ──────────────────────────────────────────────
@@ -189,13 +251,18 @@ function ordinal(day: number): string {
 
 // ─── Rendering ────────────────────────────────────────────────────────
 
-function renderSharePage(payload: SharedPayload, appLink: string): string {
+function renderSharePage(
+  payload: SharedPayload,
+  appLink: string,
+  locale: string,
+  canonicalURL: string,
+): string {
   const sharerName = (payload.sn ?? "").trim() || "Someone";
   const titleHTML = escapeHTML(payload.t || "Shared transaction");
   const categoryEmoji = payload.ce ?? "💸";
   const categoryName = payload.cn ?? "";
   const isExpense = payload.k !== "inc";
-  const dateLabel = formatDate(payload.d);
+  const dateLabel = formatDate(payload.d, locale);
   const recurringLabel = payload.r ? formatRecurring(payload.r) : null;
 
   const people: Person[] = [
@@ -264,17 +331,34 @@ function renderSharePage(payload: SharedPayload, appLink: string): string {
   const peopleCount = people.length;
   const peopleLabel = `${peopleCount} ${peopleCount === 1 ? "person" : "people"}`;
 
+  // `<html lang>` is the page's primary language hint used by
+  // assistive tech + browser auto-translation. Mirrors the locale
+  // we already use for the date label so the two stay aligned.
+  const htmlLang = locale;
+  // Open Graph `og:locale` requires `xx_XX` format (underscore, not
+  // the BCP-47 hyphen the rest of the page uses).
+  const ogLocale = locale.replace("-", "_");
+
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${escapeAttr(htmlLang)}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>${escapeHTML(sharerName)} shared a transaction · non-bank</title>
+<title>${escapeHTML(sharerName)} shared a transaction · ${APP_NAME}</title>
 <meta name="theme-color" content="#0a0807">
 
 <meta property="og:title" content="${escapeHTML(sharerName)} shared “${titleHTML}”">
-<meta property="og:description" content="${escapeHTML(formatAmount(payload.ta, payload.c))} · open in non-bank">
+<meta property="og:description" content="${escapeHTML(formatAmount(payload.ta, payload.c))} · open in ${APP_NAME}">
 <meta property="og:type" content="website">
+<meta property="og:site_name" content="${APP_NAME}">
+<meta property="og:url" content="${escapeAttr(canonicalURL)}">
+<meta property="og:locale" content="${escapeAttr(ogLocale)}">
+<!-- og:image: deliberately omitted. The Worker has no static-asset
+     storage and rendering a per-payload SVG og card from a separate
+     /share/og endpoint is tracked as a follow-up task. iMessage /
+     Telegram / WhatsApp will fall back to text-only previews until
+     then; adding a non-existent og:image URL would surface a broken-
+     image placeholder which reads worse than no preview at all. -->
 
 ${PAGE_STYLES}
 </head>
@@ -1226,6 +1310,23 @@ function htmlResponse(html: string, status = 200): Response {
       "cache-control": "no-store",
       "x-frame-options": "DENY",
       "referrer-policy": "no-referrer",
+      // CSP: the page is fully self-contained — every script, style,
+      // and image is inlined into this HTML, no external fetches.
+      // `'unsafe-inline'` for script/style is unavoidable because of
+      // the inline `<style>` and `<script>` blocks; everything else
+      // is locked to `'none'` so an injected `<script src="…">` /
+      // `<iframe src>` / `<img src="…">` cannot reach any origin.
+      // `frame-ancestors 'none'` doubles the protection of the
+      // existing `x-frame-options: DENY` for modern browsers.
+      "content-security-policy": [
+        "default-src 'none'",
+        "script-src 'unsafe-inline'",
+        "style-src 'unsafe-inline'",
+        "img-src 'self' data:",
+        "frame-ancestors 'none'",
+        "form-action 'none'",
+        "base-uri 'none'",
+      ].join("; "),
     },
   });
 }
@@ -1301,14 +1402,26 @@ function formatAmountDecimal(value: number): string {
   return `.${String(cents).padStart(2, "0")}`;
 }
 
-function formatDate(unixSeconds: number): string {
+function formatDate(unixSeconds: number, locale: string = "en-US"): string {
   const ms = Math.round(unixSeconds * 1000);
   const d = new Date(ms);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-US", {
-    weekday: "short",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+  // `Intl.DateTimeFormat` (used under the hood) throws on invalid
+  // tags; `pickLocale` allow-lists to known-good BCP-47 strings so
+  // this can't break, but the try/catch is a cheap safety belt.
+  try {
+    return d.toLocaleDateString(locale, {
+      weekday: "short",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return d.toLocaleDateString("en-US", {
+      weekday: "short",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  }
 }

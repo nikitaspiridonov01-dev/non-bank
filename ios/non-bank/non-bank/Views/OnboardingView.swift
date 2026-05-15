@@ -335,7 +335,7 @@ struct OnboardingView: View {
                 // the splitAccentBold fix for the Settle Up CTA.
                 .background(AppColors.accentBold)
                 .foregroundColor(.white)
-                .cornerRadius(14)
+                .cornerRadius(AppRadius.rowPill)
         }
     }
 

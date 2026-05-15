@@ -212,7 +212,7 @@ struct ImportTransactionsView: View {
                             .padding(.vertical, 14)
                             .background(AppColors.accentBold)
                             .foregroundColor(.white)
-                            .cornerRadius(12)
+                            .cornerRadius(AppRadius.medium)
                     }
                     .padding(.horizontal, AppSpacing.pageHorizontal)
                     .padding(.vertical, AppSpacing.rowVertical)
@@ -246,7 +246,7 @@ struct ImportTransactionsView: View {
                             .padding(.vertical, 14)
                             .background(AppColors.accentBold)
                             .foregroundColor(.white)
-                            .cornerRadius(12)
+                            .cornerRadius(AppRadius.medium)
                     }
                     .padding(.horizontal, AppSpacing.pageHorizontal)
                     .padding(.vertical, AppSpacing.rowVertical)
@@ -777,7 +777,7 @@ struct FieldMappingView: View {
                         .padding(.vertical, 14)
                         .background(continueEnabled ? AppColors.accentBold : AppColors.controlDisabled)
                         .foregroundColor(continueEnabled ? .white : AppColors.iconInactive)
-                        .cornerRadius(12)
+                        .cornerRadius(AppRadius.medium)
                 }
                 .disabled(!continueEnabled)
                 .padding(.horizontal, AppSpacing.pageHorizontal)
@@ -795,7 +795,7 @@ struct FieldMappingView: View {
                         .padding(.vertical, 14)
                         .background(continueEnabled ? AppColors.accentBold : AppColors.controlDisabled)
                         .foregroundColor(continueEnabled ? .white : AppColors.iconInactive)
-                        .cornerRadius(12)
+                        .cornerRadius(AppRadius.medium)
                 }
                 .disabled(!continueEnabled)
                 .padding(.horizontal, AppSpacing.pageHorizontal)
@@ -1598,7 +1598,7 @@ struct ImportSuccessScreen: View {
                         .padding(.vertical, 14)
                         .background(AppColors.accentBold)
                         .foregroundColor(.white)
-                        .cornerRadius(12)
+                        .cornerRadius(AppRadius.medium)
                 }
                 .padding(.horizontal, AppSpacing.xxl)
                 .padding(.bottom, AppSpacing.xxxl)

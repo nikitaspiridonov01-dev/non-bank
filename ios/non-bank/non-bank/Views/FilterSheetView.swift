@@ -191,8 +191,11 @@ struct FilterSheetView: View {
                                             )
                                             .frame(width: 40, height: 40)
                                             .background(
+                                                // Selected day circle carries the white `.foregroundColor`
+                                                // text above — must use `accentBold` for ≥3:1
+                                                // contrast. Plain `accentColor` was ~2.6:1 (AA fail).
                                                 isSelected && hasData
-                                                    ? Circle().fill(Color.accentColor)
+                                                    ? Circle().fill(AppColors.accentBold)
                                                     : isSelected
                                                         ? Circle().fill(AppColors.controlDisabled)
                                                         : nil

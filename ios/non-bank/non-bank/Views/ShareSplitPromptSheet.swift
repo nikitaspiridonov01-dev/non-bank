@@ -127,7 +127,7 @@ struct ShareSplitPromptSheet: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
                     .background(AppColors.splitAccentBold)
-                    .cornerRadius(14)
+                    .cornerRadius(AppRadius.rowPill)
                 }
                 .disabled(resolvedCategory == nil)
 

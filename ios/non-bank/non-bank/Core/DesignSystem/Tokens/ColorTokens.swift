@@ -275,6 +275,29 @@ enum AppColors {
         Color(red: 110/255, green: 70/255, blue: 180/255)
     }
 
+    /// Top section of the two-tone Split breakdown chart in
+    /// `SplitBreakdownView` — a lighter saturated violet that pairs
+    /// with `splitChartPeople` underneath. Held as a static color
+    /// (no light/dark variant) because the chart hosts white text +
+    /// glyphs in both themes; an adaptive dark-mode lavender would
+    /// fall under the contrast floor for those overlays. Distinct
+    /// from `splitAccent` / `splitAccentBold` so a future redesign
+    /// of the chart palette doesn't ripple into pill / chip surfaces
+    /// that share the Split sub-app vocabulary.
+    static var splitChartPurchase: Color {
+        Color(red: 0.58, green: 0.43, blue: 0.92)
+    }
+
+    /// Bottom section of the two-tone Split breakdown chart in
+    /// `SplitBreakdownView` — deep dusty plum. About half the
+    /// luminance of `splitChartPurchase` so the two sections read
+    /// as clearly distinct surfaces (the earlier near-equal-
+    /// luminance pair read as "two close shades of purple"). Held
+    /// static for the same reasons as `splitChartPurchase`.
+    static var splitChartPeople: Color {
+        Color(red: 0.26, green: 0.16, blue: 0.50)
+    }
+
     /// Reminder card background — warm cream in light, warm near-black in dark.
     static var reminderBackgroundTint: Color {
         dynamic(

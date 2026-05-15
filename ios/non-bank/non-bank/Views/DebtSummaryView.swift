@@ -634,7 +634,14 @@ struct GroupChip: View {
             .padding(.vertical, 6)
 
         if isActive {
-            labelText.background(Capsule().fill(colorContext.accent))
+            // Active chip is a filled CTA: `textOnAccent` (white in
+            // light, dark ink in dark) on top of the context's
+            // accent fill. Use the *Bold variant so the dark-mode
+            // splitAccent (pale lavender) doesn't fall under the
+            // ≥3:1 contrast floor for filled buttons — the inline
+            // `colorContext.accent` (line above) stays for the
+            // inactive label colour where it sits ON the page.
+            labelText.background(Capsule().fill(colorContext.accentBold))
         } else {
             // Borderless tinted capsule — matches the chip styling on
             // the Profile / Friends list (which uses fill-only, no

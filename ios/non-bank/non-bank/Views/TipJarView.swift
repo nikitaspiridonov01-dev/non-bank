@@ -183,7 +183,11 @@ private struct TipRowView: View {
                 .foregroundColor(.white)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
-                .background(Capsule().fill(Color.accentColor))
+                // White text on `Color.accentColor` (`#F18A4D`) only
+                // hits ~2.6:1 contrast — fails WCAG AA. `accentBold`
+                // is the deeper sienna variant designed exactly for
+                // filled CTAs with white labels (≥3:1 large-text AA).
+                .background(Capsule().fill(AppColors.accentBold))
         case .mostGenerous:
             Text("Most generous")
                 .font(.system(size: 11, weight: .semibold))

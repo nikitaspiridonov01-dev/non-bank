@@ -74,15 +74,18 @@ extension ColorContext {
     /// Filled-button accent for this context — deeper variant so
     /// white text on top hits ≥3:1 contrast.
     ///
-    /// Note: Split currently doesn't have a dedicated `*Bold`
-    /// variant in `AppColors` because the lavender hue already gives
-    /// reasonable contrast with white text; if a Split bold ever
-    /// becomes necessary, define `splitAccentBold` and update here.
+    /// For Split this routes to `AppColors.splitAccentBold` — the
+    /// static deep violet (`#6E46B4`) that pairs cleanly with white
+    /// in both themes. The default `splitAccent` brightens to a pale
+    /// lavender in dark mode and was the reason `splitAccentBold`
+    /// was introduced in `ColorTokens.swift`; this enum returning
+    /// the lighter `splitAccent` was a leftover from when the bold
+    /// variant didn't exist yet.
     var accentBold: Color {
         switch self {
         case .standard:  return AppColors.accentBold
         case .reminders: return AppColors.reminderAccentBold
-        case .split:     return AppColors.splitAccent
+        case .split:     return AppColors.splitAccentBold
         }
     }
 

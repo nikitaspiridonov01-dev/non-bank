@@ -63,17 +63,25 @@ struct MainTabView: View {
             if !router.hideTabBar {
             HStack {
                 Spacer()
-                // Home Tab
+                // Home Tab.
+                // Inactive tint uses `textSecondary` (not the warm-grey
+                // `iconInactive`) because the latter sits at ~3.2:1
+                // against the cream page — readable but easy to miss
+                // for a user double-tapping the already-active tab.
+                // `textSecondary` lands at ~5.5:1 and reads as
+                // "current vs other" distinctly.
                 Button(action: { router.selectedTab = 0 }) {
                     VStack(spacing: AppSpacing.xs) {
                         Image(systemName: "house.fill")
                             .font(AppFonts.tabIcon)
-                            .foregroundColor(router.selectedTab == 0 ? Color.accentColor : AppColors.iconInactive)
+                            .foregroundColor(router.selectedTab == 0 ? Color.accentColor : AppColors.textSecondary)
                         Text("Home")
                             .font(AppFonts.tabLabel)
-                            .foregroundColor(router.selectedTab == 0 ? Color.accentColor : AppColors.iconInactive)
+                            .foregroundColor(router.selectedTab == 0 ? Color.accentColor : AppColors.textSecondary)
                     }
                 }
+                .accessibilityLabel("Home tab")
+                .accessibilityAddTraits(router.selectedTab == 0 ? .isSelected : [])
                 Spacer(minLength: AppSizes.tabBarCenterSpacing)
                 // Центральная кнопка — black-pill CTA с native iOS 26
                 // Liquid Glass поверх. `ctaSurface` инвертируется
@@ -87,19 +95,24 @@ struct MainTabView: View {
                         .glassEffect(.regular, in: .circle)
                 }
                 .offset(y: AppSizes.fabOffset)
+                .accessibilityLabel("Add transaction")
+                .accessibilityHint("Opens the create-transaction form")
                 Spacer(minLength: AppSizes.tabBarCenterSpacing)
-                
-                // Profile Tab
+
+                // Profile Tab. Same `textSecondary` inactive tint as
+                // the Home tab — see comment above.
                 Button(action: { router.selectedTab = 1 }) {
                     VStack(spacing: AppSpacing.xs) {
                         Image(systemName: "person.crop.circle")
                             .font(AppFonts.tabIcon)
-                            .foregroundColor(router.selectedTab == 1 ? Color.accentColor : AppColors.iconInactive)
+                            .foregroundColor(router.selectedTab == 1 ? Color.accentColor : AppColors.textSecondary)
                         Text("Profile")
                             .font(AppFonts.tabLabel)
-                            .foregroundColor(router.selectedTab == 1 ? Color.accentColor : AppColors.iconInactive)
+                            .foregroundColor(router.selectedTab == 1 ? Color.accentColor : AppColors.textSecondary)
                     }
                 }
+                .accessibilityLabel("Profile tab")
+                .accessibilityAddTraits(router.selectedTab == 1 ? .isSelected : [])
                 Spacer()
             }
             .padding(.horizontal, AppSizes.tabBarHorizontalPadding)

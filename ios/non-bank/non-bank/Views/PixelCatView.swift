@@ -197,6 +197,17 @@ struct PixelCatView: View {
             }
         }
         .frame(width: size, height: size)
+        // VoiceOver treats the avatar as decorative: every place it
+        // appears pairs it with a friend / "You" `Text` element
+        // nearby, so reading the avatar separately just doubles the
+        // announcement ("Image, Alex"). Stacked-avatar contexts
+        // (Split breakdown overlap, payer chips, picker rows) would
+        // chant "Image, Image, Image" without this hint. Callers
+        // that DO need the avatar as a standalone VoiceOver target —
+        // a button whose only content is the cat, no nearby text —
+        // can override with `.accessibilityHidden(false)` and supply
+        // their own label.
+        .accessibilityHidden(true)
     }
 }
 

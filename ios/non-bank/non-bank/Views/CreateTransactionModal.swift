@@ -1151,6 +1151,7 @@ struct CreateTransactionModal: View {
                     Button(action: { dismiss() }) {
                         Image(systemName: "xmark")
                     }
+                    .accessibilityLabel("Close")
                 }
                 // Hide the type segmented picker + the right-hand
                 // confirm button while the parsing loader is up — both

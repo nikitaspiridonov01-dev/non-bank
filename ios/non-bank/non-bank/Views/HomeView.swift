@@ -557,6 +557,11 @@ struct HomeView: View {
             }
         }
         .buttonStyle(.plain)
+        // VoiceOver: glyph-only chip with no inline text. Read out
+        // the pending count when present so users hear "Reminders,
+        // 3 pending" rather than a bare "Button". Same label drives
+        // Voice Control's verbal addressing of the button.
+        .accessibilityLabel(count > 0 ? "Reminders, \(count) pending" : "Reminders")
         .padding(.top, 6)
         .padding(.leading, AppSpacing.md)
     }
@@ -574,6 +579,8 @@ struct HomeView: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Scan receipt")
+        .accessibilityHint("Opens the camera to capture a receipt")
         .padding(.top, 6)
         .padding(.trailing, AppSpacing.md)
     }

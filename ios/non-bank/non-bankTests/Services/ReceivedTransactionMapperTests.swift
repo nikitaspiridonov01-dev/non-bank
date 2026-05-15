@@ -367,6 +367,61 @@ final class ReceivedTransactionMapperTests: XCTestCase {
         XCTAssertNil(resolved.transaction.splitInfo?.splitMode)
     }
 
+    func testMap_byItemsPayloadOnFirstImport_coercedToByAmount() throws {
+        // Defensive: older sharers (pre-encoder-coercion) emitted
+        // `"byItems"` literally even though receipt items don't ride
+        // along in the URL. The receiver MUST coerce to `.byAmount`
+        // so the local detail card / edit modal don't surface a
+        // "Split by receipt" affordance for a transaction whose
+        // items live on someone else's device.
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 50, pa: 0
+        )
+        let payload = makePayload(participants: [me], sm: "byItems")
+        let resolved = try ReceivedTransactionMapper.map(
+            payload: payload, receiverParticipantIndex: 0,
+            existingFriends: [], existingCategories: [foodCategory],
+            nextTransactionID: 1
+        )
+        XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .byAmount)
+    }
+
+    func testMap_updatePath_preservesReceiverSplitMode() throws {
+        // Round-trip preservation: the receiver had `.byItems` locally
+        // (scanned the receipt, items still in their ReceiptItemStore).
+        // The sharer edited their copy and re-shared with `.byAmount`
+        // on the wire. The receiver's mode must stay `.byItems` —
+        // same "receiver's local taxonomy wins" rule that already
+        // protects title / category / emoji on the update path.
+        // Otherwise the update would silently flip the receiver's
+        // detail card from "By items in receipt" to "By amount"
+        // while their items still sit untouched on device.
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 50, pa: 0
+        )
+        let payload = makePayload(participants: [me], sm: "byAmount")
+        let existingSplit = SplitInfo(
+            totalAmount: 100, paidByMe: 0, myShare: 50, lentAmount: -50,
+            friends: [FriendShare(friendID: sharerID, share: 50, paidAmount: 100)],
+            splitMode: .byItems
+        )
+        let existingTx = Transaction(
+            id: 99, syncID: payload.id,
+            emoji: "🍕", category: "Food", title: "Pizza Friday",
+            description: nil, amount: 0, currency: "EUR",
+            date: Date(timeIntervalSince1970: 1_700_000_000),
+            type: .expenses, tags: nil, splitInfo: existingSplit
+        )
+        let resolved = try ReceivedTransactionMapper.map(
+            payload: payload, receiverParticipantIndex: 0,
+            existingFriends: [], existingCategories: [foodCategory],
+            nextTransactionID: 99,
+            existingTransaction: existingTx
+        )
+        XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .byItems,
+            "Receiver's local .byItems must survive a re-share even when the sharer's payload is .byAmount")
+    }
+
     // MARK: - Update path: receiver's title + category preserved
 
     func testMap_updatePath_preservesReceiverTitleCategoryEmoji() throws {

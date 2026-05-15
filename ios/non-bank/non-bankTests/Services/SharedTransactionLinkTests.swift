@@ -234,6 +234,37 @@ final class SharedTransactionLinkTests: XCTestCase {
         XCTAssertEqual(payload.sm, "byAmount")
     }
 
+    func testEncode_byItemsCoercedToByAmountOnWire() throws {
+        // Receipt items aren't transported in the share URL, so a
+        // `.byItems` sender's wire `sm` must surface as `"byAmount"`.
+        // Without this coercion the receiver opens edit in `.byItems`
+        // mode with no items to point at, and `ShareDistributionView`
+        // labels the row "By items in receipt" when there's nothing
+        // local to back it. Matches the documented contract on
+        // `SplitMode.byAmount` ("the wire format used when sharing a
+        // `byItems` transaction").
+        let friend = Friend(id: "blue-otter-A2BC", name: "Alex")
+        let split = SplitInfo(
+            totalAmount: 100, paidByMe: 100, myShare: 50, lentAmount: 50,
+            friends: [FriendShare(friendID: friend.id, share: 50, paidAmount: 0)],
+            splitMode: .byItems
+        )
+        let tx = Transaction(
+            id: 1, syncID: "tx-byitems-001",
+            emoji: "🍕", category: "Food", title: "Pizza",
+            description: nil, amount: 100, currency: "EUR",
+            date: Date(timeIntervalSince1970: 1_711_300_000),
+            type: .expenses, tags: nil, splitInfo: split
+        )
+        let url = try SharedTransactionLink.encode(
+            transaction: tx, sharerID: sharerID, sharerName: nil,
+            friends: [friend], category: sampleCategory
+        )
+        let payload = try SharedTransactionLink.decode(url: url)
+        XCTAssertEqual(payload.sm, "byAmount",
+            "byItems is a local-only display mode; wire format must coerce to byAmount")
+    }
+
     func testRoundTrip_cyrillicAndEmojiInTextFields() throws {
         // Cyrillic title and emoji-laden category name — URLs must
         // survive without re-encoding chaos.

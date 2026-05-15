@@ -151,6 +151,18 @@ enum SharedTransactionLink {
         let resolvedInterval = repeatInterval ?? transaction.repeatInterval
         let recurring = resolvedInterval.flatMap(SharedRecurring.init(from:))
 
+        // `.byItems` is a local-only display mode: the receipt items
+        // it visualises live in the sharer's `ReceiptItemStore` and
+        // aren't transported in the URL payload. Coerce to `.byAmount`
+        // on the wire so the receiver — who has no items locally —
+        // sees the computed per-person shares with a label that
+        // matches reality. This brings the encoder in line with the
+        // documented contract on `SplitMode.byAmount` and with the
+        // comment on `ShareDistributionView.transactionID` that says
+        // "Sharing strips the items list and converts the recipient's
+        // copy to `byAmount`".
+        let wireSplitMode: SplitMode? = (split.splitMode == .byItems) ? .byAmount : split.splitMode
+
         let payload = SharedTransactionPayload(
             v: currentSchemaVersion,
             id: transaction.syncID,
@@ -164,7 +176,7 @@ enum SharedTransactionLink {
             t: transaction.title,
             cn: category.title,
             ce: category.emoji,
-            sm: split.splitMode?.rawValue,
+            sm: wireSplitMode?.rawValue,
             sn: sharerName,
             f: participants,
             r: recurring

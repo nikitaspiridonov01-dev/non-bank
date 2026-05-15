@@ -210,13 +210,46 @@ enum ReceivedTransactionMapper {
         }
         let receiverFriends = [sharerAsFriend] + otherShares
 
+        // Resolve the receiver-side `splitMode`. Two branches:
+        //
+        //  1. **Update path** (`existingTransaction != nil`) — keep
+        //     the receiver's local mode. `splitMode` reflects how the
+        //     receiver visualises this split locally: `.byItems`
+        //     requires receipt items on this device, `.byAmount` shows
+        //     pre-computed per-person amounts. A re-share from the
+        //     sharer must not flip that local view (same rule we
+        //     already apply to `title` / `category` / `emoji` above
+        //     for the same "receiver's local taxonomy wins" reason).
+        //     This also fixes the round-trip case where a receiver
+        //     who originally had items + `.byItems` would have their
+        //     mode overwritten to `.byAmount` after the friend's
+        //     update came back through this mapper.
+        //
+        //  2. **First import** — take the payload's mode, but
+        //     defensively coerce `.byItems` to `.byAmount`. Receipt
+        //     items aren't transported in the URL payload, so a
+        //     `.byItems`-tagged transaction with an empty item store
+        //     is internally inconsistent (`CreateTransactionViewModel`
+        //     opens edit in `.byItems` mode with no scanned receipt;
+        //     `ShareDistributionView` labels it "By items in receipt"
+        //     with nothing to point at). Newer sharers coerce on the
+        //     encode side already, but this branch is the defense for
+        //     older sharers that emitted `"byItems"` on the wire.
+        let resolvedSplitMode: SplitMode?
+        if let existingMode = existingTransaction?.splitInfo?.splitMode {
+            resolvedSplitMode = existingMode
+        } else {
+            let decoded = payload.sm.flatMap(SplitMode.init(rawValue:))
+            resolvedSplitMode = (decoded == .byItems) ? .byAmount : decoded
+        }
+
         let receiverSplit = SplitInfo(
             totalAmount: payload.ta,
             paidByMe: receiverPaid,
             myShare: receiverShare,
             lentAmount: receiverLent,
             friends: receiverFriends,
-            splitMode: payload.sm.flatMap(SplitMode.init(rawValue:))
+            splitMode: resolvedSplitMode
         )
 
         // ── Transaction itself ───────────────────────────────────────

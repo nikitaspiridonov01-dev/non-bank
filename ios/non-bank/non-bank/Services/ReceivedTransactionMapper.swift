@@ -123,6 +123,17 @@ enum ReceivedTransactionMapper {
         /// the store and passes the precomputed bool so the mapper
         /// stays pure.
         receiverHasLocalItemsForTx: Bool = false,
+        /// `true` when the share-items channel returned items for this
+        /// payload (sender uploaded them, recipient decrypted them
+        /// successfully). Treated equivalently to having local items
+        /// for split-mode resolution — `.byItems` is the right
+        /// rendering because the items will be persisted alongside
+        /// this transaction immediately after the mapper runs. When
+        /// the channel returned nothing (sender on an older build,
+        /// server outage, or the snapshot expired), this is `false`
+        /// and the resolver falls back to the historical `.byAmount`
+        /// behaviour the friend has seen since launch.
+        payloadCameWithItems: Bool = false,
         sharerPlaceholderName: String = "Friend"
     ) throws -> ResolvedShare {
         guard payload.f.indices.contains(receiverParticipantIndex) else {
@@ -251,8 +262,15 @@ enum ReceivedTransactionMapper {
         // `receiverHasLocalItemsForTx == false`): falls naturally
         // into the "no items locally" branch — no special-case path.
         let payloadMode = payload.sm.flatMap(SplitMode.init(rawValue:))
+        // Items are available from EITHER source: locally scanned on
+        // the receiver's device, OR freshly decrypted from the
+        // share-items channel. Either way the "items-aware" branch
+        // below should apply — the receiver will see a populated
+        // items list under this transaction the moment we finish
+        // mapping.
+        let itemsAvailable = receiverHasLocalItemsForTx || payloadCameWithItems
         let resolvedSplitMode: SplitMode?
-        if receiverHasLocalItemsForTx {
+        if itemsAvailable {
             switch payloadMode {
             case .byItems, .byAmount, .none:
                 resolvedSplitMode = .byItems
@@ -317,6 +335,63 @@ enum ReceivedTransactionMapper {
             newCategory: newCategory,
             payloadChecksum: payload.checksum
         )
+    }
+
+    // MARK: - Item-assignee rewrite
+    //
+    // Receipt items uploaded by the sender carry `assignedParticipantIDs`
+    // that reference IDs in the sender's local universe:
+    //   • `ReceiptItem.selfParticipantID` (= `"__me__"`) for items the
+    //     sender themselves claimed
+    //   • `Friend.id` values for items claimed by the sender's friends
+    //     (including the recipient, who is one of those friends from
+    //     the sender's perspective)
+    //
+    // On the receiver's side those identifiers mean something different:
+    //   • `"__me__"` now refers to the RECEIVER, not the sender → if we
+    //     persisted the items verbatim, every item the sender had
+    //     claimed would silently flip to the receiver's column.
+    //   • The participant ID the sender used for the receiver (which is
+    //     in `payload.f[receiverParticipantIndex].id`) is the
+    //     receiver's userID — locally that should be `"__me__"`.
+    //
+    // The two-line rewrite below is the receiver-perspective identity
+    // flip applied to each item's assignments. Everything else stays
+    // verbatim — IDs of other friends keep pointing at the same
+    // (newly-created or existing) Friend records on the receiver's
+    // side, so each item's split breakdown re-renders correctly under
+    // the receiver's local point of view.
+
+    /// Rewrite item-assignment IDs from sender-perspective to
+    /// receiver-perspective. Pure function — takes the fetched items
+    /// and the same `(payload, receiverParticipantIndex)` pair the
+    /// transaction mapper consumed, returns items with their
+    /// `assignedParticipantIDs` adjusted.
+    ///
+    /// Callers are expected to invoke this BEFORE persisting items
+    /// to `ReceiptItemStore`; the store keys items by the receiver's
+    /// local participant IDs, so a stale-perspective ID would render
+    /// as "unassigned" in the split breakdown.
+    static func rewriteItemAssignees(
+        items: [ReceiptItem],
+        payload: SharedTransactionPayload,
+        receiverParticipantIndex: Int
+    ) -> [ReceiptItem] {
+        guard payload.f.indices.contains(receiverParticipantIndex) else { return items }
+        let sharerID = payload.s
+        let receiverPayloadID = payload.f[receiverParticipantIndex].id
+        let selfSentinel = ReceiptItem.selfParticipantID
+        return items.map { item in
+            var rewritten = item
+            rewritten.assignedParticipantIDs = item.assignedParticipantIDs.map { id in
+                switch id {
+                case selfSentinel: return sharerID
+                case receiverPayloadID: return selfSentinel
+                default: return id
+                }
+            }
+            return rewritten
+        }
     }
 
     // MARK: - Emoji uniqueness helper

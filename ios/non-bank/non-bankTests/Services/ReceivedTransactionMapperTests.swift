@@ -628,4 +628,155 @@ final class ReceivedTransactionMapperTests: XCTestCase {
         XCTAssertEqual(resolved.transaction.category, "Food")
         XCTAssertEqual(resolved.transaction.emoji, "🍕")
     }
+
+    // MARK: - Phase 10.1: byItems reconstruction via share-items channel
+
+    func testMap_payloadCameWithItems_firstImport_resolvesToByItems() throws {
+        // First-time import with items delivered via the share-items
+        // channel must resolve to `.byItems` even though the wire mode
+        // is `.byAmount` (the encoder always coerces). Without this
+        // the recipient would see `.byAmount` and miss the per-item
+        // breakdown the sender prepared.
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 50, pa: 0
+        )
+        let payload = makePayload(participants: [me], sm: "byAmount")
+        let resolved = try ReceivedTransactionMapper.map(
+            payload: payload,
+            receiverParticipantIndex: 0,
+            existingFriends: [], existingCategories: [foodCategory],
+            nextTransactionID: 1,
+            payloadCameWithItems: true
+        )
+        XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .byItems)
+    }
+
+    func testMap_payloadCameWithItems_evenlyOverrides() throws {
+        // Even with items in flight, an explicit `.evenly` payload
+        // wins — that matches the local-items rule: the sender's
+        // mode-change intent is honoured over the items-driven
+        // display.
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 50, pa: 0
+        )
+        let payload = makePayload(participants: [me], sm: "50/50")
+        let resolved = try ReceivedTransactionMapper.map(
+            payload: payload,
+            receiverParticipantIndex: 0,
+            existingFriends: [], existingCategories: [foodCategory],
+            nextTransactionID: 1,
+            payloadCameWithItems: true
+        )
+        XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .evenly)
+    }
+
+    func testMap_payloadCameWithItemsFalse_stillCoercesByItemsToByAmount() throws {
+        // Sanity guard for the no-items fallback path: when the
+        // share-items channel returns nothing, the old "byItems on
+        // wire → coerce to byAmount" rule must still hold so the
+        // recipient doesn't see an empty items list.
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 50, pa: 0
+        )
+        let payload = makePayload(participants: [me], sm: "byItems")
+        let resolved = try ReceivedTransactionMapper.map(
+            payload: payload,
+            receiverParticipantIndex: 0,
+            existingFriends: [], existingCategories: [foodCategory],
+            nextTransactionID: 1,
+            payloadCameWithItems: false
+        )
+        XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .byAmount)
+    }
+
+    // MARK: - rewriteItemAssignees
+
+    private func makeAssignedItem(name: String, total: Double, assignees: [String]) -> ReceiptItem {
+        ReceiptItem(
+            name: name, quantity: 1, price: total, total: total,
+            assignedParticipantIDs: assignees
+        )
+    }
+
+    func testRewriteItemAssignees_swapsSenderSelfWithReceiverSelf() {
+        // Sender's perspective items:
+        //   • Pizza assigned to "__me__" (= sender themselves)
+        //   • Beer assigned to "rec-X1" (= receiver, per payload.f[0])
+        // After receiver-side rewrite:
+        //   • Pizza → sender's participant id (now a Friend on recipient)
+        //   • Beer  → "__me__" (receiver claims it as their own)
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 50, pa: 0
+        )
+        let payload = makePayload(participants: [me])
+        let items = [
+            makeAssignedItem(name: "Pizza", total: 12, assignees: [ReceiptItem.selfParticipantID]),
+            makeAssignedItem(name: "Beer", total: 5, assignees: ["rec-X1"]),
+        ]
+        let rewritten = ReceivedTransactionMapper.rewriteItemAssignees(
+            items: items, payload: payload, receiverParticipantIndex: 0
+        )
+        XCTAssertEqual(rewritten[0].assignedParticipantIDs, [sharerID],
+            "Pizza must be reassigned to sharer (now a Friend on recipient side)")
+        XCTAssertEqual(rewritten[1].assignedParticipantIDs, [ReceiptItem.selfParticipantID],
+            "Beer must flip to recipient's local `__me__` sentinel")
+    }
+
+    func testRewriteItemAssignees_preservesOtherFriends() {
+        // 3-way split: sender + receiver + a third friend Anna.
+        // Items assigned to Anna stay with Anna's id (the mapper
+        // will create a Friend record for her on the receiver side).
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 30, pa: 0
+        )
+        let anna = SharedTransactionPayload.Participant(
+            id: "anna-id-Z9", n: "Anna", sh: 30, pa: 0
+        )
+        let payload = makePayload(
+            participants: [me, anna], sm: "byAmount"
+        )
+        let items = [
+            makeAssignedItem(name: "Salad", total: 8, assignees: ["anna-id-Z9"]),
+            makeAssignedItem(name: "Pasta", total: 10, assignees: [ReceiptItem.selfParticipantID, "anna-id-Z9"]),
+        ]
+        let rewritten = ReceivedTransactionMapper.rewriteItemAssignees(
+            items: items, payload: payload, receiverParticipantIndex: 0
+        )
+        XCTAssertEqual(rewritten[0].assignedParticipantIDs, ["anna-id-Z9"])
+        XCTAssertEqual(rewritten[1].assignedParticipantIDs, [sharerID, "anna-id-Z9"],
+            "Multi-assignee items must keep order and rewrite each id independently")
+    }
+
+    func testRewriteItemAssignees_leavesUnassignedItemsAlone() {
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 50, pa: 0
+        )
+        let payload = makePayload(participants: [me])
+        let items = [
+            makeAssignedItem(name: "Tip", total: 5, assignees: []),
+            makeAssignedItem(name: "Service fee", total: 3, assignees: []),
+        ]
+        let rewritten = ReceivedTransactionMapper.rewriteItemAssignees(
+            items: items, payload: payload, receiverParticipantIndex: 0
+        )
+        XCTAssertTrue(rewritten.allSatisfy { $0.assignedParticipantIDs.isEmpty })
+    }
+
+    func testRewriteItemAssignees_invalidIndex_returnsItemsUnchanged() {
+        // Defensive: a stale picker index that's out-of-bounds for the
+        // payload's participant list should NOT crash or partially
+        // rewrite. Return the items verbatim and let the caller's
+        // upstream guard (the mapper itself) surface the real error.
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 50, pa: 0
+        )
+        let payload = makePayload(participants: [me])
+        let items = [
+            makeAssignedItem(name: "Pizza", total: 12, assignees: [ReceiptItem.selfParticipantID]),
+        ]
+        let rewritten = ReceivedTransactionMapper.rewriteItemAssignees(
+            items: items, payload: payload, receiverParticipantIndex: 99
+        )
+        XCTAssertEqual(rewritten[0].assignedParticipantIDs, [ReceiptItem.selfParticipantID])
+    }
 }

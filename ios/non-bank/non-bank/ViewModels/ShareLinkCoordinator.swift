@@ -297,6 +297,13 @@ final class ShareLinkCoordinator: ObservableObject {
             return !receiptItemStore.items(forTransactionID: txID).isEmpty
         }()
 
+        // The share-items channel may have delivered the sender's
+        // item list + per-item assignments. When present, the mapper
+        // should resolve to `.byItems` even if the wire mode is
+        // `.byAmount` (it always is — the encoder coerces) so the
+        // recipient sees the full breakdown the sender prepared.
+        let itemsCameFromShare = !(fetchedReceiptItems?.isEmpty ?? true)
+
         do {
             let resolved = try ReceivedTransactionMapper.map(
                 payload: payload,
@@ -308,7 +315,8 @@ final class ShareLinkCoordinator: ObservableObject {
                 // the existing id so `update(_:)` targets the right row.
                 nextTransactionID: existingID ?? 0,
                 existingTransaction: existingTx,
-                receiverHasLocalItemsForTx: receiverHasLocalItems
+                receiverHasLocalItemsForTx: receiverHasLocalItems,
+                payloadCameWithItems: itemsCameFromShare
             )
             // Side-effects in dependency order: friends and category
             // must exist before the transaction references them.
@@ -329,7 +337,12 @@ final class ShareLinkCoordinator: ObservableObject {
                 // not the pre-update copy that was sitting in
                 // `transactions` while the async write was in flight.
                 await transactionStore.updateAndWait(resolved.transaction)
-                await persistFetchedReceiptItemsIfAny(forTransactionID: txID, store: receiptItemStore)
+                await persistFetchedReceiptItemsIfAny(
+                    forTransactionID: txID,
+                    payload: payload,
+                    receiverParticipantIndex: index,
+                    store: receiptItemStore
+                )
                 routingState = .completed(syncID: resolved.transaction.syncID, kind: .updated)
             } else {
                 // `addAndReturnID` already awaits the load; we use
@@ -337,7 +350,12 @@ final class ShareLinkCoordinator: ObservableObject {
                 // new SQLite primary key so we can attach any fetched
                 // share-items to the freshly-inserted row.
                 if let insertedID = await transactionStore.addAndReturnID(resolved.transaction) {
-                    await persistFetchedReceiptItemsIfAny(forTransactionID: insertedID, store: receiptItemStore)
+                    await persistFetchedReceiptItemsIfAny(
+                        forTransactionID: insertedID,
+                        payload: payload,
+                        receiverParticipantIndex: index,
+                        store: receiptItemStore
+                    )
                     routingState = .completed(syncID: resolved.transaction.syncID, kind: .createdNew)
                 } else {
                     // `addAndReturnID` looks up by syncID after the load
@@ -415,17 +433,28 @@ final class ShareLinkCoordinator: ObservableObject {
     }
 
     /// Persist any items decrypted from the server-side store under the
-    /// freshly-inserted (or just-updated) transaction's id. No-op when
-    /// the fetch returned nil — the import flow stays on the historical
-    /// byAmount path that pre-dated the items channel. Clears the cache
-    /// after persistence so a subsequent share doesn't re-apply the
-    /// same set.
+    /// freshly-inserted (or just-updated) transaction's id. Rewrites
+    /// `assignedParticipantIDs` from the sender's local-identity space
+    /// (where `__me__` meant the sender) into the receiver's space
+    /// (where `__me__` means the receiver) — see the doc on
+    /// `ReceivedTransactionMapper.rewriteItemAssignees` for the swap
+    /// rule. No-op when the fetch returned nil; the import flow stays
+    /// on the historical byAmount path that pre-dated the items
+    /// channel. Clears the cache after persistence so a subsequent
+    /// share doesn't re-apply the same set.
     private func persistFetchedReceiptItemsIfAny(
         forTransactionID transactionID: Int,
+        payload: SharedTransactionPayload,
+        receiverParticipantIndex: Int,
         store: ReceiptItemStore
     ) async {
         guard let items = fetchedReceiptItems, !items.isEmpty else { return }
-        await store.saveItems(items, for: transactionID)
+        let rewritten = ReceivedTransactionMapper.rewriteItemAssignees(
+            items: items,
+            payload: payload,
+            receiverParticipantIndex: receiverParticipantIndex
+        )
+        await store.saveItems(rewritten, for: transactionID)
         fetchedReceiptItems = nil
     }
 }

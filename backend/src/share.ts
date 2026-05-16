@@ -26,6 +26,31 @@
 //     contained in a single page.
 
 import { pixelCatSVG } from "./pixelCat.ts";
+import { bumpIpShareQuota } from "./quota.ts";
+import { logEvent } from "./log.ts";
+
+// Minimum slice of the Worker `Env` that the share handler needs. Kept
+// narrow on purpose: `share.ts` shouldn't see provider API keys or AI
+// bindings, only the D1 binding and the rate-limit knobs.
+export interface ShareEnv {
+  DB: D1Database;
+  IP_HASH_SALT?: string;
+  PER_IP_SHARE_PER_MINUTE_LIMIT?: string;
+  LOG_LEVEL?: string;
+}
+
+// Duplicate of `hashIp` in index.ts. Kept local to avoid pulling
+// index.ts (which would create an import cycle: index → share → index).
+// 16 hex chars = 64 bits, salted SHA-256 — matches the parse-receipt
+// hashing exactly so the same caller has the same hash across routes.
+async function hashIpForShare(ip: string, salt: string): Promise<string> {
+  const data = new TextEncoder().encode(`${salt}:${ip}`);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 16);
+}
 
 /// User-facing app name. Externalised so a future rename doesn't
 /// require chasing every error string and og tag. Storage-key prefixes
@@ -91,11 +116,37 @@ interface SharedPayload {
   r?: SharedRecurring;
 }
 
-export async function handleSharePage(req: Request): Promise<Response> {
+export async function handleSharePage(
+  req: Request,
+  env: ShareEnv,
+): Promise<Response> {
   const url = new URL(req.url);
   const p = url.searchParams.get("p");
   if (!p) {
     return htmlResponse(errorPage(`This share link is missing its payload.`), 400);
+  }
+
+  // Per-IP burst protection. The HTML render path runs `pixelCatSVG`
+  // and a chunk of template work — unbounded GETs would let one host
+  // drain Worker CPU for free. The 60/min cap is far above any
+  // legitimate use (a real user opens 1-2 share links per session).
+  const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
+  const ipHash = await hashIpForShare(ip, env.IP_HASH_SALT ?? "non-bank-dev-salt");
+  const nowSec = Math.floor(Date.now() / 1000);
+  const limit =
+    Number.parseInt(env.PER_IP_SHARE_PER_MINUTE_LIMIT ?? "", 10) || 60;
+  const gate = await bumpIpShareQuota(env.DB, ipHash, limit, nowSec);
+  if (!gate.ok) {
+    logEvent(env, "warn", {
+      route: "/share",
+      ip_hash: ipHash,
+      msg: "share_rate_limited",
+      reset_at: gate.reset_at,
+    });
+    return htmlResponse(
+      errorPage(`Too many share requests from this network. Try again in a minute.`),
+      429,
+    );
   }
 
   let payload: SharedPayload;
@@ -105,7 +156,12 @@ export async function handleSharePage(req: Request): Promise<Response> {
   } catch (e) {
     // Log so we can spot pattern (truncated paste, bad encoding) in
     // Worker logs. The user-facing message stays generic.
-    console.error("[share] base64/JSON decode failed:", e instanceof Error ? e.message : String(e));
+    logEvent(env, "warn", {
+      route: "/share",
+      ip_hash: ipHash,
+      msg: "decode_failed",
+      error: e instanceof Error ? e.message : String(e),
+    });
     return htmlResponse(errorPage(`This share link is malformed and can't be opened.`), 400);
   }
 

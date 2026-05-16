@@ -107,10 +107,16 @@ actor CloudReceiptParser {
             let attempts = (try? JSONDecoder().decode(ServerError.self, from: data))?.attempts ?? []
             throw Error.allProvidersUnavailable(attempts: attempts.map { "\($0.provider): \($0.error.prefix(80))" })
         }
-        // 429 with `device_rate_limited` = this device hit its 30/day cap.
+        // 429 = the daily cap was reached. Two flavours from the Worker:
+        //   `device_rate_limited` — this device hit its per-device cap
+        //   `ip_rate_limited`     — this network (shared NAT/WiFi or an
+        //                           attacker rotating device IDs) hit
+        //                           the per-IP backstop
+        // Same UX either way (fall back to local OCR, surface reset
+        // time), so both map to `.deviceRateLimited`.
         if http.statusCode == 429 {
             if let serverErr = try? JSONDecoder().decode(ServerError.self, from: data),
-               serverErr.error == "device_rate_limited" {
+               serverErr.error == "device_rate_limited" || serverErr.error == "ip_rate_limited" {
                 let reset = Date(timeIntervalSince1970: TimeInterval(serverErr.reset_at ?? 0))
                 throw Error.deviceRateLimited(resetAt: reset)
             }

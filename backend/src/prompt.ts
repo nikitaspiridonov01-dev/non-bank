@@ -110,16 +110,62 @@ export const RECEIPT_JSON_SCHEMA = {
   required: ["items"],
 } as const;
 
+// Per-field length caps for user-controlled text that ends up inside the
+// LLM prompt. Two purposes:
+//   1. Bound token cost — a malicious 1 MB category name would inflate
+//      every parse-receipt call's prompt and burn provider quota.
+//   2. Prompt-injection ceiling — even after we strip control characters,
+//      a generous cap means an attacker can't fit a long alternative
+//      instruction inside a single field.
+// Numbers picked from real-world usage: longest legitimate iOS category
+// name in the seed list is 22 chars; locale identifiers are <=10 chars
+// (`sr_Latn_RS`). Caps are ~3× headroom over the legitimate maximum.
+export const MAX_CATEGORY_NAME = 64;
+export const MAX_CATEGORY_EMOJI = 8;
+export const MAX_LOCALE_HINT = 16;
+
+// Strip newlines, control chars, and zero-width / bidi formatting chars
+// from user-supplied text before it lands in the prompt. These are the
+// classic prompt-injection escape hatches — a category name containing
+// `\n\nIGNORE PREVIOUS INSTRUCTIONS: ...` would otherwise reach the
+// model as a separate prompt section. Whitespace collapses to single
+// spaces so a long run of tabs doesn't waste cap budget.
+export function sanitizePromptText(input: string, maxLength: number): string {
+  return input
+    // C0 + DEL controls (incl. \n, \r, \t), plus Unicode line/paragraph
+    // separators (U+2028, U+2029) and the zero-width / bidi formatting
+    // chars that some models honour as section breaks: U+200B-200F
+    // (ZWSP, ZWNJ, ZWJ, LRM, RLM), U+202A-202E (LRE, RLE, PDF, LRO,
+    // RLO), U+2060 (word joiner), U+FEFF (BOM). Replaced with a space
+    // — the collapse step below squashes runs so the visible text
+    // stays clean.
+    .replace(/[\x00-\x1F\x7F\u2028\u2029\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
 export function buildUserPrompt(
   categories: Array<{ name: string; emoji?: string }>,
   localeHint?: string,
 ): string {
-  const list = categories.length
-    ? categories
+  // Defense-in-depth: even if a future caller forgets to pre-sanitize at
+  // the request boundary, the prompt builder enforces the rules itself.
+  // Cheap (string ops, no allocations beyond what the slice would do).
+  const safeCategories = categories.map((c) => ({
+    name: sanitizePromptText(c.name, MAX_CATEGORY_NAME),
+    emoji: c.emoji ? sanitizePromptText(c.emoji, MAX_CATEGORY_EMOJI) : undefined,
+  }));
+  const safeLocale = localeHint
+    ? sanitizePromptText(localeHint, MAX_LOCALE_HINT)
+    : undefined;
+
+  const list = safeCategories.length
+    ? safeCategories
         .map((c) => `- ${c.emoji ? c.emoji + " " : ""}${c.name}`)
         .join("\n")
     : "(no categories provided — set suggestedCategory to null)";
-  const locale = localeHint ? `\n\nUser locale hint: ${localeHint}` : "";
+  const locale = safeLocale ? `\n\nUser locale hint: ${safeLocale}` : "";
   return `Extract the receipt from the attached image.
 
 User's existing categories — pick the best match for suggestedCategory:

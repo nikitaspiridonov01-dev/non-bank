@@ -24,9 +24,18 @@ migrations_dir = "migrations"
 #   wrangler secret put SAMBANOVA_API_KEY     # cloud.sambanova.ai
 #   wrangler secret put NVIDIA_API_KEY        # build.nvidia.com
 #   wrangler secret put HUGGINGFACE_API_KEY   # huggingface.co/settings/tokens
+#   wrangler secret put IP_HASH_SALT          # any 32+ char random string
 [vars]
 ENV = "production"
 PER_DEVICE_DAILY_LIMIT = "60"
+# Per-IP daily cap on /v1/parse-receipt. Higher than per-device because
+# legitimate users share NAT/WiFi; an attacker rotating device IDs from
+# one host gets blocked here.
+PER_IP_DAILY_LIMIT = "200"
+# Per-IP 60-second burst cap on GET /share. Renders the HTML preview +
+# pixel-cat SVGs, so this is the CPU-heaviest route; cap prevents one
+# IP from draining Worker CPU budget.
+PER_IP_SHARE_PER_MINUTE_LIMIT = "60"
 LOG_LEVEL = "info"
 
 # Note: the [limits] section was removed because cpu_ms is a paid-plan

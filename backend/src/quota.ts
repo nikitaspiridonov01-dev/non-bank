@@ -94,6 +94,114 @@ export async function recordError(
     .run();
 }
 
+// Per-IP daily cap on /v1/parse-receipt. Closes the device-ID rotation
+// hole: `device_id` is a self-asserted string the client sends, so an
+// attacker can mint fresh IDs to bypass `bumpDeviceQuota`. The IP comes
+// from `CF-Connecting-IP`, which Cloudflare injects at the edge and
+// cannot be spoofed by callers.
+//
+// Limit is intentionally higher than the per-device cap (~3-4×) because
+// legitimate users share NAT/WiFi (offices, families, public hotspots),
+// while attackers rotate device IDs from a single host.
+export async function bumpIpParseQuota(
+  db: D1Database,
+  ipHash: string,
+  limit: number,
+  nowSec: number,
+): Promise<{ ok: true; remaining: number } | { ok: false; reset_at: number }> {
+  // UPSERT with self-reset for expired windows. `share_*` columns get
+  // safe defaults on first contact; they're updated by `bumpIpShareQuota`
+  // independently of this counter.
+  await db
+    .prepare(
+      `INSERT INTO ip_quotas
+         (ip_hash, parse_today, parse_reset_at, share_minute, share_reset_at,
+          total_parse, total_share, first_seen_at, last_seen_at)
+       VALUES (?1, 0, ?2 + ${SECONDS_PER_DAY}, 0, ?2 + 60, 0, 0, ?2, ?2)
+       ON CONFLICT(ip_hash) DO UPDATE SET
+         parse_today = CASE WHEN parse_reset_at <= ?2 THEN 0 ELSE parse_today END,
+         parse_reset_at = CASE WHEN parse_reset_at <= ?2 THEN ?2 + ${SECONDS_PER_DAY} ELSE parse_reset_at END,
+         last_seen_at = ?2`,
+    )
+    .bind(ipHash, nowSec)
+    .run();
+
+  const row = await db
+    .prepare(
+      `SELECT parse_today, parse_reset_at FROM ip_quotas WHERE ip_hash = ?1`,
+    )
+    .bind(ipHash)
+    .first<{ parse_today: number; parse_reset_at: number }>();
+
+  if (!row) {
+    return { ok: true, remaining: limit - 1 };
+  }
+  if (row.parse_today >= limit) {
+    return { ok: false, reset_at: row.parse_reset_at };
+  }
+  await db
+    .prepare(
+      `UPDATE ip_quotas
+       SET parse_today = parse_today + 1,
+           total_parse = total_parse + 1
+       WHERE ip_hash = ?1`,
+    )
+    .bind(ipHash)
+    .run();
+  return { ok: true, remaining: limit - row.parse_today - 1 };
+}
+
+// Per-IP rolling 60-second cap on GET /share. The HTML render path
+// includes SVG generation (`pixelCatSVG`) which is the most expensive
+// CPU operation in the Worker — unbounded GETs would let an attacker
+// burn Worker CPU budget for free. Daily cap would be too lax (60/min
+// = 86400/day worst case is still far above legitimate use); we want
+// burst protection.
+export async function bumpIpShareQuota(
+  db: D1Database,
+  ipHash: string,
+  limit: number,
+  nowSec: number,
+): Promise<{ ok: true; remaining: number } | { ok: false; reset_at: number }> {
+  await db
+    .prepare(
+      `INSERT INTO ip_quotas
+         (ip_hash, parse_today, parse_reset_at, share_minute, share_reset_at,
+          total_parse, total_share, first_seen_at, last_seen_at)
+       VALUES (?1, 0, ?2 + ${SECONDS_PER_DAY}, 0, ?2 + 60, 0, 0, ?2, ?2)
+       ON CONFLICT(ip_hash) DO UPDATE SET
+         share_minute = CASE WHEN share_reset_at <= ?2 THEN 0 ELSE share_minute END,
+         share_reset_at = CASE WHEN share_reset_at <= ?2 THEN ?2 + 60 ELSE share_reset_at END,
+         last_seen_at = ?2`,
+    )
+    .bind(ipHash, nowSec)
+    .run();
+
+  const row = await db
+    .prepare(
+      `SELECT share_minute, share_reset_at FROM ip_quotas WHERE ip_hash = ?1`,
+    )
+    .bind(ipHash)
+    .first<{ share_minute: number; share_reset_at: number }>();
+
+  if (!row) {
+    return { ok: true, remaining: limit - 1 };
+  }
+  if (row.share_minute >= limit) {
+    return { ok: false, reset_at: row.share_reset_at };
+  }
+  await db
+    .prepare(
+      `UPDATE ip_quotas
+       SET share_minute = share_minute + 1,
+           total_share = total_share + 1
+       WHERE ip_hash = ?1`,
+    )
+    .bind(ipHash)
+    .run();
+  return { ok: true, remaining: limit - row.share_minute - 1 };
+}
+
 // Per-device daily cap. Returns the new count after the increment, OR
 // null if the device hit its cap. Single SQL statement = race-safe.
 export async function bumpDeviceQuota(

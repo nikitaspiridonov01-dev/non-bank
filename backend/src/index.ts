@@ -1,6 +1,13 @@
 import { route, RouterExhaustedError } from "./router.ts";
-import { bumpDeviceQuota } from "./quota.ts";
+import { bumpDeviceQuota, bumpIpParseQuota } from "./quota.ts";
 import { handleSharePage } from "./share.ts";
+import { logEvent } from "./log.ts";
+import {
+  MAX_CATEGORY_NAME,
+  MAX_CATEGORY_EMOJI,
+  MAX_LOCALE_HINT,
+  sanitizePromptText,
+} from "./prompt.ts";
 import type { ParseResponse, ProviderRequest } from "./types.ts";
 
 // Worker bindings declared in wrangler.toml. Provider API keys are
@@ -11,6 +18,17 @@ export interface Env {
   AI: Ai;
   ENV: string;
   PER_DEVICE_DAILY_LIMIT: string;
+  // Per-IP daily cap on POST /v1/parse-receipt — closes the device-ID
+  // rotation hole. Default 200; higher than per-device because shared
+  // NAT/WiFi means one IP can legitimately be many devices.
+  PER_IP_DAILY_LIMIT?: string;
+  // Per-IP 60-second cap on GET /share — burst protection for the
+  // CPU-heaviest route (SVG render). Default 60/min.
+  PER_IP_SHARE_PER_MINUTE_LIMIT?: string;
+  // Salt for SHA-256 over `CF-Connecting-IP`. Set via `wrangler secret
+  // put IP_HASH_SALT`. Absent → a static dev salt is used; never deploy
+  // production without setting this.
+  IP_HASH_SALT?: string;
   LOG_LEVEL: string;
   GEMINI_API_KEY?: string;
   GROQ_API_KEY?: string;
@@ -25,6 +43,20 @@ export interface Env {
 // validate size here. 5 MB ceiling is generous — Groq base64 caps at 4 MB,
 // so iOS should target ~3 MB before upload.
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+// Hard request body cap, enforced via Content-Length BEFORE we parse
+// multipart. 5 MB image + ~1 MB headroom for form metadata. Cooperative
+// clients with chunked-encoding skip this gate but still hit the
+// MAX_IMAGE_BYTES check after parsing.
+const MAX_BODY_BYTES = 6 * 1024 * 1024;
+
+// Defaults applied when the env vars are absent — keeps the Worker
+// hardened-by-default even if wrangler.toml is misconfigured.
+// The /share-side default lives in `share.ts` to keep this entry-point
+// agnostic of routes it doesn't gate itself.
+const DEFAULT_PER_IP_DAILY = 200;
+const DEFAULT_PER_DEVICE_DAILY = 30;
+
 const ALLOWED_MIMES = new Set([
   "image/jpeg",
   "image/jpg",
@@ -33,6 +65,19 @@ const ALLOWED_MIMES = new Set([
   "image/heif",
   "image/webp",
 ]);
+
+// One-way digest of the caller's IP, truncated for storage. SHA-256 with
+// a stored salt means a D1 snapshot leak doesn't trivially reverse to
+// raw addresses; 16 hex chars = 64 bits of entropy = no realistic
+// collision risk at our scale.
+export async function hashIp(ip: string, salt: string): Promise<string> {
+  const data = new TextEncoder().encode(`${salt}:${ip}`);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 16);
+}
 
 export default {
   async fetch(req: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
@@ -59,7 +104,7 @@ export default {
       // Not under `/v1/` because the URL is the user-facing share link
       // (shorter / more shareable) and the route is HTML, not API.
       if (url.pathname === "/share" && req.method === "GET") {
-        return handleSharePage(req);
+        return handleSharePage(req, env);
       }
       return withCors(
         jsonResponse({ error: "not_found", path: url.pathname }, 404),
@@ -68,18 +113,80 @@ export default {
     } catch (e) {
       // Last-resort catch — anything reaching here is a bug, not a user
       // error. Don't leak internals.
-      console.error("unhandled", e);
+      logEvent(env, "error", {
+        route: url.pathname,
+        msg: "unhandled",
+        error: e instanceof Error ? e.message : String(e),
+      });
       return withCors(jsonResponse({ error: "internal_error" }, 500), cors);
     }
   },
 };
 
+// Extract caller IP for rate-limiting. `CF-Connecting-IP` is set by the
+// Cloudflare edge on every request and cannot be spoofed by the client.
+// `X-Forwarded-For` is intentionally NOT consulted (clients control it).
+// Returns a stable string even for missing header (so an attacker who
+// somehow bypasses the edge still hits the per-"unknown" cap).
+function callerIp(req: Request): string {
+  return req.headers.get("CF-Connecting-IP") ?? "unknown";
+}
+
 async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
+  const startMs = Date.now();
+  const ip = callerIp(req);
+  const salt = env.IP_HASH_SALT ?? "non-bank-dev-salt";
+  const ipHash = await hashIp(ip, salt);
+
+  // Reject oversized payloads BEFORE parsing the form, so a giant
+  // multipart body never gets fully read into the Worker.
+  const declaredLength = Number.parseInt(
+    req.headers.get("content-length") ?? "0",
+    10,
+  );
+  if (declaredLength > MAX_BODY_BYTES) {
+    logEvent(env, "warn", {
+      route: "/v1/parse-receipt",
+      ip_hash: ipHash,
+      content_length: declaredLength,
+      msg: "body_too_large",
+    });
+    return jsonResponse(
+      { error: "payload_too_large", detail: `max ${MAX_BODY_BYTES} bytes` },
+      413,
+    );
+  }
+
   const contentType = req.headers.get("content-type") ?? "";
   if (!contentType.startsWith("multipart/form-data")) {
     return jsonResponse(
       { error: "bad_request", detail: "expected multipart/form-data" },
       400,
+    );
+  }
+
+  // Per-IP gate comes BEFORE form parsing so a flood of bad requests
+  // from one host can't burn Worker CPU on multipart parsing. Also
+  // before per-device because device_id is client-asserted and trivially
+  // rotated — the IP cap is the real backstop.
+  const nowSec = Math.floor(Date.now() / 1000);
+  const ipLimit =
+    Number.parseInt(env.PER_IP_DAILY_LIMIT ?? "", 10) || DEFAULT_PER_IP_DAILY;
+  const ipCheck = await bumpIpParseQuota(env.DB, ipHash, ipLimit, nowSec);
+  if (!ipCheck.ok) {
+    logEvent(env, "warn", {
+      route: "/v1/parse-receipt",
+      ip_hash: ipHash,
+      msg: "ip_rate_limited",
+      reset_at: ipCheck.reset_at,
+    });
+    return jsonResponse(
+      {
+        error: "ip_rate_limited",
+        detail: `daily limit ${ipLimit} reached for this network`,
+        reset_at: ipCheck.reset_at,
+      },
+      429,
     );
   }
 
@@ -125,7 +232,12 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
       400,
     );
   }
+  const deviceHash = await hashIp(deviceId, salt);
 
+  // Categories: clamp count, clamp per-field length, strip prompt-injection
+  // escape chars. Whole pipeline lives in `sanitizePromptText`; we
+  // re-apply here at the boundary so a malformed `categories` payload is
+  // 400-rejected by JSON.parse below rather than reaching the LLM at all.
   const categoriesRaw = form.get("categories") as string | null;
   let categories: ProviderRequest["categories"] = [];
   if (categoriesRaw) {
@@ -135,22 +247,45 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
         categories = parsed
           .filter((c) => c && typeof c.name === "string")
           .slice(0, 50)
-          .map((c) => ({ name: String(c.name), emoji: c.emoji ? String(c.emoji) : undefined }));
+          .map((c) => ({
+            name: sanitizePromptText(String(c.name), MAX_CATEGORY_NAME),
+            emoji: c.emoji
+              ? sanitizePromptText(String(c.emoji), MAX_CATEGORY_EMOJI)
+              : undefined,
+          }))
+          // Drop categories whose name was wiped to empty by sanitization
+          // (e.g. a name made entirely of control chars).
+          .filter((c) => c.name.length > 0);
       }
     } catch {
       // Ignore — categories are an optional hint, not a hard input.
     }
   }
-  const localeHint = (form.get("locale") as string | null)?.trim() || undefined;
+  const rawLocale = (form.get("locale") as string | null)?.trim() || undefined;
+  const localeHint = rawLocale
+    ? sanitizePromptText(rawLocale, MAX_LOCALE_HINT) || undefined
+    : undefined;
 
-  const nowSec = Math.floor(Date.now() / 1000);
-  const limit = Number.parseInt(env.PER_DEVICE_DAILY_LIMIT, 10) || 30;
-  const deviceCheck = await bumpDeviceQuota(env.DB, deviceId, limit, nowSec);
+  const deviceLimit =
+    Number.parseInt(env.PER_DEVICE_DAILY_LIMIT, 10) || DEFAULT_PER_DEVICE_DAILY;
+  const deviceCheck = await bumpDeviceQuota(
+    env.DB,
+    deviceId,
+    deviceLimit,
+    nowSec,
+  );
   if (!deviceCheck.ok) {
+    logEvent(env, "warn", {
+      route: "/v1/parse-receipt",
+      ip_hash: ipHash,
+      device_hash: deviceHash,
+      msg: "device_rate_limited",
+      reset_at: deviceCheck.reset_at,
+    });
     return jsonResponse(
       {
         error: "device_rate_limited",
-        detail: `daily limit ${limit} reached`,
+        detail: `daily limit ${deviceLimit} reached`,
         reset_at: deviceCheck.reset_at,
       },
       429,
@@ -171,12 +306,31 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
       pool_remaining: result.poolRemaining,
       pool_low: result.poolLow,
     };
+    logEvent(env, "info", {
+      route: "/v1/parse-receipt",
+      ip_hash: ipHash,
+      device_hash: deviceHash,
+      provider: result.provider,
+      latency_ms: Date.now() - startMs,
+      status: 200,
+      attempts: result.triedProviders.length,
+    });
     return jsonResponse(response, 200, {
       "x-device-remaining": String(deviceCheck.remaining),
+      "x-ip-remaining": String(ipCheck.remaining),
       "x-provider": result.provider,
     });
   } catch (e) {
     if (e instanceof RouterExhaustedError) {
+      logEvent(env, "warn", {
+        route: "/v1/parse-receipt",
+        ip_hash: ipHash,
+        device_hash: deviceHash,
+        latency_ms: Date.now() - startMs,
+        status: 503,
+        msg: "all_providers_unavailable",
+        attempts: e.attempts.map((a) => a.provider),
+      });
       // Tell iOS to fall back to local OCR. Include a per-attempt summary
       // for the in-app debug viewer (no PII — just provider names + status).
       return jsonResponse(

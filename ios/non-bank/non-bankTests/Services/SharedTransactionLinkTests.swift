@@ -125,6 +125,34 @@ final class SharedTransactionLinkTests: XCTestCase {
         XCTAssertFalse(SharedTransactionLink.isShareURL(URL(string: "myapp://share?p=abc")!))
     }
 
+    /// Every host in `BackendConfig.acceptedHosts` must be recognised as
+    /// a valid web-backend share URL — the current workers.dev host AND
+    /// the planned `non-bank.app` custom domain. This is the safety net
+    /// that lets us flip `BackendConfig.host` to the custom domain in a
+    /// single edit without breaking share-links already circulating in
+    /// messengers under the old host. Path must still be `/share`; a
+    /// `/v1/parse-receipt` URL at the same host must NOT be classified
+    /// as a share link.
+    func testIsShareURL_recognisesEveryAcceptedWebBackendHost() {
+        for host in BackendConfig.acceptedHosts {
+            let shareURL = URL(string: "https://\(host)/share?p=abc")!
+            XCTAssertTrue(
+                SharedTransactionLink.isShareURL(shareURL),
+                "Accepted host \(host) must be recognised as a share URL"
+            )
+            let nonShareURL = URL(string: "https://\(host)/v1/parse-receipt")!
+            XCTAssertFalse(
+                SharedTransactionLink.isShareURL(nonShareURL),
+                "Non-/share path at host \(host) must NOT be misclassified"
+            )
+        }
+        // Sanity: both expected hosts (current + planned custom domain)
+        // are actually present in the set, so the loop above isn't
+        // silently passing on an empty set.
+        XCTAssertTrue(BackendConfig.acceptedHosts.contains("non-bank-receipt-proxy.non-bank-ai.workers.dev"))
+        XCTAssertTrue(BackendConfig.acceptedHosts.contains("non-bank.app"))
+    }
+
     func testDecode_acceptsBothSchemes() throws {
         // Build a payload, encode in both styles, decode each. Same
         // payload contents must round-trip from either URL flavour.

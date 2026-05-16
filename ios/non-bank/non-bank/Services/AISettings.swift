@@ -16,7 +16,9 @@ final class AISettings: ObservableObject {
     /// Cloudflare Worker endpoint that brokers Gemini / Groq / Cloudflare
     /// Workers AI / OpenRouter. Single endpoint so we never have to ship
     /// a build to rotate providers — the broker picks whichever is up.
-    private static let productionBackendURL = URL(string: "https://non-bank-receipt-proxy.non-bank-ai.workers.dev")!
+    /// Sourced from `BackendConfig.baseURL` so a host rebrand is a
+    /// single-line edit in one place.
+    private static var productionBackendURL: URL { BackendConfig.baseURL }
 
     private init() {}
 

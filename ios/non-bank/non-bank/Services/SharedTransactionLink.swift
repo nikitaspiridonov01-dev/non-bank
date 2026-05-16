@@ -82,11 +82,9 @@ enum SharedTransactionLink {
 
     /// **ACTIVE** — Cloudflare Worker host serving the `/share` HTML
     /// preview and (separately) the `/v1/parse-receipt` LLM proxy.
-    /// See `backend/src/share.ts`. Currently the workers.dev
-    /// subdomain; swap to your custom domain after binding it in
-    /// the Cloudflare dashboard's Workers → Custom Domains panel
-    /// (no code-side changes beyond this constant).
-    static let webBackendHost = "non-bank-receipt-proxy.non-bank-ai.workers.dev"
+    /// See `backend/src/share.ts`. Sourced from `BackendConfig.host`
+    /// — change there to rebrand to a custom domain, not here.
+    static var webBackendHost: String { BackendConfig.host }
 
     /// Path on the Worker. Lives at the root (not under `/v1/`) because
     /// it's the user-facing share URL — short and brand-clean reads
@@ -306,7 +304,13 @@ enum SharedTransactionLink {
         // Web backend: `https://<workerHost>/share?p=…`. Path-scoped so
         // a future `/v1/health` (or any other Worker route) doesn't get
         // misclassified as a share link if it ever lands in onOpenURL.
-        if url.scheme == "https" && url.host == webBackendHost && url.path == webBackendPath {
+        // We accept every host in `BackendConfig.acceptedHosts` (current
+        // backend + legacy hosts) so share-links already circulating
+        // under an older host keep opening the app after a rebrand.
+        if url.scheme == "https",
+           let host = url.host,
+           BackendConfig.acceptedHosts.contains(host),
+           url.path == webBackendPath {
             return true
         }
         return false

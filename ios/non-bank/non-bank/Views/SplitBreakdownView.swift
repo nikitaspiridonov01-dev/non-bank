@@ -119,20 +119,20 @@ struct SplitBreakdownView: View {
                 ForEach(Array(shareList.prefix(8).enumerated()), id: \.offset) { _, block in
                     PixelCatView(id: block.avatarID, size: 32, blackAndWhite: !block.isConnected)
                         .clipShape(Circle())
-                        .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
+                        .overlay(Circle().stroke(AppColors.splitChartText, lineWidth: 1.5))
                 }
                 if shareList.count > 8 {
                     Text("+\(shareList.count - 8)")
                         .font(AppFonts.badgeLabel)
-                        .foregroundColor(.white)
+                        .foregroundColor(AppColors.splitChartText)
                         .padding(6)
-                        .background(Circle().fill(Color.white.opacity(0.25)))
+                        .background(Circle().fill(AppColors.splitChartText.opacity(0.25)))
                 }
             }
             HStack(spacing: AppSpacing.xs) {
                 Text("\(sharerCount) \(sharerCount == 1 ? "person" : "people")")
                     .font(AppFonts.labelCaption)
-                    .foregroundColor(.white.opacity(0.9))
+                    .foregroundColor(AppColors.splitChartText.opacity(0.9))
                 tapIndicator
             }
         }

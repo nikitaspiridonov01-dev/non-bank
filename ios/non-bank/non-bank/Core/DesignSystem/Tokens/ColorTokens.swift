@@ -298,6 +298,16 @@ enum AppColors {
         Color(red: 0.26, green: 0.16, blue: 0.50)
     }
 
+    /// Foreground (text + avatar strokes) on the split-chart violet
+    /// sections. Always `.white` in both modes because
+    /// `splitChartPurchase` / `splitChartPeople` are STATIC violets
+    /// — no dark-mode dim. `AppColors.textOnAccent` would flip to
+    /// dark ink in dark mode and become unreadable on the fixed
+    /// violet surface. Held as a named token so callers don't
+    /// reach for raw `Color.white` (which violates the warm-palette
+    /// rule on every other surface).
+    static var splitChartText: Color { Color.white }
+
     /// Reminder card background — warm cream in light, warm near-black in dark.
     static var reminderBackgroundTint: Color {
         dynamic(

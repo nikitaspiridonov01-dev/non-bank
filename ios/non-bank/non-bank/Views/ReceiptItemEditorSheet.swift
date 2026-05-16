@@ -299,7 +299,7 @@ struct ReceiptItemEditorSheet: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "plus")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(AppFonts.footnote)
                     Text("Add")
                         .font(.subheadline.weight(.semibold))
                 }
@@ -419,7 +419,7 @@ struct ReceiptItemEditorSheet: View {
                             .font(.system(size: 16, weight: isActive ? .bold : .regular))
                             .foregroundColor(isDiscount ? AppColors.success : AppColors.textPrimary)
                         Text(currency)
-                            .font(.system(size: 14))
+                            .font(AppFonts.caption)
                             .foregroundColor(isDiscount ? AppColors.success.opacity(0.8) : AppColors.textTertiary)
                     }
                     .offset(x: isActive ? shakeOffset : 0)

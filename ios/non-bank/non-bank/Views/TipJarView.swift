@@ -127,7 +127,7 @@ private struct TipRowView: View {
                     .frame(width: 52, height: 52)
                     .background(
                         RoundedRectangle(cornerRadius: 14)
-                            .fill(isRecommended ? Color.accentColor.opacity(0.18) : AppColors.backgroundChip)
+                            .fill(isRecommended ? AppColors.accent.opacity(0.18) : AppColors.backgroundChip)
                     )
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -153,7 +153,7 @@ private struct TipRowView: View {
                 } else {
                     Text(priceText)
                         .font(AppFonts.bodyEmphasized)
-                        .foregroundColor(isRecommended ? Color.accentColor : AppColors.textPrimary)
+                        .foregroundColor(isRecommended ? AppColors.accent : AppColors.textPrimary)
                 }
             }
             .padding(AppSpacing.md)
@@ -164,7 +164,7 @@ private struct TipRowView: View {
             .overlay(
                 RoundedRectangle(cornerRadius: 18)
                     .stroke(
-                        isRecommended ? Color.accentColor : Color.clear,
+                        isRecommended ? AppColors.accent : Color.clear,
                         lineWidth: isRecommended ? 2 : 0
                     )
             )
@@ -191,10 +191,10 @@ private struct TipRowView: View {
         case .mostGenerous:
             Text("Most generous")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(Color.accentColor)
+                .foregroundColor(AppColors.accent)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
-                .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                .background(Capsule().fill(AppColors.accent.opacity(0.15)))
         }
     }
 }

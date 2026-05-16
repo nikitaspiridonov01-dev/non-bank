@@ -70,9 +70,9 @@ struct SplashView: View {
     private var glowHalo: some View {
         RadialGradient(
             colors: [
-                Color.accentColor.opacity(0.6),
-                Color.accentColor.opacity(0.15),
-                Color.accentColor.opacity(0.0)
+                AppColors.accent.opacity(0.6),
+                AppColors.accent.opacity(0.15),
+                AppColors.accent.opacity(0.0)
             ],
             center: .center,
             startRadius: 0,

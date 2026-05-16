@@ -1366,7 +1366,7 @@ private struct OccurrenceTimelineView: View {
                             .clipShape(Circle())
                             .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
                     }
-                    .padding(8)
+                    .padding(AppSpacing.sm)
                     .transition(.scale.combined(with: .opacity))
                 }
             }

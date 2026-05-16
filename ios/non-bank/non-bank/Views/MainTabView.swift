@@ -74,10 +74,10 @@ struct MainTabView: View {
                     VStack(spacing: AppSpacing.xs) {
                         Image(systemName: "house.fill")
                             .font(AppFonts.tabIcon)
-                            .foregroundColor(router.selectedTab == 0 ? Color.accentColor : AppColors.textSecondary)
+                            .foregroundColor(router.selectedTab == 0 ? AppColors.accent : AppColors.textSecondary)
                         Text("Home")
                             .font(AppFonts.tabLabel)
-                            .foregroundColor(router.selectedTab == 0 ? Color.accentColor : AppColors.textSecondary)
+                            .foregroundColor(router.selectedTab == 0 ? AppColors.accent : AppColors.textSecondary)
                     }
                 }
                 .accessibilityLabel("Home tab")

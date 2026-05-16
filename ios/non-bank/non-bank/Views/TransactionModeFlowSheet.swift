@@ -42,7 +42,31 @@ struct TransactionModeFlowSheet: View {
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var categoryStore: CategoryStore
 
-    @State private var path: [Step] = []
+    @State private var path: [Step]
+
+    /// Compute the initial NavigationStack path eagerly in `init`
+    /// rather than seeding it from `.onAppear`. Two reasons:
+    ///   1. `.onAppear` fires AFTER the NavigationStack has already
+    ///      rendered with the empty default path, which produced a
+    ///      brief flash of the mode picker before the user got
+    ///      auto-pushed to the mid-flow step. The user reads that
+    ///      flash as "I always land on 'How to track this expense?'
+    ///      first" — the original bug.
+    ///   2. Initialising `@State` from `init` lets us use the same
+    ///      `startStep + vm` snapshot the caller computed, with no
+    ///      window where the path could read stale state.
+    init(
+        vm: CreateTransactionViewModel,
+        startStep: StartStep,
+        currency: String,
+        onDone: @escaping () -> Void
+    ) {
+        self.vm = vm
+        self.startStep = startStep
+        self.currency = currency
+        self.onDone = onDone
+        self._path = State(initialValue: Self.computeInitialPath(startStep: startStep, vm: vm))
+    }
 
     enum StartStep {
         case modePicker
@@ -166,7 +190,13 @@ struct TransactionModeFlowSheet: View {
         // the swipe is disabled to prevent accidental data loss
         // mid-flow.
         .interactiveDismissDisabled(!path.isEmpty)
-        .onAppear(perform: seedPathForStartStep)
+        // Initial path is computed in `init` so it's correct on
+        // first render; .onAppear here only seeds the byItems
+        // selections (`byItemsSelections`) for the re-entry case
+        // since those depend on the actual `pendingReceiptItems`
+        // and can't go into a static helper without making it
+        // depend on `@State` of this very view.
+        .onAppear(perform: seedByItemsSelectionsForReentryIfNeeded)
         // byItems-without-receipt scan flow overlays. Mounted at the
         // NavigationStack root so the scanner / photos picker stay
         // out of any individual step's view tree — they replace the
@@ -1414,14 +1444,38 @@ struct TransactionModeFlowSheet: View {
         vm.payers.filter { $0.amount > 0.001 }.count > 1
     }
 
-    /// Pre-push the path for re-entry in `.specificStep` mode. The
-    /// picker stays at root so swipe-back from the seeded step lands
-    /// on it (letting the user switch modes mid-edit), but the user
-    /// initially sees the step relevant to whatever mode is already
-    /// active.
-    private func seedPathForStartStep() {
-        guard startStep == .specificStep else { return }
-        guard let mode = vm.splitMode else { return }
+    /// Pre-compute the NavigationStack path for re-entry in
+    /// `.specificStep` mode. Pure / static so it runs in `init`
+    /// before the first render — eliminates the original "always
+    /// flashes mode picker" bug that came from doing this seeding
+    /// via `.onAppear` (the empty default path rendered first).
+    ///
+    /// The mode picker stays at index -1 (root) so swipe-back from
+    /// the seeded step always lands there, letting the user switch
+    /// modes mid-edit. Concrete focal step per mode is documented
+    /// inline below.
+    static func computeInitialPath(
+        startStep: StartStep,
+        vm: CreateTransactionViewModel
+    ) -> [Step] {
+        guard startStep == .specificStep else { return [] }
+        // Mode resolution: prefer the explicitly-set `splitMode`.
+        // When the user is in split mode but the mode field is nil
+        // (legacy data, or a mid-flight state from before the mode
+        // was committed), fall back to whatever `resolvedSplitMode`
+        // would default to so seeding still works — this was the
+        // root cause of the "I have to pick my mode once before
+        // re-entry behaves" report.
+        let mode: SplitMode
+        if let explicit = vm.splitMode {
+            mode = explicit
+        } else if vm.isSplitMode {
+            mode = vm.resolvedSplitMode()
+        } else {
+            return []
+        }
+
+        let isMultiPayerConfigured = vm.payers.filter { $0.amount > 0.001 }.count > 1
 
         switch mode {
         case .evenly:
@@ -1432,79 +1486,88 @@ struct TransactionModeFlowSheet: View {
             // with retained amounts via `pushAfterFriendPicker`'s
             // multi-in-flight branch, so the user can either tweak
             // friends first or just confirm to land on the numpad.
-            // Back → back → forward through the chain re-pushes the
-            // numpad with the same amounts (multiPayerCalcInFlight
-            // keeps `vm.payers` retained until a real commit).
             if isMultiPayerConfigured {
-                path = [.friendPicker]
+                return [.friendPicker]
             } else {
-                path = [.friendPicker, .whoPay]
+                return [.friendPicker, .whoPay]
             }
         case .byAmount:
             // Calculations is the focal point — the user tapped
             // because they want to fix shares, not swap participants.
             // They can still swipe back through the friend picker →
             // mode picker if they need to.
-            path = [.friendPicker, .calculations]
+            return [.friendPicker, .calculations]
         case .byItems:
-            // Three re-entry shapes:
+            // Three re-entry shapes documented in the original
+            // imperative version — preserved here verbatim:
             //
             // - byItems committed but items vanished → user nuked
             //   them via the items badge after configuring the mode,
             //   or restored a transaction whose receipt rows didn't
             //   migrate. Land on `.scanSource` so the unified scan
-            //   flow rebuilds the items list inside the orchestrator
-            //   (same continuous push-stack the fresh byItems pick
-            //   takes from the mode picker), then routes back into
-            //   the regular byItems steps via `applyParsedReceiptAndContinue`.
+            //   flow rebuilds the items list.
             //
-            // - No friends picked yet → fresh post-scan entry (items
-            //   just landed, splitMode was just committed). Drop the
-            //   user on the friend picker so they walk the natural
-            //   forward flow: friendPicker → itemAssignment(0..N) →
-            //   review → whoPay. Seeding the full path here would
-            //   land them on the review screen with only "You" to
-            //   assign, which is not the intent.
+            // - No friends picked yet → fresh post-scan entry.
+            //   Drop the user on the friend picker so they walk the
+            //   natural forward flow.
             //
-            // - Friends already picked, assignments present →
-            //   repeat-entry to verify per-person numbers (most
-            //   common after an amount edit). Seed all the way to
-            //   review; swiping back walks the participant
-            //   assignments in reverse, then the friend picker.
+            // - Friends + assignments already present →
+            //   repeat-entry to verify per-person numbers. Seed all
+            //   the way to review.
             //
-            // - Friends already picked, no assignments → user just
-            //   saved the item editor (the editor strips assignments
-            //   so a price/structure change can't silently keep a
-            //   stale split). Seed up to `.itemAssignment(0)` so the
-            //   user re-walks each participant instead of seeing a
-            //   zero-amount review.
+            // - Friends but no assignments → seed up to
+            //   `.itemAssignment(0)` so the user re-walks.
             if vm.pendingReceiptItems.isEmpty {
-                path = [.scanSource]
+                return [.scanSource]
             } else if vm.selectedFriends.isEmpty {
-                path = [.friendPicker]
+                return [.friendPicker]
             } else {
-                seedByItemsSelections()
+                let participantCount =
+                    (vm.youIncludedInSplit ? 1 : 0) + vm.selectedFriends.count
                 var seeded: [Step] = [.friendPicker]
                 if vm.byItemsHasAssignments {
-                    for index in 0..<byItemsParticipants.count {
+                    for index in 0..<participantCount {
                         seeded.append(.itemAssignment(index))
                     }
                     seeded.append(.itemAssignmentReview)
                 } else {
                     seeded.append(.itemAssignment(0))
                 }
-                path = seeded
+                return seeded
             }
         case .settleUp:
-            // Per the spec: re-entering an already-configured settle-up
-            // lands on **Who pays** first; the recipient step is pushed
-            // only after the user confirms the payer. Earlier we
-            // pre-seeded both steps so the user saw the recipient
-            // immediately, but on re-edit the payer is the natural
-            // first thing to revisit (it's the more common change —
-            // "actually you paid me, not the other way around").
-            pendingSettleUpPayerID = vm.payers.first?.id
-            path = [.settleUpPayer]
+            // Re-entering an already-configured settle-up lands on
+            // **Who pays** first; the recipient step is pushed only
+            // after the user confirms the payer. The
+            // `pendingSettleUpPayerID` carry-over for swipe-back-and-
+            // forward is set in `.onAppear` since it's a `@State`
+            // mutation that can't live in `init`.
+            return [.settleUpPayer]
+        }
+    }
+
+    /// `.onAppear` companion to `computeInitialPath`. The static path
+    /// computation can't write to view `@State` properties other
+    /// than `path` itself, so the two side-effects that ALSO needed
+    /// to fire on re-entry (settle-up payer prefill + byItems
+    /// selections hydration) get applied here. Idempotent — guards
+    /// keep it safe even though `.onAppear` may fire more than once
+    /// during a sheet's lifetime (e.g. backgrounding the app and
+    /// resuming).
+    private func seedByItemsSelectionsForReentryIfNeeded() {
+        guard startStep == .specificStep else { return }
+        let mode = vm.splitMode ?? (vm.isSplitMode ? vm.resolvedSplitMode() : nil)
+        switch mode {
+        case .settleUp:
+            if pendingSettleUpPayerID == nil {
+                pendingSettleUpPayerID = vm.payers.first?.id
+            }
+        case .byItems:
+            if !vm.pendingReceiptItems.isEmpty && !vm.selectedFriends.isEmpty {
+                seedByItemsSelections()
+            }
+        case .evenly, .byAmount, .none:
+            break
         }
     }
 }

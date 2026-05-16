@@ -20,30 +20,54 @@ import Foundation
 /// itself doesn't even need a test update.
 enum BackendConfig {
 
-    /// **The** active host. Where new share-links point and where
-    /// `CloudReceiptParser` POSTs receipt images. Currently the
-    /// default workers.dev subdomain because the planned
-    /// `non-bank.app` custom domain is still under the 10-day
-    /// post-registration transfer lock as of 2026-05-16; switching
-    /// is a single-line edit here once the zone has been moved to
-    /// the Worker's account and bound as a Custom Domain.
-    static let host: String = "non-bank-receipt-proxy.non-bank-ai.workers.dev"
+    /// Hostname of the production Worker. Used by Release/TestFlight/
+    /// App Store builds. Stays on the workers.dev subdomain until the
+    /// `non-bank.app` custom domain transfer is unlocked (see git log
+    /// `Switch web backend to non-bank.app`); at that point this is
+    /// the single line that flips to `"non-bank.app"`.
+    private static let productionHost: String = "non-bank-receipt-proxy.non-bank-ai.workers.dev"
 
-    /// Hosts the decoder treats as valid share-link backends —
-    /// the current `host` plus every legacy / future host that
-    /// might appear in URLs the app encounters. We pre-list
-    /// `non-bank.app` here so the switch-over is a one-line edit
-    /// (`host` only); we keep the workers.dev subdomain here
-    /// forever so old share-links in messenger history never
-    /// stop opening the app.
+    /// Hostname of the staging Worker. Used by Debug builds (Xcode
+    /// `Cmd+R` on a real device or simulator). Lets the developer
+    /// exercise prompt tweaks, routing changes, and migrations on a
+    /// real iPhone before catting the same code to prod.
+    /// See `backend/wrangler.toml`'s `[env.staging]` block for the
+    /// matching Worker config.
+    private static let stagingHost: String = "non-bank-receipt-proxy-staging.non-bank-ai.workers.dev"
+
+    /// **The** active host the app talks to right now. Selected at
+    /// compile time:
+    ///   - Debug build (Xcode run on device) → staging
+    ///   - Release / TestFlight / App Store  → production
+    /// The split is a single `#if DEBUG` so there's no runtime toggle
+    /// the user can accidentally flip — App Store builds are
+    /// physically incapable of pointing at staging.
+    static let host: String = {
+        #if DEBUG
+        return stagingHost
+        #else
+        return productionHost
+        #endif
+    }()
+
+    /// Hosts the decoder treats as valid share-link backends — the
+    /// current `host` plus every legacy / future host that might
+    /// appear in URLs the app encounters. Always includes:
+    ///   - production hostname (so Release-build users keep opening
+    ///     links forever after a backend rename)
+    ///   - staging hostname (so a developer running a Debug build can
+    ///     receive share-links pasted from a TestFlight tester, and
+    ///     vice versa)
+    ///   - `non-bank.app` (pre-listed so the eventual custom-domain
+    ///     switch is a one-line edit on the producer side)
     ///
-    /// `Set` so duplicates between `host` and the static list
-    /// (current state has both equal to workers.dev) collapse
+    /// `Set` so duplicates between `host` and the static list collapse
     /// automatically.
     static var acceptedHosts: Set<String> {
         Set([
             host,
-            "non-bank-receipt-proxy.non-bank-ai.workers.dev",
+            productionHost,
+            stagingHost,
             "non-bank.app",
         ])
     }

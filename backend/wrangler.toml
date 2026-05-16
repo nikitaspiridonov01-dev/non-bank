@@ -45,3 +45,59 @@ LOG_LEVEL = "info"
 # count against CPU. If you ever upgrade to Workers Paid, you can re-add:
 #   [limits]
 #   cpu_ms = 30000
+
+# -----------------------------------------------------------------------------
+# Staging environment
+# -----------------------------------------------------------------------------
+# Why this exists
+# ----------------
+# Lets us deploy bigger / riskier changes (prompt tweaks, routing rebalances,
+# new D1 migrations) and exercise them from a Debug build on a real device
+# before catting in prod. The iOS app is wired so:
+#   - Debug build (`Cmd+R` from Xcode)        → talks to *-staging worker
+#   - Release / TestFlight / App Store build → talks to prod worker
+# See `BackendConfig.swift`'s `#if DEBUG` switch for the host selection logic.
+#
+# What lives in staging
+# ---------------------
+# A SEPARATE Worker (`non-bank-receipt-proxy-staging`) and a SEPARATE D1
+# database (`non-bank-receipts-staging`). That isolation matters because
+# `device_quotas` / `ip_quotas` / `share_items` are stateful tables — staging
+# writes must NOT pollute prod counters or leak share-items rows. Provider
+# API keys are duplicated as staging secrets (same keys are fine — quotas
+# are per-key, not per-worker — but they need to exist in this env).
+#
+# Limits are intentionally loosened so we can stress-test without locking
+# ourselves out: 1000 scans/device/day, 5000/IP/day, 300/min on /share.
+# Bumping these in prod requires a deliberate redeploy.
+#
+# Cost
+# ----
+# Free tier covers up to 10 D1 databases and 100k Worker requests/day
+# *across the account*. Staging shares budget with prod; one developer
+# testing locally is negligible. See commit `Phase 11` for the headroom
+# math.
+[env.staging]
+name = "non-bank-receipt-proxy-staging"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "non-bank-receipts-staging"
+# Replace this id after `wrangler d1 create non-bank-receipts-staging`. The
+# id below is a placeholder so `wrangler types` and `wrangler dev --env
+# staging` don't fail before the database exists.
+database_id = "REPLACE_AFTER_DB_CREATE"
+migrations_dir = "migrations"
+
+[env.staging.ai]
+binding = "AI"
+
+[env.staging.vars]
+ENV = "staging"
+# Loose caps for stress-test scenarios. Tightening these later requires a
+# deliberate redeploy; production caps remain at the conservative numbers
+# in the top-level `[vars]` block above.
+PER_DEVICE_DAILY_LIMIT = "1000"
+PER_IP_DAILY_LIMIT = "5000"
+PER_IP_SHARE_PER_MINUTE_LIMIT = "300"
+LOG_LEVEL = "info"

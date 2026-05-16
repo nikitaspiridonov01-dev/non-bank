@@ -146,10 +146,13 @@ final class SharedTransactionLinkTests: XCTestCase {
                 "Non-/share path at host \(host) must NOT be misclassified"
             )
         }
-        // Sanity: both expected hosts (current + planned custom domain)
-        // are actually present in the set, so the loop above isn't
-        // silently passing on an empty set.
+        // Sanity: all expected hosts (production + staging + planned
+        // custom domain) are present in the set, so the loop above
+        // isn't silently passing on an empty set. Staging is in the
+        // list because Debug-build developers must be able to open
+        // share-links from TestFlight users — and vice versa.
         XCTAssertTrue(BackendConfig.acceptedHosts.contains("non-bank-receipt-proxy.non-bank-ai.workers.dev"))
+        XCTAssertTrue(BackendConfig.acceptedHosts.contains("non-bank-receipt-proxy-staging.non-bank-ai.workers.dev"))
         XCTAssertTrue(BackendConfig.acceptedHosts.contains("non-bank.app"))
     }
 

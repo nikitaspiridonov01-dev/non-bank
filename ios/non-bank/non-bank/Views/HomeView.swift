@@ -95,6 +95,18 @@ struct HomeView: View {
             currency: currencyStore.selectedCurrency,
             convert: convert
         )
+        // Hoist filter + group ONCE per body eval. Both `filteredTransactions`
+        // and `groupedTransactions` are computed properties that filter +
+        // sort + group the whole list every access; body has 4+ read
+        // sites (sticky-date label, transaction list empty-state, list
+        // itself, search-sheet content), so the previous implementation
+        // ran the full filter chain 4× on each body re-render. With
+        // 10k transactions the audit measured ~40 ms per filter; this
+        // brings a body eval back to a single filter pass.
+        let homeTxList = transactionStore.homeTransactions
+        let homeTxIsEmpty = homeTxList.isEmpty
+        let filtered = vm.filteredTransactions(from: homeTxList, resolveCategory: resolveCategory)
+        let grouped = vm.groupedTransactions(from: filtered)
         let extraHeaderTopPadding: CGFloat = AppSizes.headerExtraTopPadding
         // Убрали NavigationView, так как он создавал системные баги с прыжком верхнего SafeArea
         ZStack(alignment: .top) {
@@ -135,7 +147,7 @@ struct HomeView: View {
                         }
                         
                         // Секции транзакций
-                        transactionsListView()
+                        transactionsListView(grouped: grouped, homeTxIsEmpty: homeTxIsEmpty)
                         
                         Spacer().frame(height: 100)
                     }
@@ -222,7 +234,7 @@ struct HomeView: View {
                 }
                 
                 // Sticky date header — persistent element, text updates in-place
-                StickyDateLabel(text: stickyDateText, visible: stickyDateVisible && !groupedTransactions.isEmpty)
+                StickyDateLabel(text: stickyDateText, visible: stickyDateVisible && !grouped.isEmpty)
             }
             .background(
                 ZStack {
@@ -332,7 +344,7 @@ struct HomeView: View {
         .sheet(isPresented: $showSearchModal) {
             SearchTransactionsView(
                 isPresented: $showSearchModal,
-                transactions: filteredTransactions,
+                transactions: filtered,
                 onSelect: { tx in
                     selectedTransaction = tx
                     showTransactionDetail = true
@@ -450,17 +462,20 @@ struct HomeView: View {
     }
 
     @ViewBuilder
-    private func transactionsListView() -> some View {
-        if !transactionStore.homeTransactions.isEmpty && groupedTransactions.isEmpty {
+    private func transactionsListView(
+        grouped: [(date: Date, transactions: [Transaction])],
+        homeTxIsEmpty: Bool
+    ) -> some View {
+        if !homeTxIsEmpty && grouped.isEmpty {
             VStack {
                 Spacer().frame(height: 50)
                 Text("No transactions match the selected filters")
                     .foregroundColor(AppColors.textSecondary)
             }
             .frame(maxWidth: .infinity)
-        } else if !transactionStore.homeTransactions.isEmpty {
+        } else if !homeTxIsEmpty {
             LazyVStack(spacing: 0, pinnedViews: []) {
-                ForEach(groupedTransactions, id: \.date) { group in
+                ForEach(grouped, id: \.date) { group in
                     let label = vm.formattedSectionDate(group.date)
                     VStack(alignment: .leading, spacing: 0) {
                         Text(label)

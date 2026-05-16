@@ -138,8 +138,13 @@ actor CloudReceiptParser {
     /// Strip EXIF + downscale + JPEG re-encode. Returns ≤ 3 MB on the first
     /// try at quality 0.85; on the rare receipt that's still over (very busy
     /// long restaurant tape with high-res text), retries at 0.6.
+    ///
+    /// In the normal flow `HybridReceiptParser.parse` has already downscaled
+    /// upstream, so the helper call here is idempotent (early-returns) —
+    /// kept for safety in case a future caller invokes `prepareImage`
+    /// directly with a raw 12 MP photo.
     static func prepareImage(_ original: UIImage) throws -> Data {
-        let downscaled = downscale(original, maxDimension: 2048)
+        let downscaled = ImagePreprocessing.downscaled(original)
         // Re-rendering through UIGraphicsImageRenderer drops EXIF metadata —
         // the resulting `UIImage` has no `imageOrientation` baggage and no
         // GPS / device tags from the source.
@@ -157,19 +162,6 @@ actor CloudReceiptParser {
             return data
         }
         throw Error.imageEncodingFailed
-    }
-
-    private static func downscale(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
-        let size = image.size
-        let longest = max(size.width, size.height)
-        guard longest > maxDimension else { return image }
-        let scale = maxDimension / longest
-        let target = CGSize(width: size.width * scale, height: size.height * scale)
-        let format = UIGraphicsImageRendererFormat.default()
-        format.scale = 1
-        format.opaque = true
-        let renderer = UIGraphicsImageRenderer(size: target, format: format)
-        return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
     }
 
     private static func bake(_ image: UIImage) -> UIImage {

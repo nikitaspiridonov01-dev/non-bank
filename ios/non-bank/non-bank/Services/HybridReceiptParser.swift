@@ -82,9 +82,18 @@ actor HybridReceiptParser {
         cloudConfig: CloudParseConfig? = nil
     ) async throws -> Result {
         let started = Date()
+        // Downscale up front so every parser path (cloud upload,
+        // local Vision OCR, future Foundation Models) sees the same
+        // memory ceiling. The downscale is idempotent — already-
+        // small images pass through untouched — so it costs nothing
+        // for screenshots / order-summary captures and saves a
+        // ~10× memory hit on raw 12 MP iPhone photos. Cloud path
+        // re-encodes to JPEG inside `CloudReceiptParser.prepareImage`
+        // but skips its own downscale step because of this hoist.
+        let prepared = ImagePreprocessing.downscaled(image)
         if let config = cloudConfig {
             do {
-                return try await cloudParse(image: image, config: config, started: started)
+                return try await cloudParse(image: prepared, config: config, started: started)
             } catch {
                 #if DEBUG
                 print("[HybridReceiptParser] cloud failed (\(error.localizedDescription)) — falling back to local OCR")
@@ -94,7 +103,7 @@ actor HybridReceiptParser {
                 // hint surfaces the cloud-side error to the user separately.
             }
         }
-        return try await fallbackParse(image: image, started: started)
+        return try await fallbackParse(image: prepared, started: started)
     }
 
     // MARK: - Cloud (Tier 0)

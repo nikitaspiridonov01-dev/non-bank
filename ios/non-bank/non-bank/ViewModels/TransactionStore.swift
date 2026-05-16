@@ -20,6 +20,16 @@ class TransactionStore: ObservableObject {
     /// first load — subsequent CRUD already keeps the notification queue
     /// in sync, so we don't need to pay the cost on every load.
     private var hasCleanedStaleNotifications = false
+    /// Handle for the in-flight recurring-spawn pass. `processRecurringSpawns`
+    /// fires from multiple triggers (60-second timer in `MainTabView`,
+    /// `scenePhase == .active`, share-link receive completion) and the
+    /// previous fire-and-forget pattern would launch concurrent passes
+    /// that all read the same `transactions` snapshot and race their DB
+    /// writes. Storing the handle lets a new caller drop its request
+    /// when a previous pass is still running — spawn passes are
+    /// idempotent against `transactions`, so the next trigger picks up
+    /// anything missed without re-running the same DB work twice.
+    private var spawnTask: Task<Void, Never>?
 
     nonisolated init(
         repo: TransactionRepositoryProtocol = TransactionRepository(),
@@ -341,8 +351,23 @@ class TransactionStore: ObservableObject {
 
     /// Checks if any recurring parents need to spawn new children and creates them.
     /// Calls `onSpawned` with the list of newly created children (if any).
+    ///
+    /// Idempotent against `transactions` — if a previous pass is still
+    /// in flight (`spawnTask != nil`) the new request is dropped: the
+    /// running pass will either pick up the same parents/needed pairs
+    /// or the next trigger (60-second timer, scene-active) will catch
+    /// up. The earlier fire-and-forget pattern launched a fresh `Task`
+    /// per call with no handle, so rapid navigation could queue 5+
+    /// passes racing the same DB writes.
     func processRecurringSpawns(onSpawned: (([Transaction]) -> Void)? = nil) {
-        Task {
+        guard spawnTask == nil else { return }
+        spawnTask = Task { [weak self] in
+            // Clear the handle on exit so the next trigger can fire,
+            // regardless of whether this pass found anything to do.
+            // `defer` runs after the body completes (success or
+            // cancellation) so the handle is never left dangling.
+            defer { Task { @MainActor [weak self] in self?.spawnTask = nil } }
+            guard let self else { return }
             let parents = transactions.filter { $0.isRecurringParent }
             guard !parents.isEmpty else { return }
             let needed = ReminderService.transactionsNeedingSpawn(

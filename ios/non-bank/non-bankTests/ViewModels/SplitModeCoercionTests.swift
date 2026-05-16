@@ -1,7 +1,7 @@
 import XCTest
 @testable import non_bank
 
-/// Tests for `CreateTransactionViewModel.resolveStoredSplitMode` — the
+/// Tests for `SplitMathHelpers.resolveStoredSplitMode` — the
 /// pure helper that decides whether a saved split should be tagged as
 /// `.settleUp` based on its data shape, regardless of which mode the
 /// user picked first in the create flow.
@@ -16,7 +16,7 @@ final class SplitModeCoercionTests: XCTestCase {
     func testCoerce_iPaidAll_friendOwesAll_isSettleUp() {
         // Classic "I covered Michael's coffee" — picked evenly, but
         // ended up with me paying 100% and Michael owing 100%.
-        let mode = CreateTransactionViewModel.resolveStoredSplitMode(
+        let mode = SplitMathHelpers.resolveStoredSplitMode(
             requested: .evenly,
             paidByMe: 30,
             myShare: 0,
@@ -28,7 +28,7 @@ final class SplitModeCoercionTests: XCTestCase {
     func testCoerce_friendPaidAll_iOweAll_isSettleUp() {
         // Inverse: Michael covered for me. paidByMe = 0, myShare =
         // total, Michael's share = 0, paidAmount = total.
-        let mode = CreateTransactionViewModel.resolveStoredSplitMode(
+        let mode = SplitMathHelpers.resolveStoredSplitMode(
             requested: .byAmount,
             paidByMe: 0,
             myShare: 30,
@@ -38,7 +38,7 @@ final class SplitModeCoercionTests: XCTestCase {
     }
 
     func testCoerce_explicitSettleUp_staysSettleUp() {
-        let mode = CreateTransactionViewModel.resolveStoredSplitMode(
+        let mode = SplitMathHelpers.resolveStoredSplitMode(
             requested: .settleUp,
             paidByMe: 30,
             myShare: 0,
@@ -52,7 +52,7 @@ final class SplitModeCoercionTests: XCTestCase {
     func testCoerce_evenlySplit_twoParticipantsBoth5050_staysEvenly() {
         // I paid 30, but the split is 50/50 → 2 share-bearers → not
         // settle-up.
-        let mode = CreateTransactionViewModel.resolveStoredSplitMode(
+        let mode = SplitMathHelpers.resolveStoredSplitMode(
             requested: .evenly,
             paidByMe: 30,
             myShare: 15,
@@ -62,7 +62,7 @@ final class SplitModeCoercionTests: XCTestCase {
     }
 
     func testCoerce_threePartySplit_evenly_staysEvenly() {
-        let mode = CreateTransactionViewModel.resolveStoredSplitMode(
+        let mode = SplitMathHelpers.resolveStoredSplitMode(
             requested: .evenly,
             paidByMe: 60,
             myShare: 20,
@@ -76,7 +76,7 @@ final class SplitModeCoercionTests: XCTestCase {
 
     func testCoerce_twoPayersOneShareBearer_staysAsRequested() {
         // Split with 2 payers (rare) — not 1 payer, not settle-up.
-        let mode = CreateTransactionViewModel.resolveStoredSplitMode(
+        let mode = SplitMathHelpers.resolveStoredSplitMode(
             requested: .byAmount,
             paidByMe: 15,
             myShare: 0,
@@ -93,7 +93,7 @@ final class SplitModeCoercionTests: XCTestCase {
         // = me). The user shouldn't have flagged this as split, but if
         // they did, it's not a settle-up either — both sides are the
         // same party, so there's nothing to "settle".
-        let mode = CreateTransactionViewModel.resolveStoredSplitMode(
+        let mode = SplitMathHelpers.resolveStoredSplitMode(
             requested: .evenly,
             paidByMe: 30,
             myShare: 30,
@@ -106,7 +106,7 @@ final class SplitModeCoercionTests: XCTestCase {
         // Same degenerate case but for a friend: one friend both paid
         // and bears the share. Not a settle-up because there's no
         // counter-party.
-        let mode = CreateTransactionViewModel.resolveStoredSplitMode(
+        let mode = SplitMathHelpers.resolveStoredSplitMode(
             requested: .evenly,
             paidByMe: 0,
             myShare: 0,
@@ -118,7 +118,7 @@ final class SplitModeCoercionTests: XCTestCase {
     func testCoerce_nilRequested_settleUpShape_returnsSettleUp() {
         // Legacy data with no recorded mode but settle-up shape →
         // upgraded to `.settleUp` by the resolver.
-        let mode = CreateTransactionViewModel.resolveStoredSplitMode(
+        let mode = SplitMathHelpers.resolveStoredSplitMode(
             requested: nil,
             paidByMe: 30,
             myShare: 0,
@@ -129,7 +129,7 @@ final class SplitModeCoercionTests: XCTestCase {
 
     func testCoerce_nilRequested_normalSplitShape_returnsNil() {
         // Legacy data, normal 50/50 → nothing to coerce, stays nil.
-        let mode = CreateTransactionViewModel.resolveStoredSplitMode(
+        let mode = SplitMathHelpers.resolveStoredSplitMode(
             requested: nil,
             paidByMe: 30,
             myShare: 15,

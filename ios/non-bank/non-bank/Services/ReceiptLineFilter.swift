@@ -134,7 +134,13 @@ struct ReceiptLineFilter {
         "thank you", "спасибо", "danke", "merci", "gracias",
         "obrigado", "grazie", "hvala", "dziękuję", "dziekuje",
         "operator", "cashier", "касса", "kassa", "kasjer",
-        "phone", "tel.", "tel:", "телефон", "address", "адрес",
+        // Tel/phone labels — all require punctuation suffix so the bare
+        // word doesn't false-match real items. `"Phone:"` / `"tel:"` /
+        // `"tel."` cover the printed formats; lines like "Phone charger"
+        // or "Hands-free phone" fall through to the keep verdict. Loose
+        // bare "Phone 555-1234" lines are still caught by the pattern-
+        // based phone-number regex below.
+        "phone:", "tel.", "tel:", "телефон", "address", "адрес",
         "tax id", "инн", "vat id", "nip", "regon",
         "void", "refund", "возврат",
         "balance", "баланс", "saldo",

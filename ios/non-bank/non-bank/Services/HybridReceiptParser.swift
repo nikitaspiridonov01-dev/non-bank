@@ -303,13 +303,15 @@ actor HybridReceiptParser {
     static func postProcess(_ parsed: ParsedReceipt) -> ParsedReceipt {
         let filteredItems = parsed.items.compactMap { item -> ReceiptItem? in
             switch ReceiptLineFilter.classify(item.name) {
-            case .keep, .fee, .tax, .tip:
-                // Fee / tax / tip rows are kept (positive sign — they
-                // ADD to the total) so the split-by-items calculator can
+            case .keep, .fee, .tip:
+                // Fee / tip rows are kept (positive sign — they ADD to
+                // the total) so the split-by-items calculator can
                 // distribute them proportionally. `ReceiptItem.kind`
                 // re-derives the classification via the same
                 // `ReceiptLineFilter.classify` call, so we don't need to
-                // stash the verdict on the row itself.
+                // stash the verdict on the row itself. Tax/VAT lines
+                // are not in this list — they're now `.skipNonProduct`
+                // (store-side metadata, never a buyer-tracked expense).
                 return item
             case .discount:
                 return Self.normalizeDiscount(item)

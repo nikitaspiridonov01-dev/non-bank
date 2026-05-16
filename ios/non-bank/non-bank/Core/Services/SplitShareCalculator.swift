@@ -14,12 +14,14 @@ import Foundation
 ///    calculator with unassigned items would only happen from a saved
 ///    transaction.
 ///
-/// 2. **Proportional charges** (`fee`/`tax`/`tip`) and **discounts**
+/// 2. **Proportional charges** (`fee`/`tip`) and **discounts**
 ///    (`kind == .discount`) are distributed proportionally to each
 ///    participant's running item-share total from pass 1. A participant
 ///    who took no items in pass 1 (their share is 0) thus gets a 0 cut
 ///    of the charges too — matching the TZ rule "skipped participants
-///    are excluded from tax/fees".
+///    are excluded from fees". Tax/VAT lines are filtered out before
+///    they reach the calculator (see `ReceiptLineFilter`), so the
+///    charge bucket is `fee`/`tip` only.
 ///
 /// Returns a dictionary keyed by participant ID (`Friend.id` or
 /// `ReceiptItem.selfParticipantID` for the user). Participants present
@@ -40,7 +42,7 @@ enum SplitShareCalculator {
     ///
     /// - Parameters:
     ///   - items: All receipt lines (regular items + discounts + fee/
-    ///     tax/tip). Items must already have their kind classified
+    ///     tip). Items must already have their kind classified
     ///     (caller relies on `ReceiptItem.kind`'s built-in classifier).
     ///   - participants: IDs that should appear in the output. Items
     ///     assigned to IDs outside this set are ignored — defensive
@@ -83,7 +85,7 @@ enum SplitShareCalculator {
         // would produce.
         guard directItemTotal > zeroEpsilon else { return shares }
 
-        let chargeKinds: Set<ReceiptItem.Kind> = [.fee, .tax, .tip, .discount]
+        let chargeKinds: Set<ReceiptItem.Kind> = [.fee, .tip, .discount]
         let chargeSum = items
             .filter { chargeKinds.contains($0.kind) }
             .reduce(0) { $0 + $1.lineTotal }

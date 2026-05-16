@@ -387,7 +387,7 @@ struct ReceiptItemEditorSheet: View {
         // separately: a negative `lineTotal` (cloud LLM tagged it as a
         // deduction) and a name match against discount keywords (user
         // typed/picked "Discount" before entering a digit). Beyond
-        // discount, `.fee/.tax/.tip` now also surface their own icons so
+        // discount, `.fee/.tip` now also surface their own icons so
         // the editor mirrors what the review/read-only sheets show.
         let kind = ReceiptItem.Kind.classify(name: item.name, lineTotal: item.lineTotal)
         let isDiscount = kind == .discount
@@ -616,14 +616,11 @@ struct ReceiptItemEditorSheet: View {
                     activeSheet = nil
                     addPresetItem(name: "Fee", isDiscount: false)
                 }
-                addItemMenuRow(
-                    label: "Tax",
-                    systemIcon: ReceiptItem.Kind.tax.iconSymbol ?? "percent",
-                    iconTint: .neutral
-                ) {
-                    activeSheet = nil
-                    addPresetItem(name: "Tax", isDiscount: false)
-                }
+                // (Tax preset removed: tax/VAT/sales-tax is store-side
+                // metadata, never a buyer-tracked expense — see
+                // `ReceiptLineFilter` for the classification rationale.
+                // Tax-like buyer charges — city tax, tourist tax — would
+                // be added manually under "Fee" with a descriptive name.)
                 addItemMenuRow(
                     label: "Tips",
                     systemIcon: ReceiptItem.Kind.tip.iconSymbol ?? "hand.thumbsup.fill",

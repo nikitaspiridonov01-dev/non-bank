@@ -1,16 +1,18 @@
 import SwiftUI
 
 /// Small inline icon that flags a non-product receipt line — discount,
-/// fee, tax, or tip. Regular `.item` rows render nothing (the view
+/// fee, or tip. Regular `.item` rows render nothing (the view
 /// collapses), so callers can drop this in front of every item name
 /// without adding a leading gap on the common case.
 ///
 /// Discount keeps its existing visual language (`tag.fill` in success
-/// green) so the bulk of historic receipts read identically. The other
-/// three "proportional charge" kinds (fee / tax / tip) share a subdued
+/// green) so the bulk of historic receipts read identically. The
+/// "proportional charge" kinds (fee / tip) share a subdued
 /// `textSecondary` tint so they read as a family — distinct from the
 /// celebratory green discount, distinct from regular items, but not
-/// fighting them for attention either.
+/// fighting them for attention either. Tax/VAT used to be a third
+/// charge kind but is now filtered out at parse time — store-side
+/// metadata, not a buyer-tracked expense.
 struct ReceiptItemKindIcon: View {
     let kind: ReceiptItem.Kind
     var size: CGFloat = 12
@@ -33,7 +35,6 @@ extension ReceiptItem.Kind {
         case .item:     return nil
         case .discount: return "tag.fill"
         case .fee:      return "creditcard.fill"
-        case .tax:      return "percent"
         case .tip:      return "hand.thumbsup.fill"
         }
     }
@@ -42,7 +43,7 @@ extension ReceiptItem.Kind {
         switch self {
         case .item:     return AppColors.textPrimary
         case .discount: return AppColors.success
-        case .fee, .tax, .tip:
+        case .fee, .tip:
             return AppColors.textSecondary
         }
     }

@@ -14,11 +14,10 @@ struct ReceiptLineFilter {
 
     enum Verdict: Equatable {
         case keep                  // probably an item line
-        case skipNonProduct        // subtotal / payment / change / loyalty / admin
+        case skipNonProduct        // subtotal / payment / change / loyalty / admin / tax
         case anchorTotal           // the grand-total line — strong section anchor
         case discount              // a discount line — kept as a negative item
         case fee                   // a service / delivery / handling fee line
-        case tax                   // a VAT / sales-tax line
         case tip                   // a tip / gratuity / service-charge line
     }
 
@@ -27,13 +26,16 @@ struct ReceiptLineFilter {
     ///    doesn't get promoted to `.anchorTotal` by the embedded `total`
     ///    token.
     /// 2. **Non-product keywords** runs next so admin compound stop-words
-    ///    (`tax id`, `vat id`, etc.) win over the `.tax` regex — those
-    ///    contain "tax" but are administrative metadata, not tax-charge
-    ///    lines that the split calculator would distribute.
-    /// 3. **Tip / tax / fee** then route to their respective keep-with-kind
-    ///    verdicts. Order between these three is mostly cosmetic (they're
-    ///    nearly always disjoint); `.tip` precedes `.tax` so a "service
-    ///    charge tax" hypothetical would lean `.tip`.
+    ///    (`tax id`, `vat id`, etc.), AND tax/VAT/НДС lines, all skip
+    ///    cleanly. Tax was formerly its own `.tax` verdict that got
+    ///    distributed across split participants; it's now classified as
+    ///    skip because tax is store-side metadata (already baked into
+    ///    the grand total), not a buyer-paid charge the user wants to
+    ///    track. Buyer-paid duties / fees stay as `.fee`.
+    /// 3. **Tip / fee** then route to their respective keep-with-kind
+    ///    verdicts. Order is mostly cosmetic (they're nearly always
+    ///    disjoint); `.tip` precedes `.fee` so a "service charge fee"
+    ///    hypothetical leans `.tip`.
     /// 4. **Pattern-based** (dates, masked cards, phones) runs after the
     ///    keyword regexes since it's a stricter check.
     /// 5. **Anchor** runs last — only fires when nothing more specific did.
@@ -49,9 +51,6 @@ struct ReceiptLineFilter {
         }
         if Self.tipRegex.matches(in: trimmed) {
             return .tip
-        }
-        if Self.taxRegex.matches(in: trimmed) {
-            return .tax
         }
         if Self.feeRegex.matches(in: trimmed) {
             return .fee
@@ -145,6 +144,16 @@ struct ReceiptLineFilter {
         "void", "refund", "возврат",
         "balance", "баланс", "saldo",
 
+        // Tax / VAT / sales-tax — store-side metadata (already baked
+        // into the grand total), not a buyer charge to track. Skipped
+        // so the line never enters the items list. Buyer-paid duties
+        // (city tax, tourist tax, …) are NOT here; if a receipt prints
+        // those with an explicit qualifier, the `.fee` list handles
+        // them via the same compound-word pattern as `cover charge`.
+        "vat", "tax", "taxes", "tva", "iva", "mwst", "ust", "umsatzsteuer",
+        "ндс", "nds", "налог", "nalog", "podatek", "pdv", "porez",
+        "impôt", "impot", "impuesto",
+
         // Round C-2 — staff & layout labels (English first, then EU)
         "waiter", "server", "host", "hostess",
         "table", "guest", "ticket", "tab",
@@ -181,34 +190,17 @@ struct ReceiptLineFilter {
         "стопа",   // Serbian Cyrillic: rate (стопе, стопу, стопом)
         "броач",   // Serbian Cyrillic: counter
         "рачун",   // Serbian Cyrillic: receipt / account
-        "пфр"      // Serbian Cyrillic: fiscal protocol abbreviation
+        "пфр",     // Serbian Cyrillic: fiscal protocol abbreviation
+        // Tax stems — Serbian Cyrillic case-form catch-all. See the
+        // "store-side tax" rationale on `nonProductWords`.
+        "пореск",  // tax-related (порески, пореска)
+        "порез"    // tax (пореза, порезу, порезом, порезе, порези)
     ]
 
     private static let nonProductRegex = WordRegex(
         words: nonProductWords,
         stems: nonProductCyrillicStems
     )
-
-    // MARK: - Tax keywords
-
-    /// Words that identify a tax line (VAT, sales tax, etc.). Kept in the
-    /// items list as `.tax`-kinded rows so the "by items" split-share
-    /// calculator can distribute them proportionally to each participant's
-    /// item subtotal.
-    private static let taxWords: [String] = [
-        "vat", "tax", "taxes", "tva", "iva", "mwst", "ust", "umsatzsteuer",
-        "ндс", "nds", "налог", "nalog", "podatek", "pdv", "porez",
-        "impôt", "impot", "impuesto"
-    ]
-
-    /// Serbian Cyrillic tax stems (нумерация: пореска, порези, etc.).
-    /// Same `\p{L}*` suffix-greedy approach as `nonProductCyrillicStems`.
-    private static let taxCyrillicStems: [String] = [
-        "пореск",  // tax-related (порески, порескa)
-        "порез"    // tax (пореза, порезу, порезом, порезе, порези)
-    ]
-
-    private static let taxRegex = WordRegex(words: taxWords, stems: taxCyrillicStems)
 
     // MARK: - Tip keywords
 

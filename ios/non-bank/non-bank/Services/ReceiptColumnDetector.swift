@@ -141,15 +141,14 @@ struct ReceiptColumnDetector {
                 return .item(item)
             }
             return .noise
-        case .keep, .fee, .tax, .tip:
-            // Fee / tax / tip rows go through the standard item parser
-            // — the line carries its own price token (e.g. "VAT 18%
+        case .keep, .fee, .tip:
+            // Fee / tip rows go through the standard item parser — the
+            // line carries its own price token (e.g. "Service charge
             // 5.00") and we want it kept in the items list with
             // positive sign so the split-by-items calculator can
-            // distribute it proportionally. The `kind` itself isn't
-            // stored on the parsed line; downstream `ReceiptItem.kind`
-            // re-derives it from the same classifier, so the round-trip
-            // is consistent.
+            // distribute it proportionally. Tax/VAT lines used to be
+            // here but are now `.skipNonProduct` — they're store-side
+            // metadata, not a buyer-tracked charge.
             break
         }
 

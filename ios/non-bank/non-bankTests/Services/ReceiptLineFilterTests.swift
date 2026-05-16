@@ -24,18 +24,21 @@ final class ReceiptLineFilterTests: XCTestCase {
         XCTAssertEqual(ReceiptLineFilter.classify("Sub-total $35"), .skipNonProduct)
     }
 
-    func testClassify_taxesAcrossLanguages_returnTaxVerdict() {
-        // Phase 2: tax lines used to be silently dropped via nonProductWords.
-        // They're now kept as their own `.tax` verdict so the split-by-items
-        // calculator can distribute them proportionally across participants.
-        XCTAssertEqual(ReceiptLineFilter.classify("VAT 18% 12.50"), .tax)
-        XCTAssertEqual(ReceiptLineFilter.classify("Tax 5.00"), .tax)
-        XCTAssertEqual(ReceiptLineFilter.classify("TVA 20%"), .tax)
-        XCTAssertEqual(ReceiptLineFilter.classify("IVA 21,00"), .tax)
-        XCTAssertEqual(ReceiptLineFilter.classify("MwSt. 7,50"), .tax)
-        XCTAssertEqual(ReceiptLineFilter.classify("НДС 18% 12,50"), .tax)
-        XCTAssertEqual(ReceiptLineFilter.classify("PDV 50,00"), .tax)
-        XCTAssertEqual(ReceiptLineFilter.classify("Podatek VAT 5,00"), .tax)
+    func testClassify_taxesAcrossLanguages_areSkippedNonProduct() {
+        // Tax / VAT / sales-tax lines used to be kept as their own
+        // `.tax` verdict and distributed across split participants.
+        // Reclassified as `.skipNonProduct` because tax is store-side
+        // metadata already baked into the grand total — never a
+        // separate buyer expense. Tax-like buyer charges (city tax,
+        // tourist tax) would have to be added manually under "Fee".
+        XCTAssertEqual(ReceiptLineFilter.classify("VAT 18% 12.50"), .skipNonProduct)
+        XCTAssertEqual(ReceiptLineFilter.classify("Tax 5.00"), .skipNonProduct)
+        XCTAssertEqual(ReceiptLineFilter.classify("TVA 20%"), .skipNonProduct)
+        XCTAssertEqual(ReceiptLineFilter.classify("IVA 21,00"), .skipNonProduct)
+        XCTAssertEqual(ReceiptLineFilter.classify("MwSt. 7,50"), .skipNonProduct)
+        XCTAssertEqual(ReceiptLineFilter.classify("НДС 18% 12,50"), .skipNonProduct)
+        XCTAssertEqual(ReceiptLineFilter.classify("PDV 50,00"), .skipNonProduct)
+        XCTAssertEqual(ReceiptLineFilter.classify("Podatek VAT 5,00"), .skipNonProduct)
     }
 
     func testClassify_paymentMethodsAcrossLanguages() {
@@ -255,13 +258,12 @@ final class ReceiptLineFilterTests: XCTestCase {
         XCTAssertEqual(ReceiptLineFilter.classify("Броач рачуна: 72983"), .skipNonProduct)
     }
 
-    func testClassify_serbianCyrillicTax_returnsTaxVerdict() {
-        // Phase 2: Serbian Cyrillic tax stems (порез, пореска) moved
-        // from the nonProduct list to the tax-stem list — these are
-        // legitimate tax lines that the by-items calculator distributes
-        // proportionally.
-        XCTAssertEqual(ReceiptLineFilter.classify("Укупан износ пореза: 3.743,33"), .tax)
-        XCTAssertEqual(ReceiptLineFilter.classify("20,00% 3.743,33 Порез"), .tax)
+    func testClassify_serbianCyrillicTax_isSkippedNonProduct() {
+        // Same change as the multi-language tax test above — Serbian
+        // Cyrillic tax stems (порез, пореска) classify as
+        // `.skipNonProduct` so the line never reaches the items list.
+        XCTAssertEqual(ReceiptLineFilter.classify("Укупан износ пореза: 3.743,33"), .skipNonProduct)
+        XCTAssertEqual(ReceiptLineFilter.classify("20,00% 3.743,33 Порез"), .skipNonProduct)
     }
 
     func testClassify_serbianCyrillicGrandTotal_isAnchor() {

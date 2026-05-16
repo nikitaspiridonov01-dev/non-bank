@@ -45,7 +45,6 @@ struct ReceiptItem: Codable, Sendable, Identifiable, Equatable {
         case item
         case discount
         case fee
-        case tax
         case tip
 
         /// Classifies a (name, lineTotal) pair the same way
@@ -53,12 +52,20 @@ struct ReceiptItem: Codable, Sendable, Identifiable, Equatable {
         /// wrappers (e.g. the editor's `EditableItem`) can render the
         /// matching icon without round-tripping through a full
         /// `ReceiptItem`.
+        ///
+        /// Note: there is no `.tax` case. Tax / VAT / sales-tax lines
+        /// are filtered out at parse time (classifier returns
+        /// `.skipNonProduct`) because they're store-side metadata
+        /// already included in the receipt grand total — not a
+        /// trackable buyer expense. Historic rows that used to carry
+        /// kind=tax in name (e.g. "VAT 18%") now fall through this
+        /// switch as plain `.item` on read; they're harmless because
+        /// no split logic depends on the `.tax` case anymore.
         static func classify(name: String, lineTotal: Double) -> Kind {
             if lineTotal < 0 { return .discount }
             switch ReceiptLineFilter.classify(name) {
             case .discount: return .discount
             case .fee:      return .fee
-            case .tax:      return .tax
             case .tip:      return .tip
             case .keep, .skipNonProduct, .anchorTotal:
                 return .item

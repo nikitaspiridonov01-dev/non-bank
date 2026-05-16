@@ -74,8 +74,28 @@ final class SplitShareCalculatorTests: XCTestCase {
 
     // MARK: - Proportional charges (Pass 2)
 
-    func testCompute_taxDistributedProportionalToItemShare() {
-        // Alice took $20 of direct items, Bob took $10 → tax proportion is 2:1.
+    func testCompute_feeDistributedProportionalToItemShare() {
+        // Alice took $20 of direct items, Bob took $10 → fee proportion is 2:1.
+        let items = [
+            makeItem(name: "Pizza", total: 20, assignees: ["alice"]),
+            makeItem(name: "Beer", total: 10, assignees: ["bob"]),
+            makeItem(name: "Service fee", total: 3, assignees: [])
+        ]
+        let result = SplitShareCalculator.compute(
+            items: items,
+            participants: ["alice", "bob"]
+        )
+        XCTAssertEqual(result["alice"]!, 22, accuracy: 0.001, "Alice: 20 + 3 × (20/30) = 22")
+        XCTAssertEqual(result["bob"]!, 11, accuracy: 0.001, "Bob: 10 + 3 × (10/30) = 11")
+    }
+
+    func testCompute_taxLineDoesNotAffectShares() {
+        // Regression guard: tax/VAT lines reach the calculator only when
+        // they're surviving from old data (the parser now filters them
+        // at parse time). They must NOT be distributed across split
+        // participants — tax is store-side metadata already baked into
+        // each item's price / the receipt total. Alice and Bob only
+        // pay for their items, no VAT surcharge.
         let items = [
             makeItem(name: "Pizza", total: 20, assignees: ["alice"]),
             makeItem(name: "Beer", total: 10, assignees: ["bob"]),
@@ -85,8 +105,8 @@ final class SplitShareCalculatorTests: XCTestCase {
             items: items,
             participants: ["alice", "bob"]
         )
-        XCTAssertEqual(result["alice"]!, 22, accuracy: 0.001, "Alice: 20 + 3 × (20/30) = 22")
-        XCTAssertEqual(result["bob"]!, 11, accuracy: 0.001, "Bob: 10 + 3 × (10/30) = 11")
+        XCTAssertEqual(result["alice"]!, 20, accuracy: 0.001, "VAT must not inflate Alice's share")
+        XCTAssertEqual(result["bob"]!, 10, accuracy: 0.001, "VAT must not inflate Bob's share")
     }
 
     func testCompute_tipDistributedProportional() {
@@ -135,11 +155,11 @@ final class SplitShareCalculatorTests: XCTestCase {
 
     func testCompute_skippedParticipant_excludedFromCharges() {
         // Carol took no items → her share is 0 → she gets none of the
-        // tax (TZ: skipped participants are excluded from tax/fees).
+        // fee (TZ: skipped participants are excluded from fees).
         let items = [
             makeItem(name: "Pizza", total: 20, assignees: ["alice"]),
             makeItem(name: "Beer", total: 10, assignees: ["bob"]),
-            makeItem(name: "Tax", total: 3, assignees: [])
+            makeItem(name: "Service fee", total: 3, assignees: [])
         ]
         let result = SplitShareCalculator.compute(
             items: items,
@@ -184,28 +204,27 @@ final class SplitShareCalculatorTests: XCTestCase {
     }
 
     func testCompute_sumOfShares_approximatesItemsTotal() {
-        // Sanity: result should cover the whole receipt (within
-        // floating-point arithmetic). Mixed real-world receipt — the
-        // charge names are picked to hit `ReceiptLineFilter`'s
-        // classifier verbatim ("VAT" → .tax, "Tip" → .tip), since
-        // anything that classifies as `.item` without assignees would
-        // be silently lost (regular items aren't auto-redistributed
-        // when nobody claimed them — that's a user-warning case at
-        // save time, not the calculator's job to paper over).
+        // Sanity: result should cover the whole receipt minus the VAT
+        // line (within floating-point arithmetic). The charge names are
+        // picked to hit `ReceiptLineFilter`'s classifier verbatim
+        // ("Service fee" → .fee, "Tip" → .tip) so they distribute
+        // proportionally; "VAT" would now classify as
+        // `.skipNonProduct` → kind `.item` with no assignees → silently
+        // ignored. The expected sum therefore excludes the VAT line.
         let items = [
             makeItem(name: "Pizza", total: 18.50, assignees: ["alice"]),
             makeItem(name: "Pasta", total: 14.00, assignees: ["bob"]),
             makeItem(name: "Wine", total: 22.00, assignees: ["alice", "bob"]),
-            makeItem(name: "VAT 20%", total: 10.90, assignees: []),
+            makeItem(name: "Service fee", total: 5.00, assignees: []),
             makeItem(name: "Tip", total: 5.00, assignees: []),
             makeItem(name: "Discount", total: -3.00, assignees: [])
         ]
-        let receiptTotal = items.reduce(0) { $0 + $1.lineTotal }
+        let chargesTotal = items.reduce(0) { $0 + $1.lineTotal }
         let result = SplitShareCalculator.compute(
             items: items,
             participants: ["alice", "bob"]
         )
         let resultSum = result.values.reduce(0, +)
-        XCTAssertEqual(resultSum, receiptTotal, accuracy: 0.01)
+        XCTAssertEqual(resultSum, chargesTotal, accuracy: 0.01)
     }
 }

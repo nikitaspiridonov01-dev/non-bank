@@ -85,6 +85,15 @@ final class ShareLinkCoordinator: ObservableObject {
     /// console output.
     private(set) var lastReceivedURL: URL?
 
+    /// Receipt items pulled from the server-side items store for the
+    /// current share. Populated asynchronously by `handle(url:)` after
+    /// decode succeeds; consumed by `pickedParticipant` to persist
+    /// alongside the imported transaction. `nil` is the legacy
+    /// no-items path (older sender, server outage, expired snapshot)
+    /// — receiver falls back to `.byAmount` rendering, identical to
+    /// pre-rollout behaviour.
+    @Published private(set) var fetchedReceiptItems: [ReceiptItem]?
+
     // MARK: - Init
 
     init() {}
@@ -99,6 +108,9 @@ final class ShareLinkCoordinator: ObservableObject {
     func handle(url: URL) -> Bool {
         guard SharedTransactionLink.isShareURL(url) else { return false }
         lastReceivedURL = url
+        // Fresh share → drop any items cached from a previous link so
+        // we don't accidentally re-apply old items to a new transaction.
+        fetchedReceiptItems = nil
         do {
             let payload = try SharedTransactionLink.decode(url: url)
             #if DEBUG
@@ -112,6 +124,14 @@ final class ShareLinkCoordinator: ObservableObject {
             // For now: kick the View to call `startRouting` with the
             // current TransactionStore snapshot.
             pendingPayload = payload
+            // Race the server-items fetch with the classify step that
+            // the View will trigger next. Items typically arrive before
+            // the user has finished any picker / confirm dialog, so by
+            // the time `pickedParticipant` runs they're already cached
+            // on `fetchedReceiptItems`. If the network is slow / the
+            // server has nothing, `pickedParticipant` reads `nil` and
+            // imports the transaction as it always has (byAmount).
+            fetchEncryptedItems(forURL: url, payload: payload)
         } catch let error as SharedTransactionError {
             #if DEBUG
             print("[ShareLink] decode failed: \(error.localizedDescription)")
@@ -121,6 +141,34 @@ final class ShareLinkCoordinator: ObservableObject {
             routingState = .errored(.malformedPayload(underlying: error))
         }
         return true
+    }
+
+    /// Pull encrypted items from the Worker's `/v1/share-items/
+    /// {checksum}` store and decrypt with a key derived from the
+    /// URL's payload. Fire-and-forget — any failure leaves
+    /// `fetchedReceiptItems` at `nil` and the import flow runs the
+    /// historical no-items path.
+    private func fetchEncryptedItems(forURL url: URL, payload: SharedTransactionPayload) {
+        guard let urlPayload = SharedTransactionLink.urlPayloadString(of: url) else { return }
+        let shareID = payload.checksum
+        Task { [weak self] in
+            do {
+                guard let ciphertext = try await ShareItemsService.shared.fetch(shareID: shareID) else {
+                    #if DEBUG
+                    print("[ShareItems] server has no items for share \(shareID.prefix(8)) — using byAmount fallback")
+                    #endif
+                    return
+                }
+                let items = try ShareItemsCrypto.decryptItems(base64: ciphertext, urlPayload: urlPayload)
+                await MainActor.run {
+                    self?.fetchedReceiptItems = items
+                }
+            } catch {
+                #if DEBUG
+                print("[ShareItems] fetch/decrypt failed: \(error.localizedDescription)")
+                #endif
+            }
+        }
     }
 
     /// Decoded but not-yet-classified payload. The view layer reads this
@@ -271,7 +319,7 @@ final class ShareLinkCoordinator: ObservableObject {
                 categoryStore.addCategory(cat)
             }
 
-            if isUpdate, existingID != nil {
+            if isUpdate, let txID = existingID {
                 // Update path keeps the same SQLite primary key but
                 // replaces every other field — including the freshly
                 // computed `payloadChecksum`, which the classifier will
@@ -281,13 +329,15 @@ final class ShareLinkCoordinator: ObservableObject {
                 // not the pre-update copy that was sitting in
                 // `transactions` while the async write was in flight.
                 await transactionStore.updateAndWait(resolved.transaction)
+                await persistFetchedReceiptItemsIfAny(forTransactionID: txID, store: receiptItemStore)
                 routingState = .completed(syncID: resolved.transaction.syncID, kind: .updated)
             } else {
                 // `addAndReturnID` already awaits the load; we use
-                // its return value just as a success signal here —
-                // the sync id is intrinsic to `resolved.transaction`
-                // and survives any id rotation.
-                if await transactionStore.addAndReturnID(resolved.transaction) != nil {
+                // its return value as both the success signal AND the
+                // new SQLite primary key so we can attach any fetched
+                // share-items to the freshly-inserted row.
+                if let insertedID = await transactionStore.addAndReturnID(resolved.transaction) {
+                    await persistFetchedReceiptItemsIfAny(forTransactionID: insertedID, store: receiptItemStore)
                     routingState = .completed(syncID: resolved.transaction.syncID, kind: .createdNew)
                 } else {
                     // `addAndReturnID` looks up by syncID after the load
@@ -361,6 +411,22 @@ final class ShareLinkCoordinator: ObservableObject {
     func reset() {
         routingState = .idle
         pendingPayload = nil
+        fetchedReceiptItems = nil
+    }
+
+    /// Persist any items decrypted from the server-side store under the
+    /// freshly-inserted (or just-updated) transaction's id. No-op when
+    /// the fetch returned nil — the import flow stays on the historical
+    /// byAmount path that pre-dated the items channel. Clears the cache
+    /// after persistence so a subsequent share doesn't re-apply the
+    /// same set.
+    private func persistFetchedReceiptItemsIfAny(
+        forTransactionID transactionID: Int,
+        store: ReceiptItemStore
+    ) async {
+        guard let items = fetchedReceiptItems, !items.isEmpty else { return }
+        await store.saveItems(items, for: transactionID)
+        fetchedReceiptItems = nil
     }
 }
 

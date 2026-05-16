@@ -316,6 +316,37 @@ enum SharedTransactionLink {
         return false
     }
 
+    // MARK: - URL inspection helpers (for the server-side items channel)
+
+    /// Pull the raw `?p=...` query-parameter value out of a share URL,
+    /// or `nil` when the URL isn't a share URL or doesn't carry one.
+    /// Used by the share-items channel: this string is BOTH the key
+    /// the Worker stores items under (after deriving the checksum)
+    /// AND the seed for the recipient's decryption key, so we surface
+    /// it as a small helper rather than duplicating the URL parsing
+    /// at every callsite.
+    static func urlPayloadString(of url: URL) -> String? {
+        guard
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+            let value = components.queryItems?
+                .first(where: { $0.name == payloadKey })?
+                .value,
+            !value.isEmpty
+        else {
+            return nil
+        }
+        return value
+    }
+
+    /// Compute the canonical payload checksum for a share URL — i.e.
+    /// the same hex string `SharedTransactionPayload.checksum` would
+    /// return on the original payload. Used as the `{share_id}` URL
+    /// component for the server-side items store so sender + recipient
+    /// agree on the storage key from the URL alone.
+    static func payloadChecksum(of url: URL) throws -> String {
+        try decode(url: url).checksum
+    }
+
     // MARK: - Base64URL helpers
 
     /// Standard base64 uses `+`, `/`, and `=` — all of which need URL

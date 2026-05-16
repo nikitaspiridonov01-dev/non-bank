@@ -24,6 +24,7 @@ struct ShareSplitPromptSheet: View {
 
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var friendStore: FriendStore
+    @EnvironmentObject var receiptItemStore: ReceiptItemStore
 
     @State private var shareFlow: ShareFlowStep? = nil
     @Environment(\.dismiss) private var dismiss
@@ -69,9 +70,33 @@ struct ShareSplitPromptSheet: View {
         if UserProfileService.isNameSet {
             if let url = buildShareURL() {
                 shareFlow = .share(url)
+                uploadShareItemsIfApplicable(for: url)
             }
         } else {
             shareFlow = .askName(initial: "")
+        }
+    }
+
+    /// Mirrors `TransactionDetailView.uploadShareItemsIfApplicable`.
+    /// Kept inline rather than centralised on `ShareItemsService`
+    /// because the dependencies (transaction + receiptItemStore) live
+    /// in the view layer; centralising would force the service to grow
+    /// store dependencies it otherwise doesn't need.
+    private func uploadShareItemsIfApplicable(for url: URL) {
+        guard transaction.splitInfo?.splitMode == .byItems else { return }
+        let items = receiptItemStore.items(forTransactionID: transaction.id)
+        guard !items.isEmpty else { return }
+        guard let urlPayload = SharedTransactionLink.urlPayloadString(of: url) else { return }
+        guard let shareID = try? SharedTransactionLink.payloadChecksum(of: url) else { return }
+        Task {
+            do {
+                let ciphertext = try ShareItemsCrypto.encryptItems(items, urlPayload: urlPayload)
+                try await ShareItemsService.shared.upload(shareID: shareID, ciphertextBase64: ciphertext)
+            } catch {
+                #if DEBUG
+                print("[ShareItems] upload failed: \(error.localizedDescription)")
+                #endif
+            }
         }
     }
 
@@ -87,6 +112,7 @@ struct ShareSplitPromptSheet: View {
             return
         }
         shareFlow = .share(url)
+        uploadShareItemsIfApplicable(for: url)
     }
 
     var body: some View {

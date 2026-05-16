@@ -1,6 +1,10 @@
 import { route, RouterExhaustedError } from "./router.ts";
 import { bumpDeviceQuota, bumpIpParseQuota } from "./quota.ts";
 import { handleSharePage } from "./share.ts";
+import {
+  handleUploadShareItems,
+  handleFetchShareItems,
+} from "./share_items.ts";
 import { logEvent } from "./log.ts";
 import {
   MAX_CATEGORY_NAME,
@@ -105,6 +109,31 @@ export default {
       // (shorter / more shareable) and the route is HTML, not API.
       if (url.pathname === "/share" && req.method === "GET") {
         return handleSharePage(req, env);
+      }
+      // Server-side receipt-items storage (E2E encrypted).
+      //   POST /v1/share-items/{share_id} — sender uploads items
+      //   GET  /v1/share-items/{share_id} — recipient fetches them
+      // Keyed by the URL payload checksum (64-hex). See
+      // `share_items.ts` for the storage model + lifecycle.
+      const itemsMatch = url.pathname.match(/^\/v1\/share-items\/([0-9a-f]{64})$/);
+      if (itemsMatch != null) {
+        const shareID = itemsMatch[1];
+        const ip = callerIp(req);
+        const salt = env.IP_HASH_SALT ?? "non-bank-dev-salt";
+        const ipHash = await hashIp(ip, salt);
+        const nowSec = Math.floor(Date.now() / 1000);
+        if (req.method === "POST") {
+          return withCors(
+            await handleUploadShareItems(req, env, shareID, ipHash, nowSec),
+            cors,
+          );
+        }
+        if (req.method === "GET") {
+          return withCors(
+            await handleFetchShareItems(env, shareID, ipHash, nowSec),
+            cors,
+          );
+        }
       }
       return withCors(
         jsonResponse({ error: "not_found", path: url.pathname }, 404),

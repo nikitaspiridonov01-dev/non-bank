@@ -183,9 +183,36 @@ struct TransactionDetailView: View {
             if let url = buildShareURL() {
                 shareFlow = .share(url)
                 consumeQueuedSharePromptIfMatching()
+                uploadShareItemsIfApplicable(for: url)
             }
         } else {
             shareFlow = .askName(initial: "")
+        }
+    }
+
+    /// Fire-and-forget upload of the transaction's receipt items to the
+    /// server-side items store, paired with the freshly-built share URL.
+    /// Only runs when the transaction is in `.byItems` mode and has at
+    /// least one item — there's nothing useful to share otherwise.
+    /// Failures are silently swallowed: the URL works without items
+    /// (the recipient just sees the historical "byAmount" fallback),
+    /// so a network blip / server outage shouldn't block the share
+    /// sheet.
+    private func uploadShareItemsIfApplicable(for url: URL) {
+        guard transaction.splitInfo?.splitMode == .byItems else { return }
+        let items = receiptItemStore.items(forTransactionID: transaction.id)
+        guard !items.isEmpty else { return }
+        guard let urlPayload = SharedTransactionLink.urlPayloadString(of: url) else { return }
+        guard let shareID = try? SharedTransactionLink.payloadChecksum(of: url) else { return }
+        Task {
+            do {
+                let ciphertext = try ShareItemsCrypto.encryptItems(items, urlPayload: urlPayload)
+                try await ShareItemsService.shared.upload(shareID: shareID, ciphertextBase64: ciphertext)
+            } catch {
+                #if DEBUG
+                print("[ShareItems] upload failed: \(error.localizedDescription) — recipient will see byAmount fallback")
+                #endif
+            }
         }
     }
 
@@ -206,6 +233,7 @@ struct TransactionDetailView: View {
         // smoothly transitions instead of double-presenting.
         shareFlow = .share(url)
         consumeQueuedSharePromptIfMatching()
+        uploadShareItemsIfApplicable(for: url)
     }
 
     /// Clears the queued post-create `ShareSplitPromptSheet` if it's

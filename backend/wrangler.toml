@@ -94,10 +94,14 @@ binding = "AI"
 
 [env.staging.vars]
 ENV = "staging"
-# Loose caps for stress-test scenarios. Tightening these later requires a
-# deliberate redeploy; production caps remain at the conservative numbers
-# in the top-level `[vars]` block above.
-PER_DEVICE_DAILY_LIMIT = "1000"
-PER_IP_DAILY_LIMIT = "5000"
-PER_IP_SHARE_PER_MINUTE_LIMIT = "300"
+# Matched to the top-level prod `[vars]` values so behaviour on
+# staging mirrors prod 1:1 — same rate-limit walls, same error
+# paths trigger on the same scan counts. The earlier "loose caps"
+# variant (1000 / 5000 / 300) was useful for stress-testing but
+# masked the real ban-flow UX a Release-build user would hit. Bump
+# any of these back up for ad-hoc stress tests; reset to prod
+# values when the test is done so staging stays realistic.
+PER_DEVICE_DAILY_LIMIT = "60"
+PER_IP_DAILY_LIMIT = "200"
+PER_IP_SHARE_PER_MINUTE_LIMIT = "60"
 LOG_LEVEL = "info"

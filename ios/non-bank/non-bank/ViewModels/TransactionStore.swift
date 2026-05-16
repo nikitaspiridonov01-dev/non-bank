@@ -13,6 +13,14 @@ class TransactionStore: ObservableObject {
     /// Stays `true` for the rest of the session even when subsequent
     /// `load()` calls (sync push-back, edits) mutate `transactions`.
     @Published private(set) var hasLoadedOnce: Bool = false
+    /// Monotonic version counter — increments on every `load()` so views
+    /// observing transactions can build a cheap O(1) Hashable fingerprint
+    /// for `.task(id:)` triggers without iterating the whole array. Used
+    /// by `HomeViewModel.recomputeFiltered` to detect "the data behind my
+    /// cache changed" without needing `[Transaction]` itself to be
+    /// `Hashable`. Wraps on overflow; given iOS app lifetimes one increment
+    /// per CRUD operation, overflow is astronomically far away.
+    @Published private(set) var version: UInt64 = 0
     private let repo: TransactionRepositoryProtocol
     private let receiptItemRepo: ReceiptItemRepositoryProtocol
     weak var syncManager: SyncManager?
@@ -44,6 +52,10 @@ class TransactionStore: ObservableObject {
 
     func load() async {
         transactions = await repo.fetchAll()
+        // Bump the version BEFORE the hasLoadedOnce flip so any view
+        // observing both reads a fresh version on the same frame it
+        // sees `hasLoadedOnce == true`.
+        version &+= 1
         // Flag set AFTER the assignment so views that observe both
         // `transactions` and `hasLoadedOnce` together see consistent
         // state on the same frame.

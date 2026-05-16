@@ -52,14 +52,6 @@ struct HomeView: View {
         { [currencyStore] amount, from, to in currencyStore.convert(amount: amount, from: from, to: to) }
     }
 
-    private var filteredTransactions: [Transaction] {
-        vm.filteredTransactions(from: transactionStore.homeTransactions, resolveCategory: resolveCategory)
-    }
-
-    private var groupedTransactions: [(date: Date, transactions: [Transaction])] {
-        vm.groupedTransactions(from: filteredTransactions)
-    }
-
     /// All transactions filtered only by date — used for quick filter candidates
     private var dateFilteredTransactions: [Transaction] {
         TransactionFilterService.filterByDate(transactions: transactionStore.homeTransactions, filter: vm.activeDateFilter)
@@ -95,18 +87,26 @@ struct HomeView: View {
             currency: currencyStore.selectedCurrency,
             convert: convert
         )
-        // Hoist filter + group ONCE per body eval. Both `filteredTransactions`
-        // and `groupedTransactions` are computed properties that filter +
-        // sort + group the whole list every access; body has 4+ read
-        // sites (sticky-date label, transaction list empty-state, list
-        // itself, search-sheet content), so the previous implementation
-        // ran the full filter chain 4× on each body re-render. With
-        // 10k transactions the audit measured ~40 ms per filter; this
-        // brings a body eval back to a single filter pass.
+        // The filter + group results live on `vm` as `@Published`
+        // properties (`filtered`, `grouped`), computed off the main
+        // actor by `vm.recomputeFiltered`. The `.task(id:)` modifier
+        // below fires whenever any filter input changes — including
+        // the synthetic `transactionStore.version` counter which the
+        // store bumps on every `load()`, so edits to a transaction's
+        // title without a count change still invalidate the cache.
+        // Body just reads the cached values; no synchronous filter
+        // call here, even on first render.
         let homeTxList = transactionStore.homeTransactions
         let homeTxIsEmpty = homeTxList.isEmpty
-        let filtered = vm.filteredTransactions(from: homeTxList, resolveCategory: resolveCategory)
-        let grouped = vm.groupedTransactions(from: filtered)
+        let filtered = vm.filtered
+        let grouped = vm.grouped
+        // Pre-built category-title snapshot — passed to
+        // `vm.recomputeFiltered` so the off-main filter can validate
+        // each transaction's category without reaching back into the
+        // `@MainActor`-isolated `CategoryStore`. Set construction is
+        // O(N) on the categories list (typically 10–20 items), much
+        // cheaper than the filter chain it replaces.
+        let categoryTitles = Set(categoryStore.categories.map { $0.title })
         let extraHeaderTopPadding: CGFloat = AppSizes.headerExtraTopPadding
         // Убрали NavigationView, так как он создавал системные баги с прыжком верхнего SafeArea
         ZStack(alignment: .top) {
@@ -163,7 +163,7 @@ struct HomeView: View {
                     guard let date = date else { return }
                     let calendar = Calendar.current
                     // Find the section date that matches the picked day
-                    if let sectionDate = groupedTransactions.first(where: {
+                    if let sectionDate = vm.grouped.first(where: {
                         calendar.isDate($0.date, inSameDayAs: date)
                     })?.date {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -171,7 +171,7 @@ struct HomeView: View {
                         }
                     } else {
                         // Find the closest earlier section
-                        if let closest = groupedTransactions.filter({ $0.date <= date }).first {
+                        if let closest = vm.grouped.filter({ $0.date <= date }).first {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                                 proxy.scrollTo(closest.date, anchor: .top)
                             }
@@ -393,6 +393,28 @@ struct HomeView: View {
             refreshQuickFilters()
             currencyStore.updateTransactions(transactionStore.homeTransactions)
         }
+        // Async filter pipeline trigger: fires on appear (initial
+        // compute, debounce skipped via `hasInitialFilter == false`)
+        // and on every filter-input change. `txVersion` is the
+        // monotonic counter on `TransactionStore` that bumps on
+        // every `load()`, so edits / adds / deletes all invalidate
+        // the cache without us needing `[Transaction]: Hashable`.
+        // `categoryTitles` change-detects new / renamed / deleted
+        // categories.
+        .task(id: HomeFilterFingerprint(
+            txVersion: transactionStore.version,
+            dateFilter: vm.activeDateFilter,
+            searchText: vm.searchText,
+            activeCategories: vm.activeCategories,
+            activeTypes: vm.activeTypes,
+            categoryTitles: categoryTitles
+        )) {
+            vm.recomputeFiltered(
+                allTransactions: homeTxList,
+                categoryTitles: categoryTitles,
+                uncategorizedTitle: CategoryStore.uncategorized.title
+            )
+        }
         // `.onChange(of: array)` — Transaction is Equatable, so this
         // fires on add/edit/delete (the previous `.onReceive($transactions)`
         // would intermittently fail to populate `cachedTopCategories`
@@ -466,7 +488,15 @@ struct HomeView: View {
         grouped: [(date: Date, transactions: [Transaction])],
         homeTxIsEmpty: Bool
     ) -> some View {
-        if !homeTxIsEmpty && grouped.isEmpty {
+        // Gate the "No transactions match" message on
+        // `hasInitialFilter` so the very first body eval — when the
+        // async filter hasn't published its first result yet, so
+        // `grouped` is still empty even though the store has data —
+        // doesn't flash the wrong message at the user. `homeTxIsEmpty`
+        // path stays unconditional: an actually-empty store should
+        // show the empty state immediately, regardless of filter
+        // pipeline state.
+        if !homeTxIsEmpty && grouped.isEmpty && vm.hasInitialFilter {
             VStack {
                 Spacer().frame(height: 50)
                 Text("No transactions match the selected filters")
@@ -628,6 +658,21 @@ struct StickyDateLabel: View, Equatable {
 }
 
 // DateFilterType and TrendBarPoint moved to Models/FilterTypes.swift
+
+/// Cheap O(1) Hashable fingerprint that the body builds once per
+/// re-eval and feeds to `.task(id:)` so the async filter pipeline
+/// re-fires only on real input changes. Includes
+/// `TransactionStore.version` (monotonic counter, bumps on every
+/// `load()`) so transaction-content edits invalidate the cache
+/// without needing `[Transaction]` to be `Hashable`.
+private struct HomeFilterFingerprint: Hashable {
+    let txVersion: UInt64
+    let dateFilter: DateFilterType
+    let searchText: String
+    let activeCategories: Set<String>
+    let activeTypes: Set<TransactionType>
+    let categoryTitles: Set<String>
+}
 
 struct HomeView_Previews: PreviewProvider {
     static var previews: some View {

@@ -28,6 +28,11 @@
 import { pixelCatSVG } from "./pixelCat.ts";
 import { bumpIpShareQuota } from "./quota.ts";
 import { logEvent } from "./log.ts";
+import {
+  decryptShareItems,
+  payloadChecksumFromJSONString,
+  type WireItem,
+} from "./share_items_decrypt.ts";
 
 // Minimum slice of the Worker `Env` that the share handler needs. Kept
 // narrow on purpose: `share.ts` shouldn't see provider API keys or AI
@@ -150,9 +155,10 @@ export async function handleSharePage(
   }
 
   let payload: SharedPayload;
+  let payloadJSON: string;
   try {
-    const json = base64urlDecodeToString(p);
-    payload = JSON.parse(json);
+    payloadJSON = base64urlDecodeToString(p);
+    payload = JSON.parse(payloadJSON);
   } catch (e) {
     // Log so we can spot pattern (truncated paste, bad encoding) in
     // Worker logs. The user-facing message stays generic.
@@ -172,13 +178,60 @@ export async function handleSharePage(
     );
   }
 
+  // Pull the encrypted receipt items the sender uploaded under this
+  // share's checksum (if any). Items aren't on the URL — they live
+  // in the `share_items` D1 table from Phase 10, keyed by the same
+  // SHA-256 the iOS encoder produces. The Worker has the URL
+  // payload here so it can derive the same AES-GCM key the
+  // recipient's iOS app would derive; rendering items in the web
+  // preview is the only place outside the iOS app where the
+  // ciphertext gets decrypted server-side. If anything fails
+  // (no row, expired row, malformed ciphertext, wrong key) we
+  // silently fall back to the no-items rendering — matches the
+  // existing graceful-degradation contract elsewhere in the share
+  // pipeline.
+  const items = await fetchAndDecryptItems(env, payloadJSON, p);
+
   const appLink = `nonbank://share?p=${p}`;
   const locale = pickLocale(req.headers.get("accept-language"));
   // Canonical URL strips any incidental query params beyond `p` so the
   // og:url meta-tag stays stable for messengers de-duplicating link
   // previews by URL.
   const canonicalURL = `${url.origin}${url.pathname}?p=${encodeURIComponent(p)}`;
-  return htmlResponse(renderSharePage(payload, appLink, locale, canonicalURL), 200);
+  return htmlResponse(
+    renderSharePage(payload, appLink, locale, canonicalURL, items),
+    200,
+  );
+}
+
+/// Looks up the encrypted items bundle in D1 by the share's
+/// checksum, decrypts with a key derived from the URL payload, and
+/// returns the WireItem list. Any failure → null (silent fallback
+/// to the no-items rendering).
+async function fetchAndDecryptItems(
+  env: ShareEnv,
+  payloadJSON: string,
+  urlPayload: string,
+): Promise<WireItem[] | null> {
+  try {
+    const shareID = await payloadChecksumFromJSONString(payloadJSON);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const row = await env.DB
+      .prepare(
+        `SELECT payload FROM share_items WHERE share_id = ?1 AND expires_at > ?2`,
+      )
+      .bind(shareID, nowSec)
+      .first<{ payload: string }>();
+    if (!row) return null;
+    return await decryptShareItems(row.payload, urlPayload);
+  } catch (e) {
+    logEvent(env, "warn", {
+      route: "/share",
+      msg: "items_decrypt_failed",
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return null;
+  }
 }
 
 /// Picks the best supported locale from an `Accept-Language` header.
@@ -312,6 +365,7 @@ function renderSharePage(
   appLink: string,
   locale: string,
   canonicalURL: string,
+  items: WireItem[] | null,
 ): string {
   const sharerName = (payload.sn ?? "").trim() || "Someone";
   const titleHTML = escapeHTML(payload.t || "Shared transaction");
@@ -368,13 +422,22 @@ function renderSharePage(
     .filter((p) => p.share > 0.005)
     .map((p) => sheetParticipantRow(p, p.share, payload.c))
     .join("\n");
-  // Mirror iOS `ShareDistributionView.splitModeLabel`: 2-person
-  // 50/50 stays "50/50", anything else collapses to "Evenly".
+  // Map the wire mode string to the user-facing label iOS shows.
+  // Source of truth: `SplitMode.displayLabel` on the iOS side
+  // (`Models/SplitMode.swift`). Wire values are the raw enum
+  // `rawValue`s — we translate here so the web preview reads as
+  // English instead of camelCase identifiers ("settleUp" → "Settle
+  // up"). The 2-person 50/50 case keeps the iOS-side "50/50" label.
   const splitModeLabel = (() => {
     const sm = payload.sm;
     if (sm === "50/50" && sharerCount === 2) return "50/50";
-    if (sm && sm !== "50/50") return sm;
-    return "Evenly";
+    switch (sm) {
+      case "50/50":     return "Evenly";
+      case "byAmount":  return "By amount";
+      case "byItems":   return "By items in receipt";
+      case "settleUp":  return "Settle up";
+      default:          return "Evenly";
+    }
   })();
 
   // Identity picker rows (rendered inside the modal). Only friends —
@@ -382,6 +445,21 @@ function renderSharePage(
   const identityPickerRowsHTML = friendsOnly
     .map((p) => identityPickerRowHTML(p))
     .join("\n");
+
+  // Receipt items — pulled from the encrypted `share_items` table
+  // and decrypted server-side (see `fetchAndDecryptItems`). Render
+  // only when there's something to show; the formula block above
+  // already covers the "no items" case.
+  const itemsCount = items?.length ?? 0;
+  const hasItems = itemsCount > 0;
+  const itemsRowsHTML = hasItems
+    ? items!
+        .map((it) => receiptItemRowHTML(it, payload.c))
+        .join("\n")
+    : "";
+  const itemsSubtotal = hasItems
+    ? items!.reduce((acc, it) => acc + (it.t ?? 0), 0)
+    : 0;
 
   const appStoreURL = "https://apps.apple.com/search?term=non-bank";
   const peopleCount = people.length;
@@ -512,6 +590,13 @@ ${PAGE_STYLES}
       <span>Debts to settle up</span>
     </div>
 
+    ${hasItems ? `
+    <button type="button" class="items-row" data-target="itemsSheet" aria-label="Show receipt items">
+      <span class="items-label">Receipt items</span>
+      <span class="items-count">${itemsCount}</span>
+      <span class="items-chevron" aria-hidden="true">↗</span>
+    </button>` : ""}
+
     <div class="section-label">Debts to settle up</div>
     <div class="debt-list">${debtListHTML}</div>
 
@@ -566,6 +651,30 @@ ${PAGE_STYLES}
       <button type="button" class="modal-close" data-modal-close>Done</button>
     </div>
   </div>
+
+  <!-- Items overlay — slide-up sheet listing every receipt item
+       the sender's app uploaded. Encrypted in transit via the
+       share_items table + decrypted server-side here. Hidden
+       entirely when no items came along with the link (legacy
+       shares, sender on an older build, snapshot expired). -->
+  ${hasItems ? `
+  <div class="modal" id="itemsSheet" hidden>
+    <div class="modal-backdrop" data-modal-close></div>
+    <div class="modal-sheet">
+      <div class="modal-header sheet-header-ios">
+        <div class="sheet-amount">
+          <span class="int">${escapeHTML(formatAmountInteger(itemsSubtotal))}</span>
+          <span class="dec">${escapeHTML(formatAmountDecimal(itemsSubtotal))}</span>
+          <span class="cur">${escapeHTML(payload.c)}</span>
+        </div>
+        <p class="sheet-caption">${itemsCount} ${itemsCount === 1 ? "item" : "items"} on the receipt.</p>
+      </div>
+      <div class="modal-list">
+        ${itemsRowsHTML}
+      </div>
+      <button type="button" class="modal-close" data-modal-close>Done</button>
+    </div>
+  </div>` : ""}
 
   <!-- Shares overlay — slide-up sheet showing each share.
        Copy matches iOS ShareDistributionView: split-mode pill
@@ -691,6 +800,40 @@ function identityPickerRowHTML(person: Person): string {
       <div class="picker-name">${escapeHTML(person.name)}</div>
       <span class="picker-arrow" aria-hidden="true">→</span>
     </button>`;
+}
+
+/// One row inside the items overlay sheet. Mirrors the iOS receipt-
+/// item read-only layout — name on the left, quantity × unit price
+/// caption below if both are present, lineTotal pinned to the right.
+function receiptItemRowHTML(item: WireItem, currency: string): string {
+  const name = (item.n ?? "").trim() || "—";
+  const total = item.t ?? 0;
+  const qty = item.q ?? 1;
+  const unit = item.p ?? null;
+  // Quantity × unit-price subtitle only when both are present AND
+  // meaningful (quantity > 1 or fractional). For "1 × X", the
+  // subtitle adds nothing the line total doesn't already show, so
+  // skip it to keep the row tidy.
+  const showSubtitle =
+    unit != null && qty != null && (qty > 1.001 || Math.abs(qty - 1) > 0.001);
+  const subtitleHTML = showSubtitle
+    ? `<div class="item-subtitle">${escapeHTML(formatQuantity(qty))} × ${escapeHTML(formatAmount(unit!, currency))}</div>`
+    : "";
+  return `
+    <div class="item-row">
+      <div class="item-main">
+        <div class="item-name">${escapeHTML(name)}</div>
+        ${subtitleHTML}
+      </div>
+      <div class="item-total">${escapeHTML(formatAmount(total, currency))}</div>
+    </div>`;
+}
+
+/// Renders a quantity like 2, 2.5, 1.25 — strips trailing zeros so
+/// the receipt sheet reads "2" instead of "2.00" for whole units.
+function formatQuantity(q: number): string {
+  if (Math.abs(q - Math.round(q)) < 0.001) return String(Math.round(q));
+  return q.toFixed(2).replace(/\.?0+$/, "");
 }
 
 function errorPage(message: string): string {
@@ -967,6 +1110,79 @@ const PAGE_STYLES = `
   .formula .dot.purchase { background: var(--split-accent-bold); }
   .formula .dot.people { background: var(--split-people); }
   .formula .op { color: var(--text-tertiary); }
+
+  /* Receipt-items pill — same surface treatment as the split-card
+     sections so it reads as another "tap to open a sheet" affordance
+     in the same row family. Only rendered when items came along with
+     the share link. */
+  .items-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 14px 18px;
+    margin: 0 0 24px;
+    background: var(--surface-elevated);
+    border-radius: 14px;
+    border: none;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: transform 0.06s ease, filter 0.12s ease;
+  }
+  .items-row:active { transform: scale(0.99); filter: brightness(1.05); }
+  .items-row .items-label {
+    font-weight: 600;
+  }
+  .items-row .items-count {
+    margin-left: auto;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--surface-chip);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .items-row .items-chevron {
+    font-size: 14px;
+    color: var(--text-tertiary);
+  }
+
+  /* Item rows inside the itemsSheet modal. Mirrors the iOS
+     read-only receipt-item list: name + optional "qty × unit"
+     subtitle on the left, lineTotal on the right. */
+  .item-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--surface-divider, rgba(0,0,0,0.06));
+  }
+  .item-row:last-child { border-bottom: none; }
+  .item-row .item-main {
+    flex: 1;
+    min-width: 0;
+  }
+  .item-row .item-name {
+    font-size: 15px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .item-row .item-subtitle {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-top: 2px;
+  }
+  .item-row .item-total {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    flex-shrink: 0;
+  }
 
   /* Debts to settle up */
   .section-label {

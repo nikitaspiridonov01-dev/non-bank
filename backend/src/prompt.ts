@@ -246,6 +246,72 @@ WRONG would be \`totalAmount = 6.84\` (the VAT amount).
 
 \`totalAmount = 29700\` and \`currency = "KRW"\`. KRW uses no decimals.
 
+### Concrete example — US restaurant receipt (with tip + sales tax)
+
+\`\`\`
+... menu items ...
+Subtotal                $42.50        ← pre-tax / pre-tip subtotal — NOT the grand total
+Sales Tax (8.25%)       $3.51         ← tax — NOT the grand total
+Tip (20%)               $9.00         ← gratuity — SKIP (don't include as an item, don't pick as total)
+Grand Total             $55.01        ← GRAND TOTAL  ← totalAmount = 55.01  ✅
+Visa **** 1234          $55.01        ← payment line — NOT a separate total
+\`\`\`
+
+\`totalAmount = 55.01\` and \`currency = "USD"\`. The tip and tax are both BELOW the subtotal and the grand total is the LAST positive amount shown — not the subtotal (which excludes tax/tip) and not the tip line.
+
+### Concrete example — French restaurant (HT vs TTC trap)
+
+\`\`\`
+... articles ...
+Total HT                €38,50        ← pre-tax subtotal ("hors taxes") — NOT the grand total
+TVA 20%                 €7,70         ← tax breakdown — NOT the grand total
+Total TTC               €46,20        ← GRAND TOTAL ("toutes taxes comprises") ← totalAmount = 46.20  ✅
+Carte bancaire          €46,20        ← payment, NOT a separate total
+\`\`\`
+
+\`totalAmount = 46.20\`. "HT" means pre-tax, "TTC" means tax-included — French restaurant receipts label them explicitly. Always pick TTC.
+
+### Concrete example — Polish supermarket (Biedronka / Lidl PL)
+
+\`\`\`
+... towary ...
+Suma                    139,40        ← subtotal — NOT the grand total
+Podatek VAT             11,18         ← VAT — NOT the grand total
+Razem                   150,58        ← GRAND TOTAL ← totalAmount = 150.58  ✅
+Gotówka                 200,00        ← payment given
+Reszta                  49,42         ← change due back
+\`\`\`
+
+\`totalAmount = 150.58\` and \`currency = "PLN"\`. "Razem" is the most common grand-total label on Polish supermarket receipts; "Do zapłaty" is the equivalent on restaurant receipts.
+
+### Concrete example — Russian grocery (Пятёрочка / Магнит)
+
+\`\`\`
+... товары ...
+ИТОГО                   ₽1 248,90     ← GRAND TOTAL  ← totalAmount = 1248.90  ✅
+В т.ч. НДС 20%          ₽208,15       ← VAT included in the total — NOT a separate total
+К ОПЛАТЕ                ₽1 248,90     ← duplicate "amount due" — same as ИТОГО, also the grand total
+Наличными               ₽1 250,00     ← payment given
+Сдача                   ₽1,10         ← change
+\`\`\`
+
+\`totalAmount = 1248.90\` and \`currency = "RUB"\`. The Russian space-as-thousands-separator (\`1 248,90\`) parses the same way as European EU comma decimal — convert to \`1248.90\` in JSON.
+
+### Concrete example — Wolt / Bolt food delivery summary
+
+\`\`\`
+Pizza Margherita                €8.50         ← item
+Pasta Carbonara                 €11.00        ← item
+Coca-Cola 0.5L                  €2.50         ← item
+─────────────────────────────────────────
+Subtotal                        €22.00        ← subtotal — skip
+Delivery fee                    €3.50         ← keep as item with name "Delivery"
+Service fee                     €1.10         ← keep as item with name "Service fee"
+Total                           €26.60        ← GRAND TOTAL  ← totalAmount = 26.60  ✅
+\`\`\`
+
+\`totalAmount = 26.60\` and \`currency = "EUR"\`. Note: "Delivery fee" and "Service fee" on a delivery-app order summary are **buyer charges**, so they go into the items array (with positive total) — they're not "tax breakdown" lines. They make the items sum match the grand total cleanly.
+
 ## Sanity check before committing
 
 After picking \`totalAmount\`, verify:

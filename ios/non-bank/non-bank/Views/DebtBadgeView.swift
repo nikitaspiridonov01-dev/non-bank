@@ -86,12 +86,18 @@ struct DebtBadgeView: View {
             let isConnected = friends.first(where: { $0.id == friendID })?.isConnected ?? false
             return OverlappingAvatarStack.Participant(id: friendID, isConnected: isConnected)
         }
+        // Overflow = (total friends with a balance in the net's
+        // direction) − (visible slots). For 5 friends owing the user
+        // and `maxVisible = 3`, this renders three cats plus a "+2"
+        // pill at the tail.
+        let overflow = max(0, summary.nonZeroFriendCount - 3)
         return OverlappingAvatarStack(
             participants: participants,
             avatarSize: 20,
             strokeColor: AppColors.splitChipFill,
             strokeWidth: 1.5,
-            maxVisible: 3
+            maxVisible: 3,
+            overflowCount: overflow
         )
     }
 

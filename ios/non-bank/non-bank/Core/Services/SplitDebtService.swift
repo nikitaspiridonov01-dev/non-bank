@@ -67,6 +67,14 @@ struct DebtSummary: Equatable {
     /// Up to 3 friend IDs with the largest absolute debt, sorted descending.
     let topFriendIDs: [String]
 
+    /// Total count of friends with a non-zero balance in the same
+    /// direction as `netAmount` (i.e. friends represented in
+    /// `topFriendIDs` before the `prefix(3)` cap). Used by the
+    /// debt-badge avatar stack to render a "+N" overflow pill when
+    /// the user has more than 3 such friends — `topFriendIDs.count`
+    /// alone can't tell us that because it's already truncated.
+    let nonZeroFriendCount: Int
+
     var status: Status {
         if netAmount > 0.005 { return .youLent(netAmount) }
         if netAmount < -0.005 { return .youOwe(abs(netAmount)) }
@@ -79,7 +87,12 @@ struct DebtSummary: Equatable {
         case youLent(Double)
     }
 
-    static let empty = DebtSummary(perFriend: [:], netAmount: 0, topFriendIDs: [])
+    static let empty = DebtSummary(
+        perFriend: [:],
+        netAmount: 0,
+        topFriendIDs: [],
+        nonZeroFriendCount: 0
+    )
 }
 
 /// Pure business logic for calculating split-transaction debts.
@@ -138,31 +151,38 @@ enum SplitDebtService {
         // shows up as flicker / reorder when the user just scrolls.
         // Adding `friendID` as a deterministic tiebreaker pins the
         // order until the underlying numbers actually change.
-        let topFriendIDs: [String]
+        // Pick the friends with debt in the SAME direction as the
+        // net (so a single friend who owes the user a lot doesn't
+        // get bumped from the row by a couple of friends the user
+        // happens to owe smaller amounts — the row mirrors the
+        // headline "You lent" / "You borrow" sign). `nonZeroCount`
+        // is the total in that direction BEFORE the `prefix(3)`
+        // truncation, used downstream to render the "+N" overflow
+        // pill on the avatar stack.
+        let sortedFriends: [(key: String, value: Double)]
         if netAmount > 0.005 {
-            topFriendIDs = perFriend
+            sortedFriends = perFriend
                 .filter { $0.value > 0 }
                 .sorted { lhs, rhs in
                     lhs.value != rhs.value ? lhs.value > rhs.value : lhs.key < rhs.key
                 }
-                .prefix(3)
-                .map(\.key)
         } else if netAmount < -0.005 {
-            topFriendIDs = perFriend
+            sortedFriends = perFriend
                 .filter { $0.value < 0 }
                 .sorted { lhs, rhs in
                     lhs.value != rhs.value ? lhs.value < rhs.value : lhs.key < rhs.key
                 }
-                .prefix(3)
-                .map(\.key)
         } else {
-            topFriendIDs = []
+            sortedFriends = []
         }
+        let topFriendIDs = sortedFriends.prefix(3).map(\.key)
+        let nonZeroFriendCount = sortedFriends.count
 
         return DebtSummary(
             perFriend: perFriend,
             netAmount: netAmount,
-            topFriendIDs: topFriendIDs
+            topFriendIDs: topFriendIDs,
+            nonZeroFriendCount: nonZeroFriendCount
         )
     }
 

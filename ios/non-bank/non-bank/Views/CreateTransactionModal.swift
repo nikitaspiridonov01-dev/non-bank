@@ -1733,20 +1733,27 @@ extension CreateTransactionModal {
     }
 
     /// Pixel-cat pile sized for the chip — same `OverlappingAvatarStack`
-    /// layout the Home `DebtBadgeView` uses, just at 14pt to fit the
-    /// 22pt capsule with 4pt of breathing room above/below. Stroke
-    /// uses `backgroundElevated` so adjacent discs blend into the
-    /// chip surface rather than ringing visibly.
+    /// layout the Home `DebtBadgeView` uses, matched at 20pt for
+    /// visual consistency across screens (earlier 14pt diverged from
+    /// home and read as a different family of avatars). Stroke uses
+    /// `backgroundElevated` so adjacent discs blend into the chip
+    /// surface rather than ringing visibly.
     private var modeChipAvatars: some View {
         let participants = chipParticipantPreview.map {
             OverlappingAvatarStack.Participant(id: $0.id, isConnected: $0.coloredAvatar)
         }
+        // Overflow = (total participants with a role) − (visible
+        // slots). Matches the home-screen "+N" pill semantics for
+        // when the user has more split friends than fit.
+        let maxVisible = 3
+        let overflow = max(0, allChipParticipants.count - maxVisible)
         return OverlappingAvatarStack(
             participants: participants,
-            avatarSize: 14,
+            avatarSize: 20,
             strokeColor: AppColors.backgroundElevated,
             strokeWidth: 1,
-            maxVisible: 4
+            maxVisible: maxVisible,
+            overflowCount: overflow
         )
     }
 

@@ -86,7 +86,7 @@ database_name = "non-bank-receipts-staging"
 # Replace this id after `wrangler d1 create non-bank-receipts-staging`. The
 # id below is a placeholder so `wrangler types` and `wrangler dev --env
 # staging` don't fail before the database exists.
-database_id = "REPLACE_AFTER_DB_CREATE"
+database_id = "a44c7869-22aa-4d91-81c1-6ab04a24c53b"
 migrations_dir = "migrations"
 
 [env.staging.ai]

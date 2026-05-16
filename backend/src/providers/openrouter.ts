@@ -35,10 +35,18 @@ export const openrouterProvider: Provider = {
     try {
       return await callModel(MODEL_PRIMARY, req, env);
     } catch (e) {
-      // If the primary `:free` model was deprecated overnight, OpenRouter
-      // returns 404 with code "model_not_found". Try the fallback model
-      // once before declaring the provider unhealthy.
-      if (e instanceof ProviderError && e.kind === "bad_request") {
+      // Fall back to the secondary model on either of:
+      //   - `bad_request` — primary model was deprecated (OpenRouter
+      //     returns 404 with `model_not_found`), so the model name
+      //     itself is gone
+      //   - `rate_limited` — the primary `:free` model is
+      //     globally rate-limited "upstream" (this is the common
+      //     case for the big popular Qwen3-VL-235B model). The
+      //     fallback Gemma is less in-demand and often still works.
+      if (
+        e instanceof ProviderError &&
+        (e.kind === "bad_request" || e.kind === "rate_limited")
+      ) {
         return await callModel(MODEL_FALLBACK, req, env);
       }
       throw e;
@@ -56,7 +64,7 @@ async function callModel(
     model,
     temperature: 0.1,
     // 4096 covers ~65 items (see cloudflare.ts for rationale).
-    max_tokens: 4096,
+    max_tokens: 8192,
     messages: [
       { role: "system", content: RECEIPT_SYSTEM_PROMPT },
       {

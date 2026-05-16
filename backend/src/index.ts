@@ -5,6 +5,7 @@ import {
   handleUploadShareItems,
   handleFetchShareItems,
 } from "./share_items.ts";
+import { handleTestProviders } from "./test_providers.ts";
 import { logEvent } from "./log.ts";
 import {
   MAX_CATEGORY_NAME,
@@ -102,6 +103,20 @@ export default {
       }
       if (url.pathname === "/v1/admin/accept-llama" && req.method === "POST") {
         return withCors(await handleAcceptLlama(env), cors);
+      }
+      // Probe every provider with the same image — used to verify
+      // that all API keys are valid and reachable on a given env.
+      // Returns one row per provider with `ok` / latency / error,
+      // gated by the existing per-IP daily quota.
+      if (url.pathname === "/v1/admin/test-providers" && req.method === "POST") {
+        const ip = callerIp(req);
+        const salt = env.IP_HASH_SALT ?? "non-bank-dev-salt";
+        const ipHash = await hashIp(ip, salt);
+        const nowSec = Math.floor(Date.now() / 1000);
+        return withCors(
+          await handleTestProviders(req, env, ipHash, nowSec),
+          cors,
+        );
       }
       // Share-link landing page — friends without the iOS app land here
       // and see a transaction preview with an "Open in app" deep link.
@@ -343,6 +358,12 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
       latency_ms: Date.now() - startMs,
       status: 200,
       attempts: result.triedProviders.length,
+      // Diagnostic fields for the "receipt parses N of M items"
+      // class of bugs. `items_count` is post-coerce (what iOS gets).
+      // If a receipt visibly has more items than this number, either
+      // the model truncated (raw_snippet would show that) or
+      // `coerceReceipt`'s `isUsableItem` filter dropped some rows.
+      items_count: result.receipt.items.length,
     });
     return jsonResponse(response, 200, {
       "x-device-remaining": String(deviceCheck.remaining),

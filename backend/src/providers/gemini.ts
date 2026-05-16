@@ -50,6 +50,14 @@ export const geminiProvider: Provider = {
         responseMimeType: "application/json",
         responseSchema: RECEIPT_JSON_SCHEMA,
         temperature: 0.1,
+        // Big receipts (~50 items) need headroom: each item is ~80
+        // tokens (name + 3 numbers + assignees + JSON syntax). Without
+        // this Gemini falls back to its default output cap (~1-2K
+        // tokens for Flash-Lite) and silently truncates the items
+        // array — observed as "50-line receipt parses only 15 items".
+        // 8192 covers 100+ items comfortably while staying well under
+        // the model's hard ceiling.
+        maxOutputTokens: 8192,
       },
     };
 

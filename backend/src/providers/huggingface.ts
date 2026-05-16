@@ -21,6 +21,13 @@ import { toBase64 } from "../lib/bytes.ts";
 const ENDPOINT = "https://router.huggingface.co/v1/chat/completions";
 const MODEL = "meta-llama/Llama-3.2-11B-Vision-Instruct";
 
+// HF Inference router caps request body around 2-3 MB; a 1.5 MB JPEG
+// becomes ~2 MB after base64 + JSON wrapping and reliably trips a 413.
+// Skip HF entirely for oversized images so we don't waste a network
+// round-trip + a quota slot — the router moves on to the next
+// provider, which is what would happen after the 413 anyway.
+const HF_MAX_IMAGE_BYTES = 1_400_000;
+
 export const huggingfaceProvider: Provider = {
   id: "huggingface",
   dailyLimit: 200,
@@ -32,12 +39,19 @@ export const huggingfaceProvider: Provider = {
         "HUGGINGFACE_API_KEY not set",
       );
     }
+    if (req.imageBytes.byteLength > HF_MAX_IMAGE_BYTES) {
+      throw new ProviderError(
+        "huggingface",
+        "upstream_error",
+        `image ${req.imageBytes.byteLength} bytes exceeds HF inference body cap (~${HF_MAX_IMAGE_BYTES})`,
+      );
+    }
     const dataUri = `data:${req.imageMime};base64,${toBase64(req.imageBytes)}`;
     const body = {
       model: MODEL,
       temperature: 0.1,
       // 4096 covers ~65 items (see cloudflare.ts for rationale).
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [
         { role: "system", content: RECEIPT_SYSTEM_PROMPT },
         {

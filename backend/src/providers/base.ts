@@ -40,14 +40,80 @@ export function coerceReceipt(raw: unknown, providerId: ProviderId): ParsedRecei
     coerceItem(it, providerId),
   );
   const items = sanitizeDiscountSemantics(rawItems.filter(isUsableItem));
+  // Diagnostic: when the model's emitted items count differs from
+  // what survives `isUsableItem` filtering, surface both numbers in
+  // `wrangler tail`. Used to triangulate "50-line receipt parses only
+  // N items" reports — narrows the cause between
+  //   (a) model returned fewer than expected (image / token / prompt
+  //       issue) → raw_items already short here
+  //   (b) coerceReceipt dropped items as unusable → raw_items high
+  //       but filtered_items lower
+  if (rawItems.length !== items.length) {
+    console.log(JSON.stringify({
+      ts: Date.now(),
+      level: "info",
+      msg: "coerceReceipt:items_filtered",
+      provider: providerId,
+      raw_items: rawItems.length,
+      filtered_items: items.length,
+    }));
+  }
+  const totalAmount = reconcileGrandTotal(
+    nullableNumber(obj.totalAmount),
+    items,
+    providerId,
+  );
   return {
     storeName: nullableString(obj.storeName),
     date: nullableString(obj.date),
     currency: nullableString(obj.currency),
-    totalAmount: nullableNumber(obj.totalAmount),
+    totalAmount,
     suggestedCategory: nullableString(obj.suggestedCategory),
     items,
   };
+}
+
+/// Diagnostic-only check for a suspicious mismatch between the model's
+/// reported grand total and the sum of the items it emitted.
+///
+/// The grand total is the source of truth — it's what the customer
+/// actually paid per the receipt. We DO NOT auto-substitute it with
+/// the items sum here, even when the gap looks pathological. Reasons:
+///   1. The reported total may be right and the items may have been
+///      truncated / partially OCR'd → substitution would replace a
+///      correct number with an undercount.
+///   2. Downstream (iOS split-by-items math, manual edits, adding
+///      discounts) needs the true total to stay stable so the
+///      balance check has a fixed anchor. Silently rewriting it
+///      makes future user edits diverge from the receipt.
+///   3. A mismatch is a real signal that the UI should surface to
+///      the user, not paper over.
+///
+/// What we do instead: log a structured warning when the gap exceeds
+/// 1.5× the reported total. Triage the underlying cause from the log
+/// (model misread of total, model truncation of items, blurry image)
+/// and improve the system prompt or provider config; the iOS detail
+/// view already surfaces an "items don't add up" warning to the user
+/// from the same data.
+function reconcileGrandTotal(
+  reported: number | null,
+  items: ParsedReceiptItem[],
+  providerId: ProviderId,
+): number | null {
+  if (reported == null || items.length < 3) return reported;
+  const itemsSum = items.reduce((acc, it) => acc + (it.total ?? 0), 0);
+  if (itemsSum > 0 && itemsSum > reported * 1.5) {
+    console.log(JSON.stringify({
+      ts: Date.now(),
+      level: "warn",
+      msg: "coerceReceipt:total_mismatch",
+      provider: providerId,
+      reported_total: reported,
+      items_sum: itemsSum,
+      ratio: itemsSum / Math.max(reported, 0.01),
+    }));
+  }
+  return reported;
 }
 
 // Hard guard against the LLM misclassifying obvious non-discount lines as

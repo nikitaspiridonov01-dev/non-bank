@@ -130,6 +130,34 @@ final class HybridReceiptParserTests: XCTestCase {
         XCTAssertEqual(result.items.count, 3)
     }
 
+    func testPostProcess_keepsAllItemsWhenSumDramaticallyExceedsGrandTotal() {
+        // Real-world Serbian grocery receipt: 7 legit products summing to
+        // 11000 RSD, but Gemini parsed "11.243,86" as "1.243,86" because
+        // of EU thousands-separator ambiguity. If we trusted the bad
+        // grand_total here, prune would delete real products to match —
+        // the exact bug observed in production. Safety guard triggers
+        // when items_sum > grand_total × 3 and keeps every item.
+        let raw = ParsedReceipt(
+            storeName: nil, date: nil,
+            items: [
+                makeItem(name: "Maslinovo ulje", total: 1500),
+                makeItem(name: "Rib eye steak", total: 3000),
+                makeItem(name: "Maline", total: 800),
+                makeItem(name: "Kinder cokolada", total: 200),
+                makeItem(name: "Šargarepa 500g", total: 150),
+                makeItem(name: "Paprika Mix", total: 350),
+                makeItem(name: "Borovnica 250g", total: 1200),
+                makeItem(name: "Pečeni pistaci", total: 1800),
+                makeItem(name: "Ementaler sir", total: 2000),
+            ],
+            totalAmount: 1244,  // misread by Gemini; real total ~11000
+            currency: nil
+        )
+        let result = HybridReceiptParser.postProcess(raw)
+        XCTAssertEqual(result.items.count, 9,
+            "Items must not be deleted when grand_total is wildly inconsistent with the items' sum")
+    }
+
     func testPostProcess_keepsAllWhenSumAlreadyFits() {
         let raw = ParsedReceipt(
             storeName: nil, date: nil,

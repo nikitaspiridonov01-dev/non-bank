@@ -17,8 +17,15 @@ import { toBase64 } from "../lib/bytes.ts";
 //
 // API: OpenAI-compatible Chat Completions. No native JSON mode — we ask
 // the model in the prompt and use `extractJSON` to peel any prose off.
+//
+// Model history:
+//   2025: Llama-3.2-11B-Vision-Instruct — deprecated by SambaNova.
+//   2026: Llama-4-Maverick-17B-128E-Instruct (preview tier, vision-capable,
+//   128k ctx, up to 5 images @ 20MB each). The only modern vision-capable
+//   model SambaNova still offers besides `gemma-3-12b-it` — picked Llama
+//   over Gemma for consistency with the rest of the routing pool.
 const ENDPOINT = "https://api.sambanova.ai/v1/chat/completions";
-const MODEL = "Llama-3.2-11B-Vision-Instruct";
+const MODEL = "Llama-4-Maverick-17B-128E-Instruct";
 
 export const sambanovaProvider: Provider = {
   id: "sambanova",
@@ -36,7 +43,7 @@ export const sambanovaProvider: Provider = {
       model: MODEL,
       temperature: 0.1,
       // 4096 covers ~65 items (see cloudflare.ts for rationale).
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [
         { role: "system", content: RECEIPT_SYSTEM_PROMPT },
         {

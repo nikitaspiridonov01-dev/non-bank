@@ -38,7 +38,7 @@ export const mistralProvider: Provider = {
       model: MODEL,
       temperature: 0.1,
       // 4096 covers ~65 items (see cloudflare.ts for rationale).
-      max_tokens: 4096,
+      max_tokens: 8192,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: RECEIPT_SYSTEM_PROMPT },

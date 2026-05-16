@@ -49,7 +49,7 @@ export const cloudflareProvider: Provider = {
         // 30+-item receipts, producing malformed JSON the router
         // logged as `bad_response` and rolled over to the next
         // provider (which had the same cap).
-        max_tokens: 4096,
+        max_tokens: 8192,
         temperature: 0.1,
       })) as { response?: string };
     } catch (e) {

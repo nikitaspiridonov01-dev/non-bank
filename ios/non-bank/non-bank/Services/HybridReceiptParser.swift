@@ -301,6 +301,7 @@ actor HybridReceiptParser {
     ///    "service charge", a misread tip). Loops until the sum fits the
     ///    tolerance window or we run out of items.
     static func postProcess(_ parsed: ParsedReceipt) -> ParsedReceipt {
+        var droppedByFilter: [String] = []
         let filteredItems = parsed.items.compactMap { item -> ReceiptItem? in
             switch ReceiptLineFilter.classify(item.name) {
             case .keep, .fee, .tip:
@@ -316,6 +317,7 @@ actor HybridReceiptParser {
             case .discount:
                 return Self.normalizeDiscount(item)
             case .skipNonProduct, .anchorTotal:
+                droppedByFilter.append(item.name)
                 return nil
             }
         }
@@ -330,6 +332,33 @@ actor HybridReceiptParser {
             signCorrected,
             grandTotal: parsed.totalAmount
         )
+        #if DEBUG
+        // Diagnostic for the "receipt parses N of M items" class of
+        // issues. Surfaces in Xcode console (visible in the Debug
+        // build the developer runs locally). Shows where in the
+        // pipeline items get dropped so we can distinguish
+        // truncation (provider) from over-filter (this file).
+        let droppedByPrune = signCorrected.count - prunedItems.count
+        let sumBeforePrune = signCorrected.reduce(0.0) { $0 + $1.lineTotal }
+        let sumAfterPrune = prunedItems.reduce(0.0) { $0 + $1.lineTotal }
+        if !droppedByFilter.isEmpty || droppedByPrune > 0 {
+            let prunedNames = Set(signCorrected.map(\.name))
+                .subtracting(Set(prunedItems.map(\.name)))
+            print(
+                """
+                [HybridReceiptParser.postProcess]
+                  raw_from_backend: \(parsed.items.count)
+                  dropped_by_filter: \(droppedByFilter.count) → \(droppedByFilter)
+                  after_filter: \(filteredItems.count)
+                  dropped_by_prune: \(droppedByPrune) → \(prunedNames)
+                  after_prune: \(prunedItems.count)
+                  grand_total: \(parsed.totalAmount ?? 0)
+                  sum_before_prune: \(sumBeforePrune)
+                  sum_after_prune: \(sumAfterPrune)
+                """
+            )
+        }
+        #endif
         return ParsedReceipt(
             storeName: parsed.storeName,
             date: parsed.date,
@@ -415,6 +444,37 @@ actor HybridReceiptParser {
         grandTotal: Double?
     ) -> [ReceiptItem] {
         guard let grand = grandTotal, grand > 0 else { return items }
+        // Sanity-check the inputs before pruning. When the items'
+        // sum dramatically exceeds the grand_total (more than 3×),
+        // the likely root cause is the LLM misreading the receipt's
+        // total — NOT that 70%+ of the items are hallucinations.
+        //
+        // Real-world LLM slip-throughs on receipts are 1-3 items
+        // (payment line, "service charge" that the prompt told it
+        // to skip, a misread tip), producing modest overshoot.
+        // Anything wildly past that signals a wrong total —
+        // a 43-item Serbian grocery shop summing to 11500 RSD
+        // observed as `grand_total: 1243.86` because Gemini parsed
+        // "11.243,86" as "1.243,86" (lost a thousands digit in EU
+        // formatting). Pruning here would delete real products to
+        // match the wrong total.
+        //
+        // When the guard trips we keep all items; the user sees the
+        // mismatch between item sum and total in the editor and can
+        // fix the total manually. That's a UX papercut, not a
+        // silently corrupted receipt.
+        let initialSum = items.reduce(0.0) { $0 + $1.lineTotal }
+        if initialSum > grand * 3 {
+            #if DEBUG
+            print(
+                "[HybridReceiptParser.pruneOverstuffedItems] " +
+                "skipping prune: items_sum \(initialSum) " +
+                "exceeds 3× grand_total (\(grand)) — total likely " +
+                "misread by the LLM"
+            )
+            #endif
+            return items
+        }
         var remaining = items
         // Hard cap so a malformed receipt can't infinite-loop.
         let maxIterations = remaining.count

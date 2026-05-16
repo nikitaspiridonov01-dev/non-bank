@@ -13,10 +13,13 @@ import { toBase64 } from "../lib/bytes.ts";
 // OpenAI-compat surface, so the request shape mirrors OpenRouter — keep an
 // eye on the diff if you refactor a shared OpenAI helper later.
 //
-// Why we prompt for JSON instead of using `response_format: json_object`:
-// Llama 4 Scout's vision path is flaky with strict json_object — image +
-// strict format together produces empty completions about 5% of the time.
-// We ask for JSON in the prompt and use extractJSON() to recover.
+// Strict JSON mode (`response_format: { type: "json_object" }`) is enabled
+// — early in 2025 Groq's vision path produced ~5% empty completions when
+// strict JSON was on, but newer model versions are reliable. The fence-
+// wrapped output we used to see (` ```json {...} ``` ` confusing the
+// parser) is gone when this flag is set. `extractJSON` is kept as a
+// belt-and-suspenders fallback for the rare cases the model still emits
+// prose despite the flag.
 const ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 const MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 
@@ -32,8 +35,11 @@ export const groqProvider: Provider = {
       model: MODEL,
       temperature: 0.1,
       // 6K TPM is the real cap; cap output to keep room for image tokens.
-      // 4096 covers ~65 items (see cloudflare.ts for rationale).
-      max_completion_tokens: 4096,
+      // 8192 covers ~65 items (see cloudflare.ts for rationale).
+      max_completion_tokens: 8192,
+      // Strict JSON output — bypasses the ```json fence wrapping the
+      // model otherwise produces despite "no markdown" in the prompt.
+      response_format: { type: "json_object" },
       messages: [
         { role: "system", content: RECEIPT_SYSTEM_PROMPT },
         {

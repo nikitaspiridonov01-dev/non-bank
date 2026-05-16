@@ -112,70 +112,45 @@ enum SplitDebtService {
         targetCurrency: String,
         convert: (_ amount: Double, _ from: String, _ to: String) -> Double
     ) -> DebtSummary {
-        // Only consider transactions that have split info
-        let splitTransactions = transactions.filter { $0.splitInfo != nil }
-        guard !splitTransactions.isEmpty else { return .empty }
+        // Source of truth = SIMPLIFIED debts. The home-badge avatar row
+        // has to agree with the modal's debt list — a friend tagged
+        // "balances out" in the modal must NOT contribute an avatar
+        // to the badge. The modal computes its rows from
+        // `simplifiedDebts(...)` (greedy Splitwise-style pairing
+        // across the entire transaction set), so the badge has to
+        // consume the same data. The earlier per-transaction raw
+        // sum landed friends in the avatar row even when their
+        // simplified balance with the user netted to zero — that
+        // mismatch is the bug we just fixed.
+        let simplified = simplifiedDebts(
+            transactions: transactions,
+            targetCurrency: targetCurrency,
+            convert: convert
+        )
+        guard !simplified.rows.isEmpty else { return .empty }
 
-        // Accumulate per-friend debt in target currency
-        var perFriend: [String: Double] = [:]
+        // Drop "balances out" rows — the simplified pass keeps them in
+        // the row list so the modal can render them as a separate
+        // "Settled with you" group, but the badge only cares about
+        // active counterparties.
+        let activeRows = simplified.rows.filter { abs($0.amount) > 0.005 }
+        let perFriend = Dictionary(
+            uniqueKeysWithValues: activeRows.map { ($0.friendID, $0.amount) }
+        )
+        let netAmount = simplified.netAmount
 
-        for tx in splitTransactions {
-            guard let split = tx.splitInfo else { continue }
-
-            for friend in split.friends {
-                // How much this friend owes relative to what they paid:
-                // friend.share = their fair portion of the total
-                // friend.paidAmount = how much they actually paid
-                // debt = share - paidAmount
-                //   positive => friend still owes this amount (I lent them)
-                //   negative => friend overpaid (I owe them)
-                let debtInOriginal = friend.share - friend.paidAmount
-                let debtConverted = convert(debtInOriginal, tx.currency, targetCurrency)
-
-                perFriend[friend.friendID, default: 0] += debtConverted
+        // Pick friends in BOTH directions (sorted by absolute amount
+        // descending) — per spec, "any friend with a non-zero balance
+        // in the debts list". A user lent 11576 to Meur and owes 200
+        // to Bob should see both avatars, not just the one matching
+        // the net sign. `friendID` is the secondary sort key so the
+        // order stays stable across renders when two amounts tie.
+        let sortedFriends = activeRows
+            .sorted { lhs, rhs in
+                let l = abs(lhs.amount), r = abs(rhs.amount)
+                return l != r ? l > r : lhs.friendID < rhs.friendID
             }
-        }
-
-        // Remove near-zero balances
-        perFriend = perFriend.filter { abs($0.value) > 0.005 }
-
-        let netAmount = perFriend.values.reduce(0, +)
-
-        // Top 3 friends by absolute debt in the direction of net.
-        //
-        // **Stable order**: `perFriend` is a Dictionary, whose iteration
-        // order is undefined and reshuffles between runs. Sorting only
-        // by amount means two friends with equal debts (very common —
-        // both owe `5.00`) can swap positions on every recompute. The
-        // home split chip is recomputed on each render, so that swap
-        // shows up as flicker / reorder when the user just scrolls.
-        // Adding `friendID` as a deterministic tiebreaker pins the
-        // order until the underlying numbers actually change.
-        // Pick the friends with debt in the SAME direction as the
-        // net (so a single friend who owes the user a lot doesn't
-        // get bumped from the row by a couple of friends the user
-        // happens to owe smaller amounts — the row mirrors the
-        // headline "You lent" / "You borrow" sign). `nonZeroCount`
-        // is the total in that direction BEFORE the `prefix(3)`
-        // truncation, used downstream to render the "+N" overflow
-        // pill on the avatar stack.
-        let sortedFriends: [(key: String, value: Double)]
-        if netAmount > 0.005 {
-            sortedFriends = perFriend
-                .filter { $0.value > 0 }
-                .sorted { lhs, rhs in
-                    lhs.value != rhs.value ? lhs.value > rhs.value : lhs.key < rhs.key
-                }
-        } else if netAmount < -0.005 {
-            sortedFriends = perFriend
-                .filter { $0.value < 0 }
-                .sorted { lhs, rhs in
-                    lhs.value != rhs.value ? lhs.value < rhs.value : lhs.key < rhs.key
-                }
-        } else {
-            sortedFriends = []
-        }
-        let topFriendIDs = sortedFriends.prefix(3).map(\.key)
+        let topFriendIDs = sortedFriends.prefix(3).map(\.friendID)
         let nonZeroFriendCount = sortedFriends.count
 
         return DebtSummary(

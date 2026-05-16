@@ -82,11 +82,22 @@ enum SharedTransactionLink {
 
     /// **ACTIVE** — Cloudflare Worker host serving the `/share` HTML
     /// preview and (separately) the `/v1/parse-receipt` LLM proxy.
-    /// See `backend/src/share.ts`. Currently the workers.dev
-    /// subdomain; swap to your custom domain after binding it in
-    /// the Cloudflare dashboard's Workers → Custom Domains panel
-    /// (no code-side changes beyond this constant).
-    static let webBackendHost = "non-bank-receipt-proxy.non-bank-ai.workers.dev"
+    /// See `backend/src/share.ts`. The worker is bound to this
+    /// domain via Cloudflare's Custom Domains panel; the legacy
+    /// `non-bank-receipt-proxy.non-bank-ai.workers.dev` subdomain
+    /// stays active in parallel (Cloudflare doesn't remove default
+    /// workers.dev hostnames), but every NEW share link the encoder
+    /// emits uses the branded domain.
+    static let webBackendHost = "non-bank.app"
+
+    /// Recognised by the decoder but never emitted. Old share links
+    /// (encoded before the `non-bank.app` custom domain rolled out)
+    /// circulate in iMessage / Telegram threads indefinitely — the
+    /// receiver-side `isShareURL` accepts this host so those legacy
+    /// URLs still open the app instead of surfacing a "couldn't open
+    /// share link" error. Safe to remove once we're confident no
+    /// outstanding shares reference it, but cheap to keep.
+    static let legacyWebBackendHost = "non-bank-receipt-proxy.non-bank-ai.workers.dev"
 
     /// Path on the Worker. Lives at the root (not under `/v1/`) because
     /// it's the user-facing share URL — short and brand-clean reads
@@ -306,7 +317,12 @@ enum SharedTransactionLink {
         // Web backend: `https://<workerHost>/share?p=…`. Path-scoped so
         // a future `/v1/health` (or any other Worker route) doesn't get
         // misclassified as a share link if it ever lands in onOpenURL.
-        if url.scheme == "https" && url.host == webBackendHost && url.path == webBackendPath {
+        // Both the active host and the legacy workers.dev subdomain
+        // are accepted so existing share links in messengers keep
+        // opening the app.
+        if url.scheme == "https"
+            && (url.host == webBackendHost || url.host == legacyWebBackendHost)
+            && url.path == webBackendPath {
             return true
         }
         return false

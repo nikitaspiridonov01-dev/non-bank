@@ -16,7 +16,13 @@ final class AISettings: ObservableObject {
     /// Cloudflare Worker endpoint that brokers Gemini / Groq / Cloudflare
     /// Workers AI / OpenRouter. Single endpoint so we never have to ship
     /// a build to rotate providers — the broker picks whichever is up.
-    private static let productionBackendURL = URL(string: "https://non-bank-receipt-proxy.non-bank-ai.workers.dev")!
+    ///
+    /// Bound to `non-bank.app` via Cloudflare's Custom Domains panel.
+    /// The legacy `non-bank-receipt-proxy.non-bank-ai.workers.dev`
+    /// subdomain stays live in parallel (Cloudflare doesn't take down
+    /// default workers.dev hosts), but every new build hits the
+    /// branded domain.
+    private static let productionBackendURL = URL(string: "https://non-bank.app")!
 
     private init() {}
 

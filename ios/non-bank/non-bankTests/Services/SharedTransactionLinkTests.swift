@@ -125,6 +125,27 @@ final class SharedTransactionLinkTests: XCTestCase {
         XCTAssertFalse(SharedTransactionLink.isShareURL(URL(string: "myapp://share?p=abc")!))
     }
 
+    func testIsShareURL_recognisesActiveAndLegacyWebBackend() {
+        // Active branded domain — what new encoder output looks like.
+        XCTAssertTrue(SharedTransactionLink.isShareURL(
+            URL(string: "https://non-bank.app/share?p=abc")!
+        ))
+        // Legacy workers.dev host — share links emitted before the
+        // custom-domain switch keep circulating in messengers and
+        // must keep opening the app instead of failing the
+        // `isShareURL` filter and surfacing an "unknown deep link"
+        // error in `onOpenURL`.
+        XCTAssertTrue(SharedTransactionLink.isShareURL(
+            URL(string: "https://non-bank-receipt-proxy.non-bank-ai.workers.dev/share?p=abc")!
+        ))
+        // Other paths on the same host must NOT classify as share
+        // links — `/v1/parse-receipt`, `/v1/health`, etc. all share
+        // the host but aren't share-routes.
+        XCTAssertFalse(SharedTransactionLink.isShareURL(
+            URL(string: "https://non-bank.app/v1/parse-receipt")!
+        ))
+    }
+
     func testDecode_acceptsBothSchemes() throws {
         // Build a payload, encode in both styles, decode each. Same
         // payload contents must round-trip from either URL flavour.

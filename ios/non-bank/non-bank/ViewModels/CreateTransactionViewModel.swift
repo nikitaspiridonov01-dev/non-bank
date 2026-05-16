@@ -13,6 +13,27 @@ struct Payer: Identifiable, Equatable {
 @MainActor
 class CreateTransactionViewModel: ObservableObject {
 
+    // MARK: - Composed controllers
+
+    /// Receipt-item state and the WhoPaid paid-extra reconciliation —
+    /// owned by a dedicated controller so the receipt logic can be
+    /// unit-tested in isolation and the VM stays focused on form
+    /// orchestration. Re-publishes its `objectWillChange` upward via
+    /// Combine so existing `@ObservedObject var vm` consumers still
+    /// re-render when receipt state changes — no SwiftUI binding
+    /// changes needed at callsites.
+    let receipt = ReceiptItemController()
+
+    private var cancellables = Set<AnyCancellable>()
+
+    init() {
+        // Forward inner controller's change notifications so SwiftUI
+        // views observing the VM repaint on receipt-state mutations.
+        receipt.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+    }
+
     // MARK: - Form State
 
     @Published var isIncome: Bool = false
@@ -89,7 +110,17 @@ class CreateTransactionViewModel: ObservableObject {
     /// Items captured during the optional receipt scan flow. Persisted to
     /// `receipt_items` after the parent transaction is saved (see
     /// `CreateTransactionModal.commitTransaction`).
-    @Published var pendingReceiptItems: [ReceiptItem] = []
+    ///
+    /// **Shim** — actual storage lives on `receipt.items`. Kept as a
+    /// computed get/set proxy so the ~24 existing callsites
+    /// (`vm.pendingReceiptItems`, including the one assignment at
+    /// `CreateTransactionModal:1303`) keep compiling unchanged. The
+    /// `receipt` controller forwards `objectWillChange` upward, so
+    /// SwiftUI views still repaint on mutation.
+    var pendingReceiptItems: [ReceiptItem] {
+        get { receipt.items }
+        set { receipt.items = newValue }
+    }
 
     static let maxDecimalDigits = 2
     var maxDecimalDigits: Int { Self.maxDecimalDigits }
@@ -773,111 +804,20 @@ class CreateTransactionViewModel: ObservableObject {
     }
 
     /// Drop a previously-captured receipt — used if the user wipes the amount
-    /// or scans a new image.
+    /// or scans a new image. Delegates to the receipt controller.
     func clearPendingReceiptItems() {
-        pendingReceiptItems = []
+        receipt.clear()
     }
 
     // MARK: - Paid-extra placeholder (driven by WhoPaid exceed flow)
+    //
+    // Logic lives on `ReceiptItemController` so it's unit-testable
+    // without spinning up the full create-transaction VM. The shim
+    // below preserves the existing `vm.reconcilePaidExtra(...)`
+    // callsite shape used by `TransactionModeFlowSheet`.
 
-    /// Suffix that marks an item auto-inserted by the WhoPaid exceed flow.
-    /// Naming markers for the auto-added overage placeholder line.
-    /// Two shapes:
-    /// - Friend exceeded → `"{name}'s extra"` (suffix-based match)
-    /// - User exceeded   → `"Extra"` (exact match — no possessive form
-    ///   reads naturally on the user's own row)
-    /// Used by `reconcilePaidExtra` to find/replace the previous
-    /// placeholder across repeated exceed-confirms instead of
-    /// stacking duplicates. Renaming an auto-added item via the items
-    /// editor "graduates" it to a normal user-owned line — subsequent
-    /// exceeds will add a fresh placeholder rather than rewrite the
-    /// renamed one.
-    static let paidExtraSuffix = "'s extra"
-    static let paidExtraSelfName = "Extra"
-
-    static func isPaidExtraItem(_ item: ReceiptItem) -> Bool {
-        item.name == paidExtraSelfName || item.name.hasSuffix(paidExtraSuffix)
-    }
-
-    /// Reconcile the placeholder so that
-    ///   Σ (items, including the placeholder) == newTotal.
-    /// Called from `WhoPaidPickerView` callbacks after the user confirms
-    /// payers (whether they exceeded the receipt total or not). The caller
-    /// picks `payerName` per its own attribution rule:
-    ///   • exceed-confirm path → the row that drove the overage (the
-    ///     picker locks every other row once the sum hits the target so
-    ///     there's a single unambiguous exceeder per edit session)
-    ///   • non-exceed path → fallback to the largest payer (re-attribution
-    ///     when payers change without re-triggering exceed)
-    /// Idempotent — the amount is recomputed from the non-placeholder items
-    /// every time, so re-confirming exceed updates the placeholder rather
-    /// than accumulating bad totals.
     func reconcilePaidExtra(payerName: String, newTotal: Double) {
-        guard !pendingReceiptItems.isEmpty else { return }
-        let baseSum = pendingReceiptItems
-            .filter { !Self.isPaidExtraItem($0) }
-            .reduce(0) { $0 + $1.lineTotal }
-        let excess = newTotal - baseSum
-        // Tolerance matches the editor's `exactMatchEpsilon` so we don't
-        // create a "0.001 paid extra" line from float noise.
-        if excess > 0.005 {
-            upsertPaidExtraItem(payerName: payerName, amount: excess)
-        } else {
-            // newTotal landed at or below the receipt items' actual sum —
-            // any leftover placeholder from a prior exceed is now stale.
-            pendingReceiptItems.removeAll { Self.isPaidExtraItem($0) }
-        }
-    }
-
-    private func upsertPaidExtraItem(payerName: String, amount: Double) {
-        // Self ("me" payer, conventionally named "You") reads better as
-        // a bare "Extra" row — possessive "You's extra" is awkward.
-        // Friends use `{name}'s extra`.
-        let name: String
-        if payerName == "You" {
-            name = Self.paidExtraSelfName
-        } else {
-            name = "\(payerName)\(Self.paidExtraSuffix)"
-        }
-        if let idx = pendingReceiptItems.firstIndex(where: { Self.isPaidExtraItem($0) }) {
-            // In-place update — preserve persistence fields (`syncID`,
-            // `position`) so the SQLite layer treats this as an edit, not
-            // a delete-then-insert that would rotate the row id.
-            let existing = pendingReceiptItems[idx]
-            pendingReceiptItems[idx] = ReceiptItem(
-                name: name,
-                quantity: nil,
-                price: nil,
-                total: amount,
-                persistedID: existing.persistedID,
-                transactionID: existing.transactionID,
-                syncID: existing.syncID,
-                position: existing.position,
-                lastModified: Date()
-            )
-        } else {
-            pendingReceiptItems.append(
-                ReceiptItem(
-                    name: name,
-                    quantity: nil,
-                    price: nil,
-                    total: amount,
-                    position: pendingReceiptItems.count
-                )
-            )
-        }
-        // Either branch leaves the placeholder unassigned (ADD appends a
-        // fresh row, UPDATE rebuilds the row without preserving
-        // `assignedParticipantIDs`) — and on UPDATE the exceeding payer
-        // may even differ from the previous one, so the prior assignee
-        // would be wrong anyway. Drop every assignment so the create
-        // screen's orange-warning fires (`byItemsNeedsAssignments`) and
-        // re-entering the orchestrator seeds back to `.itemAssignment(0)`
-        // for a fresh walk that covers the new row alongside everything
-        // else.
-        for index in pendingReceiptItems.indices {
-            pendingReceiptItems[index].assignedParticipantIDs = []
-        }
+        receipt.reconcilePaidExtra(payerName: payerName, newTotal: newTotal)
     }
 
     /// Format a `Double` total into the keypad-friendly string the amount

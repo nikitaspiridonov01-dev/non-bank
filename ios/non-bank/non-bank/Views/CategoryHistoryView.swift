@@ -232,7 +232,7 @@ struct CategoryHistoryView: View {
                         y: .value("Amount", item.total)
                     )
                     .foregroundStyle(accentColor.gradient)
-                    .cornerRadius(4)
+                    .cornerRadius(AppRadius.bar)
                 }
 
                 // Average line — only drawn when the chart window

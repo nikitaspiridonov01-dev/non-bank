@@ -81,6 +81,10 @@ enum AppRadius {
     static let card = large
     /// Chip / segmented control — `medium`.
     static let chip = medium
+    /// Chart bar — 4pt. Tighter than UI components by design so
+    /// thin bars don't read as pills. Use on `BarMark.cornerRadius`
+    /// and similar chart primitives, not on regular tappable UI.
+    static let bar: CGFloat = 4
 }
 
 enum AppSizes {

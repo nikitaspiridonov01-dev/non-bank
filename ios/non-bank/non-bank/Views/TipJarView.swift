@@ -84,7 +84,7 @@ struct TipJarView: View {
         .alert(
             "Something went wrong",
             isPresented: Binding(
-                get: { if case .failed = service.purchaseState { return true } else { return false } },
+                get: { service.purchaseState.isFailed },
                 set: { if !$0 { service.dismissPurchaseConfirmation() } }
             )
         ) {

@@ -119,11 +119,16 @@ struct CategoriesSheetView_Select: View {
                     .font(AppFonts.labelPrimary)
                     .foregroundColor(AppColors.textPrimary)
                     .lineLimit(1)
-                if category.title == CategoryStore.uncategorized.title {
-                    Text("Reserved")
-                        .font(AppFonts.captionSmall)
-                        .foregroundColor(AppColors.textSecondary)
-                } else if maxUsageCount > 0 && usageCount(for: category.title) == maxUsageCount {
+                // No "Reserved" subtitle here — the create/edit picker
+                // only shows the picker affordance, not the manage-flow
+                // metadata. The profile-side `CategoriesSheetView` is
+                // where reserved/read-only state matters (it gates the
+                // edit modal + swipe-to-delete); on this screen every
+                // row is just "tap to pick", so any subtitle would be
+                // visual noise. The "Most often used" hint stays —
+                // it's actionable signal for "which category is the
+                // user most likely picking next".
+                if maxUsageCount > 0 && usageCount(for: category.title) == maxUsageCount {
                     Text("Most often used")
                         .font(AppFonts.captionSmall)
                         .foregroundColor(.accentColor)

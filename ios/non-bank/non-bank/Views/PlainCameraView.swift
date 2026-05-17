@@ -22,7 +22,9 @@ import UIKit
 /// existing scan-flow modifiers slot in with a one-line change.
 /// `onError` is kept for signature parity but practically unused —
 /// `UIImagePickerController` doesn't surface user-facing errors
-/// the way `VNDocumentCameraViewController` did.
+/// the way `VNDocumentCameraViewController` did. CreateTransactionModal
+/// wires it up for completeness; the receipt scan flow currently has
+/// no codepath that fires it.
 struct PlainCameraView: UIViewControllerRepresentable {
     var onScan: (UIImage) -> Void
     var onCancel: () -> Void

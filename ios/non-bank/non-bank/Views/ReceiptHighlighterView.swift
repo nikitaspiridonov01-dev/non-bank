@@ -1,6 +1,37 @@
 import SwiftUI
 import UIKit
 
+// MARK: - Overlay color tokens
+//
+// Receipt-scan-only `UIColor` palette for the OCR overlay layers
+// (`ReceiptOverlayDrawView`, `CheckmarkView`). Local to this file
+// because the rest of the app uses SwiftUI `Color` via `AppColors`,
+// and bridging back to `UIColor` for `CGContext.setFillColor` would
+// pay the conversion cost on every redraw of a heavy-traffic
+// drawing routine. Names encode the SEMANTIC role of each layer so
+// future edits don't have to re-derive intent from raw 0.xx alphas.
+private enum ReceiptOverlay {
+    /// Step 1: heavy dim over the whole image so unprocessed text
+    /// fades into the dark background.
+    static let initialDim   = UIColor.black.withAlphaComponent(0.65)
+    /// Step 2: lighter re-dim of all non-parsed text after the
+    /// initial dim has been punched out around each OCR row —
+    /// keeps unselected rows readable but visually muted.
+    static let nonParsedDim = UIColor.black.withAlphaComponent(0.35)
+    /// Step 3: subtle bright lift behind merged parsed-item blocks
+    /// so they read as "active" against the dimmed background.
+    static let parsedLift   = UIColor.white.withAlphaComponent(0.10)
+    /// Step 4: blue tint for rows the user has selected but the
+    /// parser hasn't matched yet — distinct from parsed lift.
+    static let selectedTint = UIColor.systemBlue.withAlphaComponent(0.12)
+    /// Step 5: brief white wash that follows the user's swipe
+    /// during gesture-driven selection.
+    static let tentativeWash = UIColor.white.withAlphaComponent(0.18)
+    /// The selection checkmark dot — white-on-dim with a slight
+    /// fade so it doesn't blow out against bright OCR rows.
+    static let checkmarkDot = UIColor.white.withAlphaComponent(0.7)
+}
+
 // MARK: - Receipt Highlighter View
 
 struct ReceiptHighlighterView: View {
@@ -623,7 +654,7 @@ class CheckmarkView: UIView {
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
         let inset = rect.insetBy(dx: 1, dy: 1)
-        ctx.setFillColor(UIColor.white.withAlphaComponent(0.7).cgColor)
+        ctx.setFillColor(ReceiptOverlay.checkmarkDot.cgColor)
         ctx.fillEllipse(in: inset)
     }
 }
@@ -644,7 +675,7 @@ class ReceiptOverlayDrawView: UIView {
 
         // === Heavy dim over entire image (background is very dark) ===
         ctx.saveGState()
-        ctx.setFillColor(UIColor.black.withAlphaComponent(0.65).cgColor)
+        ctx.setFillColor(ReceiptOverlay.initialDim.cgColor)
         ctx.fill(rect)
 
         // Punch out ALL text areas completely
@@ -684,7 +715,7 @@ class ReceiptOverlayDrawView: UIView {
         parsedExclude.addClip()
 
         // Single rect fill over clipped area — no per-row rects, no overlap artifacts
-        ctx.setFillColor(UIColor.black.withAlphaComponent(0.35).cgColor)
+        ctx.setFillColor(ReceiptOverlay.nonParsedDim.cgColor)
         ctx.fill(rect)
 
         ctx.restoreGState()
@@ -694,7 +725,7 @@ class ReceiptOverlayDrawView: UIView {
         ctx.beginTransparencyLayer(auxiliaryInfo: nil)
 
         // White fill using merged blocks — no seams between adjacent parsed rows
-        ctx.setFillColor(UIColor.white.withAlphaComponent(0.10).cgColor)
+        ctx.setFillColor(ReceiptOverlay.parsedLift.cgColor)
         for block in mergedParsedBlocks {
             let path = UIBezierPath(roundedRect: block, cornerRadius: 4)
             ctx.addPath(path.cgPath)
@@ -707,7 +738,7 @@ class ReceiptOverlayDrawView: UIView {
         // === Blue tint for selected-but-unparsed ===
         ctx.saveGState()
         ctx.beginTransparencyLayer(auxiliaryInfo: nil)
-        ctx.setFillColor(UIColor.systemBlue.withAlphaComponent(0.12).cgColor)
+        ctx.setFillColor(ReceiptOverlay.selectedTint.cgColor)
 
         for row in ocrRows {
             guard selectedRowIDs.contains(row.id), !parsedRowIDs.contains(row.id) else { continue }
@@ -722,7 +753,7 @@ class ReceiptOverlayDrawView: UIView {
         // === Tentative highlights (bright white during swipe) ===
         ctx.saveGState()
         ctx.beginTransparencyLayer(auxiliaryInfo: nil)
-        ctx.setFillColor(UIColor.white.withAlphaComponent(0.18).cgColor)
+        ctx.setFillColor(ReceiptOverlay.tentativeWash.cgColor)
 
         for row in ocrRows where tentativeRowIDs.contains(row.id) {
             let vr = visionToView(row.boundingBox)

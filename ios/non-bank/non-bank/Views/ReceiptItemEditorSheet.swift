@@ -807,7 +807,7 @@ struct ReceiptItemEditorSheet: View {
     private func handleRowTap(_ id: UUID) {
         if id == activeItemID { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        commitActiveInput()
+        commitActiveInputToModel()
         activeItemID = id
         if let item = items.first(where: { $0.id == id }) {
             var input = formatForInput(item.lineTotal)
@@ -915,8 +915,6 @@ struct ReceiptItemEditorSheet: View {
         items[idx].lineTotal = parseInput(activeInput)
     }
 
-    private func commitActiveInput() { commitActiveInputToModel() }
-
     private func deleteItem(_ item: EditableItem) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         items.removeAll { $0.id == item.id }
@@ -942,7 +940,7 @@ struct ReceiptItemEditorSheet: View {
     /// the numpad doesn't have a minus key, and forcing the user to think
     /// about sign isn't useful when the line type already implies it.
     private func addPresetItem(name: String, isDiscount: Bool) {
-        commitActiveInput()
+        commitActiveInputToModel()
         let new = EditableItem(name: name, lineTotal: 0, original: nil)
         items.append(new)
         activeItemID = new.id
@@ -960,7 +958,7 @@ struct ReceiptItemEditorSheet: View {
 
 
     private func handleSaveTap() {
-        commitActiveInput()
+        commitActiveInputToModel()
         guard canSave else { return }
         if discrepancy != nil {
             activeSheet = .saveConfirmation

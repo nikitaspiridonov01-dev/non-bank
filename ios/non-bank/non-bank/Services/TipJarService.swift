@@ -88,6 +88,14 @@ final class TipJarService: ObservableObject {
         case succeeded(Tier)
         case failed(String)
         case cancelled
+
+        /// Convenience for the binding-getter pattern that surfaces
+        /// the error alert — keeps the alert's `isPresented:` from
+        /// having to inline an `if case .failed = …` ternary.
+        var isFailed: Bool {
+            if case .failed = self { return true }
+            return false
+        }
     }
 
     private init() {}

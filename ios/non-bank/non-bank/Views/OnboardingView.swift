@@ -23,6 +23,7 @@ struct OnboardingView: View {
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var currencyStore: CurrencyStore
     @EnvironmentObject var router: NavigationRouter
+    @Environment(\.analytics) private var analytics
 
     @ObservedObject private var service = OnboardingService.shared
 
@@ -31,6 +32,10 @@ struct OnboardingView: View {
     /// keypad-style edits (append digit, append dot, backspace) work
     /// directly without round-tripping through Double + locale.
     @State private var initialBalanceText: String = ""
+    /// Wall-clock anchor for the `onboarding_completed` event's
+    /// `time_seconds_bucket` — measures the whole flow not just the
+    /// final step.
+    @State private var startedAt: Date = Date()
 
     private static let totalSteps = 4
 
@@ -66,6 +71,9 @@ struct OnboardingView: View {
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .frame(maxHeight: .infinity)
+                .onChange(of: currentStep) { newStep in
+                    analytics.track(.onboardingStepViewed(step: newStep))
+                }
 
                 pageDots
                     .padding(.top, AppSpacing.md)
@@ -75,6 +83,14 @@ struct OnboardingView: View {
                     .padding(.bottom, AppSpacing.xxl)
                     .padding(.top, AppSpacing.md)
             }
+        }
+        .onAppear {
+            // Fire `onboarding_started` + the initial step-view exactly
+            // once per appearance — `onChange(of: currentStep)` only
+            // fires on transitions, so step 0 needs a manual seed.
+            startedAt = Date()
+            analytics.track(.onboardingStarted)
+            analytics.track(.onboardingStepViewed(step: currentStep))
         }
     }
 
@@ -342,6 +358,7 @@ struct OnboardingView: View {
     // MARK: - Completion
 
     private func completeOnboarding(persistInitialBalance: Bool = false) {
+        var didSetInitialBalance = false
         if persistInitialBalance {
             let trimmed = initialBalanceText
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -362,8 +379,14 @@ struct OnboardingView: View {
                     tags: nil
                 )
                 transactionStore.add(tx)
+                didSetInitialBalance = true
             }
         }
+        analytics.track(.onboardingCompleted(
+            setInitialBalance: didSetInitialBalance,
+            secondsBucket: AnalyticsBuckets.seconds(Date().timeIntervalSince(startedAt))
+        ))
+        analytics.setUserProperty(.hasCompletedOnboarding(true))
         service.markCompleted()
     }
 }

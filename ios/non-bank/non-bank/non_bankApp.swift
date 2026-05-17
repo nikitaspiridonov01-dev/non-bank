@@ -56,6 +56,10 @@ struct non_bankApp: App {
         // service constructor reads UserDefaults; pushing the value to
         // the implementation here keeps the two in sync from frame one.
         analytics.setEnabled(AnalyticsConsentService.shared.isEnabled)
+        // Stamp the install date on first launch so activation events
+        // (`first_transaction`, `first_split`, …) can bucket their
+        // `time_since_install` against that anchor.
+        analytics.bootstrapInstallClock()
 
         // Build the coordinator before SwiftUI's StateObject machinery so we
         // can install it as the system notification center delegate at app

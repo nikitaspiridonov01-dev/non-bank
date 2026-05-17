@@ -18,6 +18,7 @@ struct MainTabView: View {
     @EnvironmentObject var notificationCoordinator: NotificationCoordinator
     @EnvironmentObject var shareLinkCoordinator: ShareLinkCoordinator
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.analytics) private var analytics
 
     /// Timer that fires every 60s to check for new recurring spawns
     @State private var spawnTimer: Timer?
@@ -29,6 +30,10 @@ struct MainTabView: View {
     /// the imported (or already-imported) transaction after the share-
     /// link flow completes.
     @State private var shareLinkOpenedTransaction: Transaction?
+    /// Sibling of `router.selectedTab` so the tab-switch analytics
+    /// event can read FROM-tab — `.onChange(of:)` only delivers the
+    /// new value with the single-argument overload we use.
+    @State private var lastTrackedTab: Int = 0
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -248,6 +253,20 @@ struct MainTabView: View {
         .onDisappear {
             spawnTimer?.invalidate()
             spawnTimer = nil
+        }
+        // Tab-switch analytics. `router.selectedTab` is Int (0=home,
+        // 1=profile). We map to `AnalyticsTab` here rather than in the
+        // taxonomy so the integer convention stays a UI-layer concern.
+        // Track the previous tab in a sibling @State because the
+        // single-argument `.onChange` we use elsewhere only gets the
+        // NEW value — `lastTrackedTab` carries the FROM side across
+        // ticks without depending on iOS-17-only onChange overloads.
+        .onChange(of: router.selectedTab) { newTab in
+            let from: AnalyticsTab = lastTrackedTab == 0 ? .home : .profile
+            let to: AnalyticsTab = newTab == 0 ? .home : .profile
+            guard from != to else { return }
+            analytics.track(.tabSwitched(from: from, to: to))
+            lastTrackedTab = newTab
         }
         .onChange(of: scenePhase) { newPhase in
             if newPhase == .active {

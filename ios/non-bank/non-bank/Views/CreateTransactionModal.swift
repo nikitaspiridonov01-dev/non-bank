@@ -321,13 +321,49 @@ struct CreateTransactionModal: View {
     @State private var showCategoryModal: Bool = false
     @State private var showDateModal: Bool = false
     @State private var showFriendPicker: Bool = false
-    /// Phase 4.4 orchestrator presentation flag. `modeFlowStartStep`
+    /// Phase 4.4 orchestrator presentation handle. Using `.sheet(item:)`
+    /// rather than `.sheet(isPresented:)` so every open gets a fresh
+    /// `id` — SwiftUI was preserving `TransactionModeFlowSheet.@State`
+    /// across presentations on the isPresented path, which meant
+    /// `_path = State(initialValue:)` was being ignored on second-and-
+    /// later opens and the user kept landing on the mode picker even
+    /// when re-entering with a mode already configured. The `startStep`
     /// disambiguates fresh-start (state 2 chip tap, "Pay for yourself"
     /// users picking a mode) from re-entry (state 3/4 chip/subtitle
     /// tap with a mode already configured — orchestrator opens at the
     /// "specific step" for that mode).
-    @State private var showModeFlowSheet: Bool = false
-    @State private var modeFlowStartStep: TransactionModeFlowSheet.StartStep = .modePicker
+    @State private var modeFlowPresentation: ModeFlowPresentation? = nil
+
+    /// Identifiable wrapper so `.sheet(item:)` creates a fresh view
+    /// identity per open. The UUID's only job is forcing identity to
+    /// change — it doesn't carry any meaning.
+    struct ModeFlowPresentation: Identifiable {
+        let id = UUID()
+        let startStep: TransactionModeFlowSheet.StartStep
+    }
+
+    /// While the orchestrator sheet is open, the chip + subtitle render
+    /// off this snapshot instead of the live VM. The orchestrator
+    /// writes `vm.splitMode` / `vm.selectedFriends` / `vm.payers` /
+    /// `vm.youIncludedInSplit` directly during its steps so its own
+    /// downstream routing (the friend picker, calc, etc.) can read them
+    /// — those writes propagate up to this modal via `@ObservedObject`,
+    /// which without this freeze caused a visible flash: the chip and
+    /// subtitle would flip to the in-flight mode while the sheet was
+    /// up, then revert when `.onDisappear` rolled back. Freezing the
+    /// display source keeps the modal showing the pre-open state for
+    /// the entire sheet lifetime; we clear it from `.sheet(onDismiss:)`
+    /// AFTER the sheet animation completes so any committed state
+    /// surfaces cleanly without a mid-animation snap.
+    @State private var chipDisplaySnapshot: ChipDisplaySnapshot? = nil
+
+    struct ChipDisplaySnapshot {
+        let splitMode: SplitMode?
+        let isSplitMode: Bool
+        let selectedFriends: [Friend]
+        let youIncludedInSplit: Bool
+        let payers: [Payer]
+    }
     @State private var showFriendForm: Bool = false
     // @State private var showWhoPays: Bool = false  // WhoPaysPicker — preserved for future
     @State private var selectedTab: TransactionTab = .expense
@@ -823,8 +859,12 @@ struct CreateTransactionModal: View {
                 AppColors.backgroundPrimary.ignoresSafeArea()
                 
                 VStack(spacing: 0) {
-                    Spacer().frame(height: 8)
-
+                    // No explicit top Spacer here — the chip slot's
+                    // invisible top hit padding (`chipHitPaddingVertical`)
+                    // already provides the 8pt breathing room between
+                    // the toolbar and the visible chip, while widening
+                    // the tap target into that zone.
+                    //
                     // Top mode-entry chip (Phase 4.4) — sits right
                     // under the toolbar tabs. Hidden in income mode
                     // (income transactions don't have split modes).
@@ -833,16 +873,20 @@ struct CreateTransactionModal: View {
                     // don't jump as the chip morphs.
                     if !vm.isIncome {
                         modeEntryChip
-                            .frame(height: 22)
+                            .frame(height: Self.chipReservedHeight)
                     } else {
                         // Reserve the same vertical slot so flipping
                         // expense → income doesn't ripple the layout
                         // (tab toggle reads as content swap, not a
                         // shift).
-                        Spacer().frame(height: 22)
+                        Spacer().frame(height: Self.chipReservedHeight)
                     }
 
-                    Spacer().frame(height: 12)
+                    // Reduced from 12pt — the chip slot's invisible
+                    // bottom hit padding eats 8pt, so 4pt here brings
+                    // the visible gap above the title back to the
+                    // original ~12pt rhythm.
+                    Spacer().frame(height: 4)
 
                     // Title area — tappable, opens Notes screen
                     Button(action: { showNoteTagsModal = true }) {
@@ -1255,10 +1299,23 @@ struct CreateTransactionModal: View {
                     }
                 }
             }
-            .sheet(isPresented: $showModeFlowSheet) {
+            .sheet(
+                item: $modeFlowPresentation,
+                // Clear the chip's display freeze AFTER the dismissal
+                // animation completes (that's when `onDismiss` fires
+                // on `.sheet(item:)`). Clearing earlier would let the
+                // chip snap from the frozen state to the live VM
+                // mid-animation; deferring it means the new committed
+                // state surfaces in a single clean transition once
+                // the sheet is fully off-screen. For the back-out
+                // case the orchestrator's own snapshot-restore has
+                // already reverted the VM, so unfreezing reveals
+                // the original state with no visible change.
+                onDismiss: { chipDisplaySnapshot = nil }
+            ) { presentation in
                 TransactionModeFlowSheet(
                     vm: vm,
-                    startStep: modeFlowStartStep,
+                    startStep: presentation.startStep,
                     currency: vm.selectedCurrency,
                     onDone: { /* chunk 4 will hook chip refresh here */ }
                 )
@@ -1349,8 +1406,7 @@ struct CreateTransactionModal: View {
                         // own appear animation settles — iOS drops
                         // the second sheet otherwise.
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            modeFlowStartStep = .modePicker
-                            showModeFlowSheet = true
+                            presentModeFlow(startStep: .modePicker)
                         }
                     }
                     // Auto-arm `byItems` split mode for the Debts /
@@ -1559,12 +1615,40 @@ struct CreateTransactionModal: View {
 
 extension CreateTransactionModal {
 
+    // MARK: - Display-source accessors
+    //
+    // Every chip/subtitle helper below reads through these instead of
+    // touching `vm.*` directly. While the orchestrator sheet is open,
+    // `chipDisplaySnapshot` holds the pre-open VM state and the chip
+    // shows that frozen value — so the orchestrator's in-flight writes
+    // to the VM (which it needs for its own routing) don't leak into
+    // the modal's chip / subtitle and produce the flash the user
+    // reported. Once the sheet finishes dismissing,
+    // `.sheet(onDismiss:)` clears the snapshot and these fall back to
+    // the live VM, which by then holds either the committed new state
+    // or the rolled-back original.
+    private var displaySplitMode: SplitMode? {
+        chipDisplaySnapshot?.splitMode ?? vm.splitMode
+    }
+    private var displayIsSplitMode: Bool {
+        chipDisplaySnapshot?.isSplitMode ?? vm.isSplitMode
+    }
+    private var displaySelectedFriends: [Friend] {
+        chipDisplaySnapshot?.selectedFriends ?? vm.selectedFriends
+    }
+    private var displayYouIncludedInSplit: Bool {
+        chipDisplaySnapshot?.youIncludedInSplit ?? vm.youIncludedInSplit
+    }
+    private var displayPayers: [Payer] {
+        chipDisplaySnapshot?.payers ?? vm.payers
+    }
+
     /// True once the user committed to a non-default mode (any split
     /// or settle-up). Drives both the top chip's "active" appearance
     /// and the subtitle's visibility — when false, only the empty
     /// "Add friends to this purchase" affordance is shown.
     private var modeIsConfigured: Bool {
-        vm.isSplitMode && (vm.youIncludedInSplit || !vm.selectedFriends.isEmpty)
+        displayIsSplitMode && (displayYouIncludedInSplit || !displaySelectedFriends.isEmpty)
     }
 
     /// True when the modal has a non-zero amount AND mode is set.
@@ -1639,8 +1723,26 @@ extension CreateTransactionModal {
     /// `.scanSource` step in that shape and the unified scan flow
     /// rebuilds the items list without bailing back out to the modal.
     func openModeFlow() {
-        modeFlowStartStep = modeIsConfigured ? .specificStep : .modePicker
-        showModeFlowSheet = true
+        presentModeFlow(
+            startStep: modeIsConfigured ? .specificStep : .modePicker
+        )
+    }
+
+    /// Single chokepoint for opening the orchestrator. Captures the
+    /// chip+subtitle's display snapshot first so the underlying modal
+    /// renders the pre-open state for the entire sheet lifetime,
+    /// THEN flips `modeFlowPresentation` to present the sheet. Two
+    /// entry points use this: the user-tap `openModeFlow()` and the
+    /// auto-arm `asyncAfter` path that fires after a friend prefill.
+    func presentModeFlow(startStep: TransactionModeFlowSheet.StartStep) {
+        chipDisplaySnapshot = ChipDisplaySnapshot(
+            splitMode: vm.splitMode,
+            isSplitMode: vm.isSplitMode,
+            selectedFriends: vm.selectedFriends,
+            youIncludedInSplit: vm.youIncludedInSplit,
+            payers: vm.payers
+        )
+        modeFlowPresentation = ModeFlowPresentation(startStep: startStep)
     }
 
     /// Top chip below the toolbar — single tap target for the entire
@@ -1678,10 +1780,16 @@ extension CreateTransactionModal {
                 // Symmetric padding on both sides so the avatar pile
                 // sits centred in the pill — matches the left/right
                 // breathing room. Circle state ignores both via the
-                // forced square frame.
-                .padding(.leading, isCircle ? 0 : AppSpacing.xs)
-                .padding(.trailing, isCircle ? 0 : AppSpacing.xs)
-                .frame(width: isCircle ? 22 : nil, height: 22)
+                // forced square frame. Slightly looser than xxs (2pt)
+                // so a faint halo of the capsule is visible around
+                // the avatars, reading as "these are inside a chip"
+                // instead of "these are bare circles".
+                .padding(.leading, isCircle ? 0 : Self.chipHorizontalPadding)
+                .padding(.trailing, isCircle ? 0 : Self.chipHorizontalPadding)
+                .frame(
+                    width: isCircle ? Self.chipVisibleHeight : nil,
+                    height: Self.chipVisibleHeight
+                )
                 .background(
                     Capsule().fill(
                         isOrange
@@ -1690,11 +1798,52 @@ extension CreateTransactionModal {
                     )
                 )
                 .opacity(isUnactionable ? 0.4 : 1)
+                // Hit-area extension — invisible padding around the
+                // visible chip makes the tap target larger than the
+                // pill itself. The Button label's bounds grow with
+                // this padding, so the parent VStack reserves
+                // `chipReservedHeight` (= visible + 2 × vertical hit
+                // padding) instead of the old 22pt. Surrounding
+                // spacers were trimmed by the same delta so overall
+                // vertical rhythm of the modal stays put.
+                .padding(.vertical, Self.chipHitPaddingVertical)
+                .padding(.horizontal, Self.chipHitPaddingHorizontal)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .animation(.spring(response: 0.42, dampingFraction: 0.78), value: amountReadyForSplit)
         .animation(.spring(response: 0.42, dampingFraction: 0.78), value: modeIsConfigured)
     }
+
+    /// Visible height of the chip pill. Bumped from the original 22pt
+    /// so a thin halo of the capsule fill shows above and below the
+    /// 20pt avatars — readable as "the avatars are inside a chip".
+    static let chipVisibleHeight: CGFloat = 26
+    /// Horizontal padding inside the chip's capsule. With a 20pt
+    /// avatar pile, 4pt on each side keeps the disc edges flush
+    /// without bleeding into the pill rim.
+    static let chipHorizontalPadding: CGFloat = 4
+    /// Invisible padding added AROUND the visible chip to expand the
+    /// tap target. Decoupled from `chipReservedHeight` (below) so the
+    /// hit zone can be larger than the layout slot — the Button's
+    /// content renders at `visible + 2 × hit-pad` and overflows the
+    /// outer `.frame(height: chipReservedHeight)` by a few pt in each
+    /// direction. SwiftUI hit-tests the rendered bounds, not the
+    /// layout slot, so taps land on the overflow region too. The
+    /// vertical overflow fills the 4pt gap before the title and the
+    /// invisible margin above the toolbar — those zones are otherwise
+    /// dead space, so absorbing them into the chip's tap target costs
+    /// nothing visually. Horizontal overflow goes into the empty
+    /// margin to either side of the centered chip and is the safest
+    /// dimension to inflate aggressively.
+    static let chipHitPaddingVertical: CGFloat = 12
+    static let chipHitPaddingHorizontal: CGFloat = 24
+    /// Layout footprint the parent VStack reserves for the chip slot.
+    /// Locked to the ORIGINAL 8pt vertical hit padding so the title
+    /// below doesn't move when the actual hit padding grows. The
+    /// Button's content can extend past this height; hit testing
+    /// includes the overflow.
+    static let chipReservedHeight: CGFloat = chipVisibleHeight + 2 * 8
 
     /// Chip body — avatars only, no text. Keeping the structure stable
     /// (single HStack with the avatar pile as the only child) lets
@@ -1708,12 +1857,13 @@ extension CreateTransactionModal {
 
     /// Avatars all the time:
     ///   - Mode set: the full participant pile from
-    ///     `modeChipAvatars`, capped at 4 visible.
-    ///   - Default state: a single 14pt cat — the current user — so
-    ///     the chip reads as "you, alone, on this transaction" rather
-    ///     than as a faceless generic "split" symbol. Two-people icon
-    ///     used to live here; we dropped it because pre-mode the chip
-    ///     should hint at "who" (you), not at "category of action".
+    ///     `modeChipAvatars`, capped at 10 visible with a "+N" pill
+    ///     for overflow.
+    ///   - Default state: a single 20pt cat — the current user — at
+    ///     the same size as the mode-configured pile so the chip
+    ///     doesn't visually shrink between states. Earlier this was
+    ///     14pt and read as a different family of avatars from the
+    ///     mode-set pile next to it.
     @ViewBuilder
     private func chipLeadingVisual(orange: Bool) -> some View {
         if modeIsConfigured {
@@ -1724,7 +1874,7 @@ extension CreateTransactionModal {
                     id: UserIDService.currentID(),
                     isConnected: true
                 )],
-                avatarSize: 14,
+                avatarSize: 20,
                 strokeColor: AppColors.backgroundElevated,
                 strokeWidth: 1,
                 maxVisible: 1
@@ -1742,10 +1892,12 @@ extension CreateTransactionModal {
         let participants = chipParticipantPreview.map {
             OverlappingAvatarStack.Participant(id: $0.id, isConnected: $0.coloredAvatar)
         }
-        // Overflow = (total participants with a role) − (visible
-        // slots). Matches the home-screen "+N" pill semantics for
-        // when the user has more split friends than fit.
-        let maxVisible = 3
+        // Show every participant up to 10; beyond that an "+N" pill
+        // signals the overflow. 10 is high enough that real-world
+        // splits land within the visible cap, low enough that the
+        // chip width stays comfortable on standard screens (10 × 20pt
+        // with 50% overlap ≈ 110pt of avatars).
+        let maxVisible = 10
         let overflow = max(0, allChipParticipants.count - maxVisible)
         return OverlappingAvatarStack(
             participants: participants,
@@ -1770,14 +1922,16 @@ extension CreateTransactionModal {
         var seen = Set<String>()
 
         // Self appears if you're in the split or you're a payer.
-        let youIsPayer = vm.payers.contains(where: { $0.id == "me" })
-        if vm.youIncludedInSplit || youIsPayer {
+        let payers = displayPayers
+        let friends = displaySelectedFriends
+        let youIsPayer = payers.contains(where: { $0.id == "me" })
+        if displayYouIncludedInSplit || youIsPayer {
             result.append((UserIDService.currentID(), true))
             seen.insert("me")
         }
 
         // Split members.
-        for friend in vm.selectedFriends {
+        for friend in friends {
             guard !seen.contains(friend.id) else { continue }
             seen.insert(friend.id)
             result.append((friend.id, friend.isConnected))
@@ -1785,7 +1939,7 @@ extension CreateTransactionModal {
 
         // Payers who aren't in the split — typical in paidUpfront
         // where someone covers the bill but isn't a participant.
-        for payer in vm.payers {
+        for payer in payers {
             guard payer.id != "me", !seen.contains(payer.id) else { continue }
             seen.insert(payer.id)
             let isConnected = friendStore.friend(byID: payer.id)?.isConnected ?? false
@@ -1798,8 +1952,9 @@ extension CreateTransactionModal {
     /// Avatars to render in the chip — same ordering as
     /// `allChipParticipants`, capped for visual fit. The cap matters
     /// for chip width; the count label below uses the uncapped total.
+    /// Stays in lockstep with `modeChipAvatars.maxVisible`.
     private var chipParticipantPreview: [(id: String, coloredAvatar: Bool)] {
-        Array(allChipParticipants.prefix(4))
+        Array(allChipParticipants.prefix(10))
     }
 
     /// Subtitle shown directly under the amount block once a mode is
@@ -1839,23 +1994,37 @@ extension CreateTransactionModal {
 
     /// Composed subtitle string per the TZ rules.
     private var modeSubtitleText: String {
-        guard let mode = vm.splitMode else { return "" }
+        guard let mode = displaySplitMode else { return "" }
         if mode == .settleUp { return settleUpSubtitle }
 
         let payerPrefix = subtitlePayerPrefix
-        let participantCount = (vm.youIncludedInSplit ? 1 : 0) + vm.selectedFriends.count
+        let participantCount = (displayYouIncludedInSplit ? 1 : 0) + displaySelectedFriends.count
         let peopleWord = participantCount == 1 ? "person" : "people"
 
         switch mode {
         case .evenly:
-            return "\(payerPrefix) and split evenly between \(participantCount) \(peopleWord)"
+            return "\(payerPrefix) and split evenly with \(participantCount) \(peopleWord)"
         case .byAmount:
-            return "\(payerPrefix) and split by amount between \(participantCount) \(peopleWord)"
+            return "\(payerPrefix) and split by amount with \(participantCount) \(peopleWord)"
         case .byItems:
-            return "\(payerPrefix) and split the receipt between \(participantCount) \(peopleWord)"
+            return "\(payerPrefix) and split the receipt with \(participantCount) \(peopleWord)"
         case .settleUp:
             return settleUpSubtitle
         }
+    }
+
+    /// Trims long display names so the subtitle line stays readable
+    /// without truncating mid-phrase. "Александр Магомедов pays and
+    /// split…" used to chop the trailing "1 person" off entirely
+    /// because the name ate the lineLimit budget on narrow screens.
+    /// Limit + ellipsis keeps the name recognisable AND the rest of
+    /// the sentence intact.
+    private static let subtitleNameMaxLength = 10
+
+    private func truncatedSubtitleName(_ name: String) -> String {
+        if name.count <= Self.subtitleNameMaxLength { return name }
+        let kept = name.prefix(Self.subtitleNameMaxLength - 1)
+        return "\(kept)…"
     }
 
     /// "{X} pay" / "You pay" / "{Name} pays" depending on the payers
@@ -1863,30 +2032,30 @@ extension CreateTransactionModal {
     /// where vm.payers is empty (the create flow always seeds a
     /// default payer, so this should be unreachable).
     private var subtitlePayerPrefix: String {
-        let activePayers = vm.payers.filter { $0.amount > 0.001 }
+        let activePayers = displayPayers.filter { $0.amount > 0.001 }
         if activePayers.isEmpty { return "Someone pays" }
         if activePayers.count == 1 {
             let payer = activePayers[0]
             if payer.id == "me" { return "You pay" }
-            return "\(payer.name) pays"
+            return "\(truncatedSubtitleName(payer.name)) pays"
         }
         return "\(activePayers.count) people pay"
     }
 
     /// "You pay for Michael" / "Michael pays for you" / "{A} pays for {B}".
     private var settleUpSubtitle: String {
-        let activePayers = vm.payers.filter { $0.amount > 0.001 }
+        let activePayers = displayPayers.filter { $0.amount > 0.001 }
         let payer = activePayers.first
         let isYouPayer = payer?.id == "me"
 
-        if isYouPayer, let firstFriend = vm.selectedFriends.first {
-            return "You pay for \(firstFriend.name)"
+        if isYouPayer, let firstFriend = displaySelectedFriends.first {
+            return "You pay for \(truncatedSubtitleName(firstFriend.name))"
         }
-        if let payer, vm.youIncludedInSplit {
-            return "\(payer.name) pays for you"
+        if let payer, displayYouIncludedInSplit {
+            return "\(truncatedSubtitleName(payer.name)) pays for you"
         }
-        if let payer, let firstFriend = vm.selectedFriends.first(where: { $0.id != payer.id }) {
-            return "\(payer.name) pays for \(firstFriend.name)"
+        if let payer, let firstFriend = displaySelectedFriends.first(where: { $0.id != payer.id }) {
+            return "\(truncatedSubtitleName(payer.name)) pays for \(truncatedSubtitleName(firstFriend.name))"
         }
         return "Settle up"
     }

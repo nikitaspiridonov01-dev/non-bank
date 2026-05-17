@@ -143,7 +143,14 @@ struct FriendPickerView: View {
         .scrollContentBackground(.hidden)
         .background(AppColors.backgroundPrimary)
         .searchable(text: $searchText, prompt: "Search friends")
-        .navigationTitle("")
+        // No `.navigationTitle` here. The orchestrator that embeds
+        // this view (`wrapInNavigationStack: false`) sets the title
+        // from outside so the system back-history menu reads each
+        // step's name — an unconditional `.navigationTitle("")` in
+        // here used to win against the outer modifier and left blank
+        // rows in the menu. Standalone usage (the inner NavigationStack
+        // branch in `body`) defaults to an empty bar with no visible
+        // title, which is what we want there too.
         .toolbarTitleDisplayMode(.inline)
         .toolbar {
             // Standalone presentation owns Cancel; the orchestrator

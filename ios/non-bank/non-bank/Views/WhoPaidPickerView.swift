@@ -672,7 +672,12 @@ struct WhoPaidPickerView: View {
                     .padding(.bottom, AppSpacing.md)
             }
             .background(AppColors.backgroundPrimary)
-            .navigationTitle("")
+            // No `.navigationTitle` — the orchestrator that embeds
+            // this picker (`wrapInNavigationStack: false`) sets the
+            // title from outside so the long-press back-history menu
+            // reads each step's name. Standalone usage's own
+            // NavigationStack defaults to an empty bar, matching the
+            // visual behaviour without the override.
             .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 if wrapInNavigationStack {

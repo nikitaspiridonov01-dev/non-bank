@@ -451,8 +451,15 @@ class CreateTransactionViewModel: ObservableObject {
                 // full amount and ONE (different) party receives the
                 // full amount. The `payers` array carries who paid;
                 // by the invariant established at commitSettleUp /
-                // prefill time it has exactly one entry. Everything
-                // else is zero.
+                // prefill time it has exactly one entry. The
+                // RECEIVER is whichever party isn't the payer — and
+                // that party may be "me" OR a third friend, so we
+                // can't infer it from `!mePays` alone.
+                //
+                // Three shapes to encode (see `commitSettleUp`):
+                //   - me→friend   (mePays, `selectedFriends == [recipient]`)
+                //   - friend→me   (!mePays && youIncludedInSplit, `selectedFriends == [payer]`)
+                //   - friend→friend (!mePays && !youIncludedInSplit, `selectedFriends == [payer, recipient]`)
                 //
                 // We compute shares deterministically here rather
                 // than letting the evenly fallback split the total
@@ -460,18 +467,37 @@ class CreateTransactionViewModel: ObservableObject {
                 // bug: with equal shares (50 vs 50) the downstream
                 // `normaliseSettleUp` tie-broke the receiver back to
                 // "me", which collapsed the settle-up into a solo
-                // self-paid expense.
+                // self-paid expense. The earlier version of this
+                // branch then over-corrected by hardcoding `myShare
+                // = total` whenever `!mePays`, which silently
+                // injected the user into friend→friend transfers on
+                // save and made the round-trip render "Meur pays for
+                // you" after re-open.
                 let payerID = payers.first?.id ?? "me"
                 let mePays = payerID == "me"
-                myShare = mePays ? 0 : total
+                let meReceives = !mePays && youIncludedInSplit
+                myShare = meReceives ? total : 0
                 friendShares = selectedFriends.map { friend in
-                    FriendShare(
+                    let friendIsPayer = friend.id == payerID
+                    let friendIsReceiver: Bool
+                    if meReceives {
+                        // friend→me: the friend is the payer, not
+                        // the receiver. Their share is zero.
+                        friendIsReceiver = false
+                    } else if mePays {
+                        // me→friend: the single friend in
+                        // `selectedFriends` is the receiver by
+                        // construction.
+                        friendIsReceiver = true
+                    } else {
+                        // friend→friend: receiver is whichever
+                        // friend isn't the payer.
+                        friendIsReceiver = !friendIsPayer
+                    }
+                    return FriendShare(
                         friendID: friend.id,
-                        // Friend is the receiver when "me" paid;
-                        // they're the payer when they paid (and
-                        // their share is then 0).
-                        share: mePays ? total : 0,
-                        paidAmount: friend.id == payerID ? total : 0
+                        share: friendIsReceiver ? total : 0,
+                        paidAmount: friendIsPayer ? total : 0
                     )
                 }
             } else {
@@ -619,9 +645,28 @@ class CreateTransactionViewModel: ObservableObject {
             isSplitMode = true
             splitMode = split.splitMode
 
-            // Resolve friends — only those with a share (split participants)
-            let splitParticipants = split.friends.filter { $0.share > 0 }
-            let friends = splitParticipants.compactMap { resolver($0.friendID) }
+            // Resolve friends. For non-settle-up modes "selectedFriends"
+            // means split participants (positive share); paid-upfront
+            // friends with no share are reconstructed into `payers`
+            // below via the `paidAmount > 0` branch and intentionally
+            // stay out of `selectedFriends`.
+            //
+            // Settle-up is the exception: `commitSettleUp` puts BOTH
+            // payer (share=0, paid=total) and recipient (share=total,
+            // paid=0) into `selectedFriends`, so the orchestrator's
+            // re-entry can prefill the picker. Filtering by
+            // `share > 0` would silently drop the payer friend on
+            // every reload and break the friend-picker prefill in
+            // the friend→me and friend→friend shapes.
+            let candidateFriends: [FriendShare]
+            if split.splitMode == .settleUp {
+                candidateFriends = split.friends.filter {
+                    $0.share > 0 || $0.paidAmount > 0
+                }
+            } else {
+                candidateFriends = split.friends.filter { $0.share > 0 }
+            }
+            let friends = candidateFriends.compactMap { resolver($0.friendID) }
             selectedFriends = friends
 
             // Determine if "You" was included in the split

@@ -44,6 +44,41 @@ struct TransactionModeFlowSheet: View {
 
     @State private var path: [Step]
 
+    /// Snapshot of every VM field the orchestrator can mutate, captured
+    /// on `.onAppear`. Lets us revert all in-flight changes if the user
+    /// dismisses the sheet without completing the flow — picking a new
+    /// mode in the picker, walking a few steps, then backing out should
+    /// leave the underlying transaction exactly as it was before the
+    /// sheet opened, not committed to the half-walked new mode.
+    ///
+    /// Stored as an optional because `@State` can't be initialised from
+    /// `init` against an `@ObservedObject` member (the wrapper isn't
+    /// resolved yet); we lazily capture on the first `.onAppear`.
+    @State private var initialVMSnapshot: VMSnapshot? = nil
+
+    /// Flipped to `true` by `completeFlow()` — the single chokepoint
+    /// every real "save and exit" path runs through. When the sheet
+    /// disappears with this still `false`, `.onDisappear` rolls the VM
+    /// back to `initialVMSnapshot`.
+    @State private var didCompleteFlow: Bool = false
+
+    /// Captures mode-related VM state for rollback on
+    /// dismiss-without-commit. `pendingReceiptItems`, `amount`,
+    /// `selectedCurrency`, and `selectedCategory` are intentionally
+    /// NOT snapshotted: once the user has saved a scanned receipt
+    /// the items are transaction data, not mode state, and persist
+    /// past mode-flow exit (mirroring how a user-entered amount
+    /// survives the flow). If you add a new mode-state write inside
+    /// this orchestrator, extend this struct AND the restore helper.
+    private struct VMSnapshot {
+        let splitMode: SplitMode?
+        let isSplitMode: Bool
+        let selectedFriends: [Friend]
+        let youIncludedInSplit: Bool
+        let byAmountShares: [String: Double]
+        let payers: [Payer]
+    }
+
     /// Compute the initial NavigationStack path eagerly in `init`
     /// rather than seeding it from `.onAppear`. Two reasons:
     ///   1. `.onAppear` fires AFTER the NavigationStack has already
@@ -191,12 +226,32 @@ struct TransactionModeFlowSheet: View {
         // mid-flow.
         .interactiveDismissDisabled(!path.isEmpty)
         // Initial path is computed in `init` so it's correct on
-        // first render; .onAppear here only seeds the byItems
-        // selections (`byItemsSelections`) for the re-entry case
-        // since those depend on the actual `pendingReceiptItems`
-        // and can't go into a static helper without making it
-        // depend on `@State` of this very view.
-        .onAppear(perform: seedByItemsSelectionsForReentryIfNeeded)
+        // first render; .onAppear here seeds the byItems selections
+        // (`byItemsSelections`) for the re-entry case (those depend
+        // on the actual `pendingReceiptItems` and can't go into a
+        // static helper without making it depend on `@State` of this
+        // very view), and captures the VM snapshot so a back-out
+        // anywhere along the flow can roll back to the pre-open
+        // state. Capture is idempotent on the snapshot's `nil` guard,
+        // so re-firing `.onAppear` (backgrounding the app and
+        // resuming the sheet) doesn't overwrite the original
+        // snapshot with already-mutated in-flight state.
+        .onAppear {
+            captureVMSnapshotIfNeeded()
+            seedByItemsSelectionsForReentryIfNeeded()
+        }
+        // Roll the VM back to its pre-open state when the user
+        // dismisses without going through `completeFlow()` (chevron
+        // back at root, swipe-down at root, scan-flow Cancel, X
+        // close button). `completeFlow()` sets `didCompleteFlow =
+        // true` first so the legitimate save-and-exit paths bypass
+        // this restore. Without the restore, picking a new mode in
+        // the picker silently overwrote `vm.splitMode` the moment
+        // the user tapped a row — even backing out before finishing
+        // the new flow left the transaction in the half-configured
+        // state, which the user reported as "I changed my mind but
+        // the mode already switched".
+        .onDisappear(perform: restoreVMSnapshotIfNotCommitted)
         // byItems-without-receipt scan flow overlays. Mounted at the
         // NavigationStack root so the scanner / photos picker stay
         // out of any individual step's view tree — they replace the
@@ -412,7 +467,9 @@ struct TransactionModeFlowSheet: View {
         )
         vm.splitMode = .byItems
         vm.isSplitMode = true
-        vm.persistLastUsedSplitMode()
+        // `persistLastUsedSplitMode()` is deferred to `completeFlow()`
+        // so a back-out from the byItems walk after a scan rolls the
+        // "last used mode" preference back along with the VM state.
         // Drop `.scanSource` and `.receiptReview` so the back stack
         // reads as mode picker → byItems flow, not mode picker →
         // scan → review → byItems flow. The scan was a means to an
@@ -464,7 +521,7 @@ struct TransactionModeFlowSheet: View {
             currency: currency,
             onSelect: handleModeSelection
         )
-        .navigationTitle("")
+        .navigationTitle("How to track")
         .toolbarTitleDisplayMode(.inline)
         .toolbar { commonToolbar(includeBack: true) }
     }
@@ -525,7 +582,7 @@ struct TransactionModeFlowSheet: View {
                 path.append(.settleUpRecipient)
             }
         )
-        .navigationTitle("")
+        .navigationTitle("Who pays")
         .toolbarTitleDisplayMode(.inline)
         .toolbar { commonToolbar(includeBack: false) }
     }
@@ -585,7 +642,7 @@ struct TransactionModeFlowSheet: View {
                 completeFlow()
             }
         )
-        .navigationTitle("")
+        .navigationTitle("Who is paid")
         .toolbarTitleDisplayMode(.inline)
         .toolbar { commonToolbar(includeBack: false) }
     }
@@ -648,7 +705,7 @@ struct TransactionModeFlowSheet: View {
                 showPhotosPicker = true
             }
         )
-        .navigationTitle("")
+        .navigationTitle("Scan receipt")
         .toolbarTitleDisplayMode(.inline)
         // The native back arrow would pop to the mode picker, which
         // is the "swap modes" affordance — but the user picked
@@ -711,6 +768,12 @@ struct TransactionModeFlowSheet: View {
             }
             .accessibilityLabel("Close")
         }
+        // Match `commonToolbar` — empty principal so the visible
+        // title stays clean while `.navigationTitle(...)` still drives
+        // the back-history menu.
+        ToolbarItem(placement: .principal) {
+            EmptyView()
+        }
     }
 
     /// Embedded `WhoPaidPickerView` in `.splitShares` mode, wrapped in
@@ -751,7 +814,7 @@ struct TransactionModeFlowSheet: View {
                 }
             }
         )
-        .navigationTitle("")
+        .navigationTitle("Set shares")
         .toolbarTitleDisplayMode(.inline)
         .toolbar { commonToolbar(includeBack: false) }
     }
@@ -840,7 +903,7 @@ struct TransactionModeFlowSheet: View {
                 pushAfterFriendPicker()
             }
         )
-        .navigationTitle("")
+        .navigationTitle(isSettleUp ? "Who to settle with" : "Who to split with")
         .toolbarTitleDisplayMode(.inline)
         .toolbar { commonToolbar(includeBack: false) }
     }
@@ -925,7 +988,7 @@ struct TransactionModeFlowSheet: View {
                     }
                 }
             )
-            .navigationTitle("")
+            .navigationTitle("Assign items")
             .toolbarTitleDisplayMode(.inline)
             .toolbar { commonToolbar(includeBack: false) }
         )
@@ -990,7 +1053,7 @@ struct TransactionModeFlowSheet: View {
                 }
             }
         )
-        .navigationTitle("")
+        .navigationTitle("Review split")
         .toolbarTitleDisplayMode(.inline)
         .toolbar { commonToolbar(includeBack: false) }
     }
@@ -1055,7 +1118,7 @@ struct TransactionModeFlowSheet: View {
                 completeFlow()
             }
         )
-        .navigationTitle("")
+        .navigationTitle("Who paid")
         .toolbarTitleDisplayMode(.inline)
         .toolbar { commonToolbar(includeBack: false) }
     }
@@ -1159,7 +1222,7 @@ struct TransactionModeFlowSheet: View {
                 path.append(.whoPayMultiCalc)
             }
         )
-        .navigationTitle("")
+        .navigationTitle("Add payers")
         .toolbarTitleDisplayMode(.inline)
         .toolbar { commonToolbar(includeBack: false) }
     }
@@ -1209,7 +1272,7 @@ struct TransactionModeFlowSheet: View {
                 completeFlow()
             }
         )
-        .navigationTitle("")
+        .navigationTitle("Payer amounts")
         .toolbarTitleDisplayMode(.inline)
         .toolbar { commonToolbar(includeBack: false) }
     }
@@ -1290,6 +1353,16 @@ struct TransactionModeFlowSheet: View {
     /// By amount, By items, Settle up, and the multi-payer numpad
     /// branch.
     private func completeFlow() {
+        // Single source of truth for "the user confirmed this flow":
+        //   - Marks the snapshot as committed so `.onDisappear` skips
+        //     the roll-back.
+        //   - Persists the last-used mode preference now that we know
+        //     the user actually stuck with the choice (the picker tap
+        //     and the receipt-review confirm used to persist eagerly,
+        //     which leaked the mode change into UserDefaults even
+        //     when the user backed out before completing).
+        didCompleteFlow = true
+        vm.persistLastUsedSplitMode()
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         onDone()
         dismiss()
@@ -1314,6 +1387,16 @@ struct TransactionModeFlowSheet: View {
                 }
                 .accessibilityLabel("Close")
             }
+        }
+        // Empty principal slot suppresses the visible inline title in
+        // the navigation bar. We still set `.navigationTitle(...)` per
+        // step — that value drives the long-press back-history menu on
+        // the system back button, so each row in the menu reads as the
+        // step's name. Earlier the navigation title was `""` on every
+        // step, which made the back-history menu render blank rows
+        // that looked broken.
+        ToolbarItem(placement: .principal) {
+            EmptyView()
         }
     }
 
@@ -1423,7 +1506,10 @@ struct TransactionModeFlowSheet: View {
 
             vm.splitMode = m
             vm.isSplitMode = true
-            vm.persistLastUsedSplitMode()
+            // `persistLastUsedSplitMode()` is deferred to
+            // `completeFlow()` — a back-out from anywhere in the new
+            // mode's flow rolls the VM (via the snapshot) AND the
+            // "last used" preference back to the pre-tap state.
             // Settle-up has its own 2-step single-select picker
             // sequence (payer → recipient). Other modes go through
             // the regular multi-select friend picker for split
@@ -1475,22 +1561,24 @@ struct TransactionModeFlowSheet: View {
             return []
         }
 
-        let isMultiPayerConfigured = vm.payers.filter { $0.amount > 0.001 }.count > 1
-
         switch mode {
         case .evenly:
-            // Without multi, the focal step is the compact who-pay
-            // (most common single-payer edit intent: "who actually
-            // paid the bill"). With multi configured, focal shifts
-            // to friend selection — Save there pushes the numpad
-            // with retained amounts via `pushAfterFriendPicker`'s
-            // multi-in-flight branch, so the user can either tweak
-            // friends first or just confirm to land on the numpad.
-            if isMultiPayerConfigured {
-                return [.friendPicker]
-            } else {
-                return [.friendPicker, .whoPay]
-            }
+            // Re-entering an existing evenly split lands on the
+            // friend picker — same as every other mode's re-entry
+            // shape, which is what the user expects when tapping the
+            // chip / subtitle. Earlier the non-multi branch went
+            // straight to `.whoPay` on the premise that "who paid the
+            // bill" was the most common edit intent, but that broke
+            // the mental model: evenly was the only mode that skipped
+            // the "who's in the split" step on re-entry, and the user
+            // reported it as inconsistent (the multi-payer branch
+            // already landed on the friend picker, which the user
+            // flagged as the correct behaviour). Save on the friend
+            // picker pushes the next step normally — `.whoPay` for
+            // the single-payer case, or the multi numpad via the
+            // multi-in-flight branch in `pushAfterFriendPicker` when
+            // multiple payers are configured.
+            return [.friendPicker]
         case .byAmount:
             // Calculations is the focal point — the user tapped
             // because they want to fix shares, not swap participants.
@@ -1544,6 +1632,40 @@ struct TransactionModeFlowSheet: View {
             // mutation that can't live in `init`.
             return [.settleUpPayer]
         }
+    }
+
+    /// Captures the VM's current state into `initialVMSnapshot` the
+    /// first time the sheet appears. Guarded on `nil` so re-firing
+    /// `.onAppear` (backgrounding + resuming) can't overwrite the
+    /// original capture with an already-mutated in-flight state.
+    private func captureVMSnapshotIfNeeded() {
+        guard initialVMSnapshot == nil else { return }
+        initialVMSnapshot = VMSnapshot(
+            splitMode: vm.splitMode,
+            isSplitMode: vm.isSplitMode,
+            selectedFriends: vm.selectedFriends,
+            youIncludedInSplit: vm.youIncludedInSplit,
+            byAmountShares: vm.byAmountShares,
+            payers: vm.payers
+        )
+    }
+
+    /// `.onDisappear` companion to the snapshot capture. Writes every
+    /// snapshot field back to the VM IF `completeFlow()` didn't run —
+    /// which covers every "user abandoned mid-flow" path: chevron
+    /// back at the mode picker, native swipe-down at root, scan-flow
+    /// Cancel, the X close button on the scan step. Real completions
+    /// (`completeFlow()`) set `didCompleteFlow = true` first so the
+    /// restore short-circuits and the new state survives the
+    /// dismissal.
+    private func restoreVMSnapshotIfNotCommitted() {
+        guard !didCompleteFlow, let snapshot = initialVMSnapshot else { return }
+        vm.splitMode = snapshot.splitMode
+        vm.isSplitMode = snapshot.isSplitMode
+        vm.selectedFriends = snapshot.selectedFriends
+        vm.youIncludedInSplit = snapshot.youIncludedInSplit
+        vm.byAmountShares = snapshot.byAmountShares
+        vm.payers = snapshot.payers
     }
 
     /// `.onAppear` companion to `computeInitialPath`. The static path

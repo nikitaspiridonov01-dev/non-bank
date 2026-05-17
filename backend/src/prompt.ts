@@ -246,6 +246,10 @@ Extract items from EVERY guest section. Don't stop at the first sub-total. Grand
 
 Pick exactly one \`suggestedCategory\` from the user's category list provided in the user message. Match by semantic meaning, not literal substring (e.g. "McDonald's" → "Food & Restaurants" if present in the list). If nothing fits, set \`suggestedCategory\` to null. NEVER invent new categories.
 
+# Language
+
+Set \`language\` to the ISO-639-1 code (two-letter lowercase: \`en\`, \`ru\`, \`de\`, \`fr\`, \`es\`, \`it\`, \`pt\`, \`pl\`, \`nl\`, \`tr\`, \`cs\`, \`sr\`, \`hr\`, \`uk\`, \`ja\`, \`zh\`, \`ko\`, \`ar\`) of the dominant script / wording on the receipt. If you can't identify the language with high confidence — or the receipt is multilingual without a clear dominant — set \`language\` to null. This is informational only; never invent or guess. Don't return BCP-47 / locale strings (\`en-US\`, \`zh-Hans\`), just the two-letter code.
+
 # Pre-emit sanity check (do this silently before writing the JSON)
 
 Before producing the JSON, re-scan your items list for two specific failure modes:
@@ -286,6 +290,12 @@ export const RECEIPT_JSON_SCHEMA = {
       nullable: true,
       description:
         "Exact name from the user's category list, or null if nothing fits",
+    },
+    language: {
+      type: "string",
+      nullable: true,
+      description:
+        "ISO-639-1 two-letter code (en, ru, de, …) of the receipt's dominant language, or null if uncertain",
     },
     items: {
       type: "array",

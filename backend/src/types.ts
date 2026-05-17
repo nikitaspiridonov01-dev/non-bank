@@ -15,6 +15,12 @@ export interface ParsedReceipt {
   // New field — LLM picks the closest match from the category list iOS
   // sent in the request, or returns null if nothing fits.
   suggestedCategory: string | null;
+  // ISO-639-1 language code of the receipt text. The model fills this
+  // in when it can identify a dominant script / wording; iOS surfaces
+  // it as analytics-only data (no UI consumption) for the
+  // localisation-prioritisation dashboard. `null` collapses to
+  // `other` on the iOS side.
+  language: string | null;
   items: ParsedReceiptItem[];
 }
 
@@ -29,6 +35,11 @@ export interface ParseResponse {
   // Hint for the iOS client: when `true`, fall back to local OCR for the
   // next request — the cloud is nearly tapped out.
   pool_low: boolean;
+  // Number of providers the router walked through before getting a
+  // successful parse. `1` is the happy path (head-of-queue won);
+  // `4+` is a signal that the leading provider is silently
+  // degrading. iOS surfaces this as analytics-only.
+  attempted_providers_count: number;
 }
 
 // Provider id is just a tag the router and iOS read back as a string;

@@ -383,6 +383,11 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
       provider: result.provider,
       pool_remaining: result.poolRemaining,
       pool_low: result.poolLow,
+      // `triedProviders` carries the FAILED attempts before the
+      // success; the actual count of providers walked through is
+      // failures + 1 (the winner). Lets iOS analytics segment by
+      // "leading provider degrading" vs happy-path.
+      attempted_providers_count: result.triedProviders.length + 1,
     };
     logEvent(env, "info", {
       route: "/v1/parse-receipt",

@@ -69,8 +69,22 @@ export function coerceReceipt(raw: unknown, providerId: ProviderId): ParsedRecei
     currency: nullableString(obj.currency),
     totalAmount,
     suggestedCategory: nullableString(obj.suggestedCategory),
+    language: normalizeLanguage(nullableString(obj.language)),
     items,
   };
+}
+
+/// Lock the language tag to a stable two-letter ISO-639-1 form so the
+/// iOS analytics enum doesn't have to handle BCP-47 variants or
+/// uppercase. Returns `null` for anything outside that shape — iOS
+/// collapses null to `.other` so unknown languages still group cleanly.
+function normalizeLanguage(raw: string | null): string | null {
+  if (raw == null) return null;
+  // Strip BCP-47 region suffix if the model emits `en-US` instead
+  // of just `en`. Models that follow the prompt return the bare
+  // 2-letter code; this is defensive for the ones that drift.
+  const base = raw.trim().toLowerCase().split(/[-_]/)[0];
+  return /^[a-z]{2}$/.test(base) ? base : null;
 }
 
 /// Diagnostic-only check for a suspicious mismatch between the model's

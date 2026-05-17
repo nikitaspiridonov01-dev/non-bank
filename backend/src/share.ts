@@ -1531,37 +1531,59 @@ const PAGE_SCRIPTS = `
     m.setAttribute("hidden", "");
     document.documentElement.style.overflow = "";
   }
-  // Close on backdrop / close-button taps.
-  document.addEventListener("click", function(e) {
-    var t = e.target;
-    if (!(t instanceof Element)) return;
-    if (t.matches("[data-modal-close]") || t.closest("[data-modal-close]")) {
-      var modal = t.closest(".modal");
-      if (modal) closeModal(modal);
-      return;
+  // Attach per-element click handlers rather than relying on a
+  // document-level delegate. The delegated form silently failed for
+  // the receipt-items row in some iOS Safari builds (taps registered
+  // but the handler's closest-walk to find the data-target ancestor
+  // never matched -- possibly an event-retargeting quirk on nested
+  // span children), while the purchase / people halves on the same
+  // page kept working. Direct attachment removes that ambiguity:
+  // the listener is bound to the exact element that carries the
+  // attribute, no DOM-walking required.
+  Array.prototype.forEach.call(
+    document.querySelectorAll("[data-target]"),
+    function(el) {
+      el.addEventListener("click", function(e) {
+        var target = el.getAttribute("data-target");
+        if (target) openModal(target);
+        e.stopPropagation();
+      });
     }
-    var picked = t.closest("[data-pick-id]");
-    if (picked) {
-      var id = picked.getAttribute("data-pick-id");
-      if (id) {
-        writeStoredIdentity(id);
-        applyViewer(id);
-        closeModal(document.getElementById("identityPicker"));
-      }
-      return;
+  );
+  Array.prototype.forEach.call(
+    document.querySelectorAll("[data-modal-close]"),
+    function(el) {
+      el.addEventListener("click", function(e) {
+        var modal = el.closest(".modal");
+        if (modal) closeModal(modal);
+        e.stopPropagation();
+      });
     }
-    var pickerOpener = t.closest("[data-action='open-picker']");
-    if (pickerOpener) {
-      openModal("identityPicker");
-      return;
+  );
+  Array.prototype.forEach.call(
+    document.querySelectorAll("[data-pick-id]"),
+    function(el) {
+      el.addEventListener("click", function(e) {
+        var id = el.getAttribute("data-pick-id");
+        if (id) {
+          writeStoredIdentity(id);
+          applyViewer(id);
+          var picker = document.getElementById("identityPicker");
+          if (picker) closeModal(picker);
+        }
+        e.stopPropagation();
+      });
     }
-    var sheetOpener = t.closest(".split-section[data-target]");
-    if (sheetOpener) {
-      var target = sheetOpener.getAttribute("data-target");
-      if (target) openModal(target);
-      return;
+  );
+  Array.prototype.forEach.call(
+    document.querySelectorAll("[data-action='open-picker']"),
+    function(el) {
+      el.addEventListener("click", function(e) {
+        openModal("identityPicker");
+        e.stopPropagation();
+      });
     }
-  });
+  );
 
   // Close modals on Escape — common keyboard affordance.
   document.addEventListener("keydown", function(e) {

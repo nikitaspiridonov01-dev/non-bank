@@ -175,7 +175,15 @@ struct FriendDetailView: View {
                 .font(AppFonts.heading)
                 .foregroundColor(AppColors.textPrimary)
                 .multilineTextAlignment(.center)
-            FriendIDCopyLine(id: friend.id)
+            // Only surface the ID for friends who came through a share
+            // round-trip (`isConnected == true`, colour avatar). For
+            // local-only phantom contacts the ID is purely internal —
+            // there's nothing for the user to do with it, and exposing
+            // it just invites confusion about whether copying it does
+            // anything.
+            if friend.isConnected {
+                FriendIDCopyLine(id: friend.id)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, AppSpacing.pageHorizontal)
@@ -284,7 +292,7 @@ struct FriendDetailView: View {
             LazyVStack(spacing: 0, pinnedViews: []) {
                 ForEach(groupedTransactions, id: \.date) { group in
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(formattedSectionDate(group.date))
+                        Text(group.date.formattedSectionDate())
                             .font(AppFonts.sectionHeader)
                             .foregroundColor(AppColors.textSecondary)
                             .tracking(AppFonts.sectionHeaderTracking)
@@ -321,14 +329,4 @@ struct FriendDetailView: View {
         }
     }
 
-    // MARK: - Formatting
-
-    private func formattedSectionDate(_ date: Date) -> String {
-        let calendar = Calendar.current
-        let isCurrentYear = calendar.component(.year, from: date) == calendar.component(.year, from: Date())
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = isCurrentYear ? "EEE, MMM d" : "EEE, MMM d, yyyy"
-        return formatter.string(from: date).uppercased()
-    }
 }

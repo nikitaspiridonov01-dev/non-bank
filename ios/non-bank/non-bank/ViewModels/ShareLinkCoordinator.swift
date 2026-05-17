@@ -86,13 +86,24 @@ final class ShareLinkCoordinator: ObservableObject {
     private(set) var lastReceivedURL: URL?
 
     /// Receipt items pulled from the server-side items store for the
-    /// current share. Populated asynchronously by `handle(url:)` after
-    /// decode succeeds; consumed by `pickedParticipant` to persist
-    /// alongside the imported transaction. `nil` is the legacy
-    /// no-items path (older sender, server outage, expired snapshot)
-    /// — receiver falls back to `.byAmount` rendering, identical to
-    /// pre-rollout behaviour.
+    /// current share. Populated by `pickedParticipant` once it awaits
+    /// `itemsFetchTask`; consumed downstream by
+    /// `persistFetchedReceiptItemsIfAny` to write the items into
+    /// `ReceiptItemStore` alongside the imported transaction. `nil`
+    /// means the server has no items for this share (older sender,
+    /// outage, expired snapshot) — receiver falls back to `.byAmount`.
     @Published private(set) var fetchedReceiptItems: [ReceiptItem]?
+
+    /// Handle for the in-flight fetch-and-decrypt task spawned by
+    /// `fetchEncryptedItems`. `pickedParticipant` awaits this BEFORE
+    /// computing `payloadCameWithItems` so the mapper sees the real
+    /// answer rather than a racy snapshot. Earlier the fetch was
+    /// fire-and-forget — items typically arrived in time, but a fast
+    /// auto-pick (single-participant share, identity match) or a slow
+    /// network could land `pickedParticipant` BEFORE the Task wrote
+    /// back, dropping items on the floor and degrading the import to
+    /// `.byAmount` even when the server had items ready to serve.
+    private var itemsFetchTask: Task<[ReceiptItem]?, Never>?
 
     // MARK: - Init
 
@@ -110,6 +121,10 @@ final class ShareLinkCoordinator: ObservableObject {
         lastReceivedURL = url
         // Fresh share → drop any items cached from a previous link so
         // we don't accidentally re-apply old items to a new transaction.
+        // Cancel any still-in-flight fetch from a prior URL so we don't
+        // race two responses into `fetchedReceiptItems`.
+        itemsFetchTask?.cancel()
+        itemsFetchTask = nil
         fetchedReceiptItems = nil
         do {
             let payload = try SharedTransactionLink.decode(url: url)
@@ -124,13 +139,13 @@ final class ShareLinkCoordinator: ObservableObject {
             // For now: kick the View to call `startRouting` with the
             // current TransactionStore snapshot.
             pendingPayload = payload
-            // Race the server-items fetch with the classify step that
-            // the View will trigger next. Items typically arrive before
-            // the user has finished any picker / confirm dialog, so by
-            // the time `pickedParticipant` runs they're already cached
-            // on `fetchedReceiptItems`. If the network is slow / the
-            // server has nothing, `pickedParticipant` reads `nil` and
-            // imports the transaction as it always has (byAmount).
+            // Kick the server-items fetch in parallel with the View's
+            // classify + pick flow. `pickedParticipant` AWAITS the
+            // resulting task before reading items, so even a fast
+            // auto-pick or a slow network can't slip past — items
+            // either arrive (and the mapper sees them) or the task
+            // returns nil (server has none / decrypt failed), in which
+            // case we fall back to the historical byAmount path.
             fetchEncryptedItems(forURL: url, payload: payload)
         } catch let error as SharedTransactionError {
             #if DEBUG
@@ -145,28 +160,32 @@ final class ShareLinkCoordinator: ObservableObject {
 
     /// Pull encrypted items from the Worker's `/v1/share-items/
     /// {checksum}` store and decrypt with a key derived from the
-    /// URL's payload. Fire-and-forget — any failure leaves
-    /// `fetchedReceiptItems` at `nil` and the import flow runs the
-    /// historical no-items path.
+    /// URL's payload. Stored on `itemsFetchTask` so `pickedParticipant`
+    /// can await the result before deciding whether to import as
+    /// byItems or fall back to byAmount. Any failure (no server row,
+    /// decrypt error, decode error) resolves to `nil` — the caller
+    /// treats `nil` as "no items available" and runs the historical
+    /// fallback path.
     private func fetchEncryptedItems(forURL url: URL, payload: SharedTransactionPayload) {
-        guard let urlPayload = SharedTransactionLink.urlPayloadString(of: url) else { return }
+        guard let urlPayload = SharedTransactionLink.urlPayloadString(of: url) else {
+            itemsFetchTask = nil
+            return
+        }
         let shareID = payload.checksum
-        Task { [weak self] in
+        itemsFetchTask = Task {
             do {
                 guard let ciphertext = try await ShareItemsService.shared.fetch(shareID: shareID) else {
                     #if DEBUG
                     print("[ShareItems] server has no items for share \(shareID.prefix(8)) — using byAmount fallback")
                     #endif
-                    return
+                    return nil
                 }
-                let items = try ShareItemsCrypto.decryptItems(base64: ciphertext, urlPayload: urlPayload)
-                await MainActor.run {
-                    self?.fetchedReceiptItems = items
-                }
+                return try ShareItemsCrypto.decryptItems(base64: ciphertext, urlPayload: urlPayload)
             } catch {
                 #if DEBUG
                 print("[ShareItems] fetch/decrypt failed: \(error.localizedDescription)")
                 #endif
+                return nil
             }
         }
     }
@@ -298,11 +317,22 @@ final class ShareLinkCoordinator: ObservableObject {
         }()
 
         // The share-items channel may have delivered the sender's
-        // item list + per-item assignments. When present, the mapper
-        // should resolve to `.byItems` even if the wire mode is
-        // `.byAmount` (it always is — the encoder coerces) so the
-        // recipient sees the full breakdown the sender prepared.
-        let itemsCameFromShare = !(fetchedReceiptItems?.isEmpty ?? true)
+        // item list + per-item assignments. Await the fetch task
+        // started in `handle(url:)` BEFORE deciding — without the
+        // await, a fast auto-pick (single-participant share, identity
+        // match) or a slow network would slip past the in-flight task
+        // and the mapper would see `payloadCameWithItems = false`
+        // even when the server had items ready. A `nil` result here
+        // is the genuine fallback: server has no items / decrypt
+        // failed / payload couldn't derive a key.
+        let fetchedItems = await itemsFetchTask?.value ?? nil
+        // Mirror onto the published property so
+        // `persistFetchedReceiptItemsIfAny` (which reads
+        // `fetchedReceiptItems`) writes the same list the mapper
+        // resolved against. Single source of truth for the rest of
+        // this flow.
+        fetchedReceiptItems = fetchedItems
+        let itemsCameFromShare = !(fetchedItems?.isEmpty ?? true)
 
         do {
             let resolved = try ReceivedTransactionMapper.map(

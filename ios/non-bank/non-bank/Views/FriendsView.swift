@@ -347,10 +347,6 @@ struct FriendCardView: View {
     @State private var selectedTransaction: Transaction? = nil
     @State private var showTransactionDetail: Bool = false
     @State private var editingTransaction: Transaction? = nil
-    /// Drives the empty-state CTA's create-split sheet (Profile-side
-    /// friend page). Mirrors `FriendDetailView`'s pattern so both
-    /// friend hero pages route into the same prefilled split flow.
-    @State private var showCreateSplit: Bool = false
     /// Drives the "Settle up" CTA's create-transaction sheet. Same
     /// shape as `FriendDetailView.pendingSettleUp` so both friend
     /// hero pages route into the same prefilled settle-up flow.
@@ -408,18 +404,6 @@ struct FriendCardView: View {
                         }
                     }
                 }
-            }
-            // Empty-state CTA target — pre-selects you + this friend
-            // as split participants.
-            .sheet(isPresented: $showCreateSplit) {
-                CreateTransactionModal(
-                    autoOpenSplitFlow: true,
-                    prefilledFriendIDs: [friend.id]
-                )
-                .environmentObject(categoryStore)
-                .environmentObject(transactionStore)
-                .environmentObject(currencyStore)
-                .environmentObject(friendStore)
             }
             // Settle-up CTA target — same prefilled-modal route as
             // the Debts-side `FriendDetailView`.
@@ -489,7 +473,15 @@ struct FriendCardView: View {
                 .font(AppFonts.heading)
                 .foregroundColor(AppColors.textPrimary)
                 .multilineTextAlignment(.center)
-            FriendIDCopyLine(id: friend.id)
+            // Only surface the ID for friends who came through a share
+            // round-trip (`isConnected == true`, colour avatar). For
+            // local-only phantom contacts the ID is purely internal —
+            // there's nothing for the user to do with it, and exposing
+            // it just invites confusion about whether copying it does
+            // anything.
+            if friend.isConnected {
+                FriendIDCopyLine(id: friend.id)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, AppSpacing.pageHorizontal)
@@ -571,22 +563,13 @@ struct FriendCardView: View {
                     .foregroundColor(AppColors.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, AppSpacing.pageHorizontal)
-                Button(action: { showCreateSplit = true }) {
-                    HStack(spacing: AppSpacing.xs) {
-                        Image(systemName: "person.2.fill")
-                            .font(AppFonts.captionEmphasized)
-                        Text("Split with \(friend.name)")
-                            .font(AppFonts.captionEmphasized)
-                    }
-                    .foregroundColor(AppColors.splitAccent)
-                }
             }
             .frame(maxWidth: .infinity)
         } else {
             LazyVStack(spacing: 0, pinnedViews: []) {
                 ForEach(groupedTransactions, id: \.date) { group in
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(formattedSectionDate(group.date))
+                        Text(group.date.formattedSectionDate())
                             .font(AppFonts.sectionHeader)
                             .foregroundColor(AppColors.textSecondary)
                             .tracking(AppFonts.sectionHeaderTracking)
@@ -614,16 +597,6 @@ struct FriendCardView: View {
         }
     }
 
-    // MARK: - Formatting
-
-    private func formattedSectionDate(_ date: Date) -> String {
-        let calendar = Calendar.current
-        let isCurrentYear = calendar.component(.year, from: date) == calendar.component(.year, from: Date())
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = isCurrentYear ? "EEE, MMM d" : "EEE, MMM d, yyyy"
-        return formatter.string(from: date).uppercased()
-    }
 }
 
 // MARK: - Friend ID Copy Line

@@ -141,14 +141,29 @@ actor CloudReceiptParser {
 
     // MARK: - Image preparation
 
-    /// Strip EXIF + downscale + JPEG re-encode. Returns ≤ 3 MB on the first
-    /// try at quality 0.85; on the rare receipt that's still over (very busy
-    /// long restaurant tape with high-res text), retries at 0.6.
+    /// Strip EXIF + downscale + JPEG re-encode. Three-tier quality
+    /// curve so OCR almost always sees a sharp first-pass image:
+    ///   - 0.9 quality, ≤ 4 MB ceiling — the high-quality default;
+    ///     covers nearly every receipt at the 2560 px max long edge.
+    ///   - 0.75 quality, ≤ 4.5 MB ceiling — graceful step-down for
+    ///     unusually busy long supermarket tapes that bust 4 MB at
+    ///     0.9.
+    ///   - 0.55 quality — last resort before the Worker's 5 MB cap
+    ///     would reject the upload outright.
     ///
-    /// In the normal flow `HybridReceiptParser.parse` has already downscaled
-    /// upstream, so the helper call here is idempotent (early-returns) —
-    /// kept for safety in case a future caller invokes `prepareImage`
-    /// directly with a raw 12 MP photo.
+    /// The earlier curve (0.85 / 0.6 / 0.5) was tuned for 2048 px
+    /// and pushed too many receipts into the 0.6 fallback once the
+    /// preprocessing dimension bumped to 2560 — quality 0.6 produces
+    /// visibly softer text edges that hurt small-print OCR near the
+    /// edges of long receipts, which is exactly the case we want
+    /// the high-res path for. The new ceilings preserve the 0.9
+    /// first-pass for the same percentage of receipts at 2560 that
+    /// the old 0.85 curve served at 2048.
+    ///
+    /// In the normal flow `HybridReceiptParser.parse` has already
+    /// downscaled upstream, so the helper call here is idempotent
+    /// (early-returns) — kept for safety in case a future caller
+    /// invokes `prepareImage` directly with a raw 12 MP photo.
     static func prepareImage(_ original: UIImage) throws -> Data {
         let downscaled = ImagePreprocessing.downscaled(original)
         // Re-rendering through UIGraphicsImageRenderer drops EXIF metadata —
@@ -156,15 +171,13 @@ actor CloudReceiptParser {
         // GPS / device tags from the source.
         let baked = bake(downscaled)
 
-        if let data = baked.jpegData(compressionQuality: 0.85), data.count <= 3_500_000 {
+        if let data = baked.jpegData(compressionQuality: 0.9), data.count <= 4_000_000 {
             return data
         }
-        if let data = baked.jpegData(compressionQuality: 0.6), data.count <= 4_500_000 {
+        if let data = baked.jpegData(compressionQuality: 0.75), data.count <= 4_500_000 {
             return data
         }
-        // Last resort — encode whatever we have. The Worker's 5 MB cap will
-        // reject it cleanly if even this is too large.
-        if let data = baked.jpegData(compressionQuality: 0.5) {
+        if let data = baked.jpegData(compressionQuality: 0.55) {
             return data
         }
         throw Error.imageEncodingFailed

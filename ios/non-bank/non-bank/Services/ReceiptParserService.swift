@@ -115,11 +115,38 @@ actor ReceiptParserService {
     - Delivery fee — yes, count it as an item with name "Delivery"
     - Packaging / bag fee — count as an item
 
-    Items to EXTRACT as NEGATIVE line totals (deductions):
+    Weighted / measured items (per kg, per 100g, per litre, per oz/lb, per шт):
+    - The receipt shows BOTH a unit price AND the line total the customer
+      actually paid for the specific weight/volume bought. ALWAYS use the
+      LINE TOTAL as `total`. NEVER use the per-unit price.
+    - Examples:
+        "Бананы 1.234 кг × 150,00 RUB/кг   185,10"
+          → name="Бананы", quantity=1.234, total=185.10  (NOT 150)
+        "Tomatoes 0.500 kg @ €4.00/kg     2,00"
+          → name="Tomatoes", quantity=0.500, total=2.00  (NOT 4.00)
+        "Сыр 100г / 450,00                337,50"
+          → name="Сыр", quantity=0.075, total=337.50     (NOT 450)
+    - If a line genuinely shows only weight + unit price with no printed
+      line total, compute total = quantity × unit-price as a last resort.
+
+    Per-item discounts (one product, not the whole bill) — COLLAPSE:
+    - When a discount line refers to ONE product above it (e.g. "Cheese 500g
+      €8.00" then "-20% promo -€1.60" then "€6.40"), emit ONE item with
+      total = the final discounted price (6.40), and do NOT emit a separate
+      negative discount entry. The original price is not needed.
+    - Strikethrough variant: "Yogurt 4.50" (crossed out) above "Yogurt 3.20"
+      → one item with total = 3.20.
+    - Detection cue: the discount sits directly under a single product line,
+      references that product (or is unlabeled but adjacent), and appears
+      BEFORE the subtotal.
+
+    Bill-wide discounts (apply to the whole cart) — KEEP as separate negative items:
     - Discount, promo, voucher, coupon, loyalty discount, rebate
     - Russian "скидка" / German "Rabatt" / French "remise" / Italian "sconto"
       / Spanish "descuento" / Polish "rabat" / Serbian "popust"
-    - The line total should be NEGATIVE: e.g. price = -2.50, total = -2.50
+    - These appear AFTER the subtotal and reduce the whole bill, not a
+      specific item. Emit as their own item with NEGATIVE total: e.g.
+      price = -2.50, total = -2.50.
     - If the discount is shown as "-2,50" or "−2,50", emit total = -2.50
     - If the discount has a percentage but no absolute amount, skip it
 

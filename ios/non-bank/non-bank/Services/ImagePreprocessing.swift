@@ -13,15 +13,19 @@ import UIKit
 enum ImagePreprocessing {
 
     /// Long-edge ceiling for receipt images across all parser paths.
-    /// 2048 keeps text crisp on every receipt seen so far (typical
-    /// font size at 2048 px lands at 30–40 px tall, well above
-    /// Vision's recognition floor) while cutting raw memory ~10×
-    /// versus a stock 12 MP shot.
+    /// 2560 gives roughly 56 % more pixels than the prior 2048 cap —
+    /// the extra resolution buys back legibility on items printed
+    /// near the top/bottom edges of long supermarket receipts, where
+    /// at 2048 the font landed close to Vision's recognition floor
+    /// and edge items occasionally dropped out of the parse. Memory
+    /// cost stays bounded (still well under a stock 12 MP shot's raw
+    /// pixel count) and every supported cloud vision model accepts
+    /// 2560 along its long edge.
     ///
-    /// Tunable: bump to 2560 / 3072 if Vision starts missing text
-    /// on dense receipts; drop to 1536 only if memory crashes
-    /// reappear on low-end devices.
-    static let receiptMaxDimension: CGFloat = 2048
+    /// Tunable: bump to 3072 only if dense receipts still miss
+    /// items; drop back to 2048 if memory crashes reappear on
+    /// low-end devices.
+    static let receiptMaxDimension: CGFloat = 2560
 
     /// Downscale so the longest edge is at most `maxDimension`.
     /// Idempotent — an already-small image returns unchanged (no

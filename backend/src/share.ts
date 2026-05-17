@@ -513,9 +513,14 @@ ${PAGE_STYLES}
   </svg>
 
   <script>
-    // iOS auto-redirect — first visit only. If the app is installed
-    // Safari hands off and this body never paints; if not, we render
-    // the page and the recipient sees the preview.
+    // iOS auto-redirect — first visit only. Deferred to window.load so
+    // the page paints BEFORE we trigger the custom-scheme navigation.
+    // Firing the redirect inline (during body parsing) left the body
+    // unpainted while iOS Safari showed its "Open in app?" alert, and
+    // if the user picked Cancel they were stranded on a black screen
+    // until manual refresh. With load-deferral the page is fully
+    // rendered first; if the user cancels the alert they fall straight
+    // through to the web preview instead of an empty page.
     (function() {
       try {
         var ua = navigator.userAgent || "";
@@ -523,7 +528,9 @@ ${PAGE_STYLES}
         var key = "nonbank-tried-redirect-${escapeJSString(payload.id)}";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
-        window.location.href = ${JSON.stringify(appLink)};
+        window.addEventListener("load", function() {
+          window.location.href = ${JSON.stringify(appLink)};
+        });
       } catch (e) {}
     })();
   </script>

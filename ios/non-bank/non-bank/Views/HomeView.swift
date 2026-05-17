@@ -436,6 +436,7 @@ struct HomeView: View {
             refreshQuickFilters()
         }
         .onChange(of: vm.activeDateFilter) { _ in refreshQuickFilters() }
+        .trackScreen("HomeView")
     }
 
     // MARK: - Вынесенные UI Компоненты

@@ -1731,6 +1731,7 @@ struct CreateTransactionModal: View {
                 }
             }
         }
+        .trackScreen(editingTransaction == nil ? "CreateTransactionModal" : "EditTransactionModal")
     }
 }
 

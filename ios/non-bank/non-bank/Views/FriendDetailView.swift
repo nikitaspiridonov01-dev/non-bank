@@ -161,6 +161,23 @@ struct FriendDetailView: View {
                 selectedTransaction = nil
             }
         }
+        .trackScreen("FriendDetailView")
+        .onAppear {
+            // friendDetailViewed needs balance state + tx count —
+            // both derivable cheaply from current store snapshot.
+            let txCount = transactionStore.transactions.filter { tx in
+                tx.splitInfo?.friends.contains(where: { $0.friendID == friend.id }) ?? false
+            }.count
+            let balanceState: FriendBalanceState = {
+                guard let d = myDebt else { return .balanced }
+                if abs(d.amount) < 0.005 { return .balanced }
+                return d.amount > 0 ? .lent : .owe
+            }()
+            analytics.track(.friendDetailViewed(
+                balanceState: balanceState,
+                txCountBucket: AnalyticsBuckets.count(txCount)
+            ))
+        }
     }
 
     // MARK: - Profile Header

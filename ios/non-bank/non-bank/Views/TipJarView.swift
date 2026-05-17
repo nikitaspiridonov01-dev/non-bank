@@ -130,6 +130,7 @@ struct TipJarView: View {
                 Text(msg)
             }
         }
+        .trackScreen("TipJarView")
     }
 
     private func purchase(_ tier: TipJarService.Tier) async {

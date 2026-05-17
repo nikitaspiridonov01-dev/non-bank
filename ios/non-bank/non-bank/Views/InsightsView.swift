@@ -227,6 +227,7 @@ struct InsightsView: View {
                 analytics.recordFeatureUseIfFirst(.insights)
             }
         }
+        .trackScreen("InsightsView")
     }
 
     // MARK: - Cards

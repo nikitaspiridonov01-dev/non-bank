@@ -461,6 +461,7 @@ struct FriendCardView: View {
                 }
             }
         }
+        .trackScreen("FriendsView")
     }
 
     // MARK: - Profile Header

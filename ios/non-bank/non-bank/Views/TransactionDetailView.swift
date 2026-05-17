@@ -945,6 +945,7 @@ struct TransactionDetailView: View {
                     }
             }
         }
+        .trackScreen("TransactionDetailView")
     }
 
     /// Delete-alert copy that switches based on whether this is a reminder

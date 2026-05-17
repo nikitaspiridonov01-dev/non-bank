@@ -209,6 +209,7 @@ struct DebtSummaryView: View {
                 selectedTransaction = nil
             }
         }
+        .trackScreen("DebtSummaryView")
     }
 
     // MARK: - Header

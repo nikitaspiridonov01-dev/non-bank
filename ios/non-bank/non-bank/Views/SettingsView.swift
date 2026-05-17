@@ -384,6 +384,7 @@ struct SettingsView: View {
                 Text("Set up a Mail account in iOS Settings, or send your message to \(SupportMail.address).")
             }
         }
+        .trackScreen("SettingsView")
     }
 }
 

@@ -484,8 +484,9 @@ final class ReceivedTransactionMapperTests: XCTestCase {
     }
 
     func testMap_updatePath_itemsLocal_byItemsPayload_keepsByItems() throws {
-        // Legacy sharer (pre-encoder-coercion) emitted "byItems" on
-        // the wire. Receiver has items locally — keep `.byItems`.
+        // Sharer emitted "byItems" on the wire (the default post-fix
+        // encoder behaviour). Receiver has items locally — keep
+        // `.byItems`.
         let me = SharedTransactionPayload.Participant(
             id: "rec-X1", n: "Me", sh: 50, pa: 0
         )
@@ -687,6 +688,28 @@ final class ReceivedTransactionMapperTests: XCTestCase {
             payloadCameWithItems: false
         )
         XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .byAmount)
+    }
+
+    func testMap_byItemsWireFormat_withItemsChannel_resolvesToByItems() throws {
+        // Post-encoder-fix: the sender's wire `sm` for byItems
+        // transactions is now `"byItems"` (was coerced to `"byAmount"`
+        // before Phase 10 / 10.1 landed). On first import, with the
+        // share-items channel delivering items in the same hop, the
+        // receiver should resolve to `.byItems` — both axes of the
+        // decision matrix point that way (wire says byItems, items
+        // are available).
+        let me = SharedTransactionPayload.Participant(
+            id: "rec-X1", n: "Me", sh: 50, pa: 0
+        )
+        let payload = makePayload(participants: [me], sm: "byItems")
+        let resolved = try ReceivedTransactionMapper.map(
+            payload: payload,
+            receiverParticipantIndex: 0,
+            existingFriends: [], existingCategories: [foodCategory],
+            nextTransactionID: 1,
+            payloadCameWithItems: true
+        )
+        XCTAssertEqual(resolved.transaction.splitInfo?.splitMode, .byItems)
     }
 
     // MARK: - rewriteItemAssignees

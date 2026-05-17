@@ -265,15 +265,15 @@ final class SharedTransactionLinkTests: XCTestCase {
         XCTAssertEqual(payload.sm, "byAmount")
     }
 
-    func testEncode_byItemsCoercedToByAmountOnWire() throws {
-        // Receipt items aren't transported in the share URL, so a
-        // `.byItems` sender's wire `sm` must surface as `"byAmount"`.
-        // Without this coercion the receiver opens edit in `.byItems`
-        // mode with no items to point at, and `ShareDistributionView`
-        // labels the row "By items in receipt" when there's nothing
-        // local to back it. Matches the documented contract on
-        // `SplitMode.byAmount` ("the wire format used when sharing a
-        // `byItems` transaction").
+    func testEncode_byItemsPreservedOnWire() throws {
+        // Post-Phase-10 contract: `.byItems` rides through the wire as
+        // `"byItems"`. Receipt items themselves travel via the encrypted
+        // share-items channel; the receiver mapper reconstructs the
+        // full byItems display when those items decrypt successfully
+        // (and degrades to `.byAmount` on its own side when they
+        // don't). The web preview also needs the literal `"byItems"`
+        // here to label the chip "By items in receipt" instead of the
+        // misleading "By amount" it used to read before this fix.
         let friend = Friend(id: "blue-otter-A2BC", name: "Alex")
         let split = SplitInfo(
             totalAmount: 100, paidByMe: 100, myShare: 50, lentAmount: 50,
@@ -292,8 +292,8 @@ final class SharedTransactionLinkTests: XCTestCase {
             friends: [friend], category: sampleCategory
         )
         let payload = try SharedTransactionLink.decode(url: url)
-        XCTAssertEqual(payload.sm, "byAmount",
-            "byItems is a local-only display mode; wire format must coerce to byAmount")
+        XCTAssertEqual(payload.sm, "byItems",
+            "byItems must survive encoding so the web chip and the receiver mapper can read it back")
     }
 
     func testRoundTrip_cyrillicAndEmojiInTextFields() throws {

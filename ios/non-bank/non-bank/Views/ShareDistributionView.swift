@@ -10,9 +10,13 @@ struct ShareDistributionView: View {
     /// Used to look up the transaction's `ReceiptItem`s so we can show
     /// a per-participant "N items" affordance under each row. Items
     /// live in `ReceiptItemStore` (keyed by transaction id), separate
-    /// from `splitInfo`. Sharing strips the items list and converts
-    /// the recipient's copy to `byAmount`, so on the recipient side
-    /// the lookup returns empty — naturally hides the affordance.
+    /// from `splitInfo`. On the recipient side, items now ride along
+    /// via the encrypted share-items channel (Phase 10) and the
+    /// receiver mapper persists them locally before the detail view
+    /// renders — so the lookup returns the same per-row affordance
+    /// the sender sees. If the channel didn't deliver (legacy sender,
+    /// expired snapshot, decrypt failure) the store is empty here and
+    /// the affordance hides naturally.
     let transactionID: Int
 
     @EnvironmentObject var friendStore: FriendStore

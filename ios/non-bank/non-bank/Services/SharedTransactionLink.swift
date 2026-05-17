@@ -176,17 +176,17 @@ enum SharedTransactionLink {
         let resolvedInterval = repeatInterval ?? transaction.repeatInterval
         let recurring = resolvedInterval.flatMap(SharedRecurring.init(from:))
 
-        // `.byItems` is a local-only display mode: the receipt items
-        // it visualises live in the sharer's `ReceiptItemStore` and
-        // aren't transported in the URL payload. Coerce to `.byAmount`
-        // on the wire so the receiver — who has no items locally —
-        // sees the computed per-person shares with a label that
-        // matches reality. This brings the encoder in line with the
-        // documented contract on `SplitMode.byAmount` and with the
-        // comment on `ShareDistributionView.transactionID` that says
-        // "Sharing strips the items list and converts the recipient's
-        // copy to `byAmount`".
-        let wireSplitMode: SplitMode? = (split.splitMode == .byItems) ? .byAmount : split.splitMode
+        // Pass `splitMode` through verbatim — including `.byItems`. The
+        // receipt items now ride along via the encrypted share-items
+        // channel (Phase 10), and the receiver mapper reconstructs the
+        // full byItems display from those items (Phase 10.1). The web
+        // preview also keys its split-mode label off this field, so
+        // sending `"byItems"` is what makes "By items in receipt" show
+        // in the preview chip. If items happen to be missing on the
+        // receiver side (channel expired, sender on a pre-Phase-10
+        // build, decrypt failure), `ReceivedTransactionMapper` degrades
+        // `.byItems` back to `.byAmount` on its side — see the no-items
+        // branch in that file.
 
         let payload = SharedTransactionPayload(
             v: currentSchemaVersion,
@@ -201,7 +201,7 @@ enum SharedTransactionLink {
             t: transaction.title,
             cn: category.title,
             ce: category.emoji,
-            sm: wireSplitMode?.rawValue,
+            sm: split.splitMode?.rawValue,
             sn: sharerName,
             f: participants,
             r: recurring

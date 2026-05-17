@@ -20,10 +20,12 @@ enum SplitMode: String, Codable, CaseIterable, Identifiable {
     /// than one product line.
     case byItems = "byItems"
 
-    /// Each participant manually enters their share of the total. Also
-    /// the wire format used when sharing a `byItems` transaction — the
-    /// recipient sees the computed per-person amounts but not the items
-    /// themselves (items aren't serialized into the share URL).
+    /// Each participant manually enters their share of the total.
+    /// Also the fallback wire mode the receiver lands on when the
+    /// sender shared a `.byItems` transaction but the items themselves
+    /// couldn't make it through (pre-Phase-10 sender, expired
+    /// share-items D1 row, decrypt failure) — see
+    /// `ReceivedTransactionMapper`'s "no items locally" branch.
     case byAmount = "byAmount"
 
     /// One person pays the full amount, one other person owes it back —

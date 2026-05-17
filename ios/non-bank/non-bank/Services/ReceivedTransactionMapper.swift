@@ -238,11 +238,11 @@ enum ReceivedTransactionMapper {
         //
         // Items locally (`receiverHasLocalItemsForTx == true`):
         //   • `.byItems` / `.byAmount` / nil payload → keep `.byItems`.
-        //     The friend's wire format is always `.byAmount` for
-        //     items-backed shares (the encoder coerces) — preserving
-        //     `.byItems` keeps the receiver's "Split by receipt"
-        //     display consistent with their items, even after a
-        //     no-op or scalar-only update from the friend.
+        //     The sender's wire mode is normally `.byItems` post-Phase-10
+        //     (we trust their stated mode); we also promote `.byAmount`
+        //     and `nil` to `.byItems` when items are present so a no-op
+        //     or scalar-only update from a friend doesn't accidentally
+        //     wipe the receiver's "Split by receipt" display.
         //   • `.evenly` / `.settleUp` payload → adopt that mode. The
         //     friend made an explicit choice to redistribute; the
         //     receiver's local item-based view yields to the friend's

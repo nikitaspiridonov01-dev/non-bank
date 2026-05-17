@@ -506,7 +506,7 @@ struct HomeView: View {
         } else if !homeTxIsEmpty {
             LazyVStack(spacing: 0, pinnedViews: []) {
                 ForEach(grouped, id: \.date) { group in
-                    let label = vm.formattedSectionDate(group.date)
+                    let label = group.date.formattedSectionDate()
                     VStack(alignment: .leading, spacing: 0) {
                         Text(label)
                             .font(AppFonts.sectionHeader)

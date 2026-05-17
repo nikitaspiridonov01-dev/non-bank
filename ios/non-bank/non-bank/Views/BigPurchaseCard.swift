@@ -188,7 +188,7 @@ struct BigPurchaseCard: View {
     private func narrative(for p: CategoryAnalyticsService.BigPurchase) -> some View {
         let amount = formatAmount(p.transaction.amount, currency: p.transaction.currency)
         let mult = formatMultiplier(p.multiplier)
-        let date = formatDate(p.transaction.date)
+        let date = p.transaction.date.formattedMonthDay()
 
         return (
             Text("This purchase, on ")
@@ -240,13 +240,4 @@ struct BigPurchaseCard: View {
         return String(format: "%.1f", mult)
     }
 
-    private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US")
-        let calendar = Calendar.current
-        let yearOfDate = calendar.component(.year, from: date)
-        let currentYear = calendar.component(.year, from: Date())
-        formatter.dateFormat = (yearOfDate == currentYear) ? "MMM d" : "MMM d, yyyy"
-        return formatter.string(from: date)
-    }
 }

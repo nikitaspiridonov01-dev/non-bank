@@ -31,12 +31,6 @@ struct DebtSummaryView: View {
     }
     /// Active group filter. `nil` = all groups.
     @State private var selectedGroup: String? = nil
-    /// Drives the empty-state CTA's create-split sheet. Stays local to
-    /// this view (instead of routing through `NavigationRouter`) because
-    /// the router's modal is presented at MainTabView level — stacking a
-    /// second sheet from this presented sheet is more reliable when the
-    /// trigger lives in the same hierarchy.
-    @State private var showCreateSplit: Bool = false
 
     private var convert: (Double, String, String) -> Double {
         { [currencyStore] amount, from, to in
@@ -151,19 +145,6 @@ struct DebtSummaryView: View {
                     // navigation page.
                     deletedFriendPlaceholder
                 }
-            }
-            // Empty-state CTA target: opens the create flow pre-set
-            // to the Split tab. No friends prefilled — the modal's
-            // existing "frequent friends" auto-fill / picker logic
-            // decides how to seed participants from there.
-            .sheet(isPresented: $showCreateSplit) {
-                CreateTransactionModal(
-                    autoOpenSplitFlow: true
-                )
-                .environmentObject(categoryStore)
-                .environmentObject(transactionStore)
-                .environmentObject(currencyStore)
-                .environmentObject(friendStore)
             }
             .sheet(isPresented: Binding(
                 get: { showTransactionDetail && selectedTransaction != nil },
@@ -421,19 +402,6 @@ struct DebtSummaryView: View {
                     .foregroundColor(AppColors.textTertiary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, AppSpacing.xxxl)
-                // Lavender CTA to match the Split sub-palette this view
-                // lives in — `splitAccent` instead of the default warm
-                // accent so the link reads as part of the Split surface
-                // rather than borrowing the home-screen tint.
-                Button(action: { showCreateSplit = true }) {
-                    HStack(spacing: AppSpacing.xs) {
-                        Image(systemName: "person.2.fill")
-                            .font(AppFonts.captionEmphasized)
-                        Text("Split with a friend")
-                            .font(AppFonts.captionEmphasized)
-                    }
-                    .foregroundColor(AppColors.splitAccent)
-                }
             }
             .frame(maxWidth: .infinity)
             .position(x: geo.size.width / 2, y: geo.size.height / 2)
@@ -453,7 +421,7 @@ struct DebtSummaryView: View {
             LazyVStack(spacing: 0, pinnedViews: []) {
                 ForEach(groupedTransactions, id: \.date) { group in
                     VStack(alignment: .leading, spacing: 0) {
-                        SectionHeader(text: formattedSectionDate(group.date), color: AppColors.textSecondary)
+                        SectionHeader(text: group.date.formattedSectionDate(), color: AppColors.textSecondary)
                             .padding(.horizontal, AppSpacing.pageHorizontal)
                             .padding(.top, AppSpacing.xxl)
                             .padding(.bottom, AppSpacing.sm)
@@ -489,16 +457,6 @@ struct DebtSummaryView: View {
         }
     }
 
-    // MARK: - Formatting
-
-    private func formattedSectionDate(_ date: Date) -> String {
-        let calendar = Calendar.current
-        let isCurrentYear = calendar.component(.year, from: date) == calendar.component(.year, from: Date())
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = isCurrentYear ? "EEE, MMM d" : "EEE, MMM d, yyyy"
-        return formatter.string(from: date).uppercased()
-    }
 }
 
 // MARK: - Navigation Route

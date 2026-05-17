@@ -103,7 +103,7 @@ final class HomeViewModelTests: XCTestCase {
         comps.month = 3
         comps.day = 15
         let date = cal.date(from: comps)!
-        let result = sut.formattedSectionDate(date)
+        let result = date.formattedSectionDate()
         // Should NOT contain the year
         XCTAssertFalse(result.contains(String(thisYear)))
         XCTAssertTrue(result.contains("MAR"))
@@ -115,7 +115,7 @@ final class HomeViewModelTests: XCTestCase {
         comps.month = 6
         comps.day = 10
         let date = Calendar.current.date(from: comps)!
-        let result = sut.formattedSectionDate(date)
+        let result = date.formattedSectionDate()
         XCTAssertTrue(result.contains("2020"))
     }
 }

@@ -76,6 +76,22 @@ extension Date {
         return formatter.string(from: self)
     }
 
+    /// Escape hatch for one-off formats not covered by the named
+    /// helpers above. Routes through the same `cachedFormatter` so
+    /// callers avoid the `~1ms` allocation cost of a fresh
+    /// `DateFormatter()`. Prefer a named helper when the same format
+    /// appears in three or more places — promote it up here.
+    func formatted(format: String, locale: Locale = Locale(identifier: "en_US")) -> String {
+        let formatter = Self.cachedFormatter
+        formatter.locale = locale
+        formatter.dateFormat = format
+        let result = formatter.string(from: self)
+        // Reset locale so the next caller doesn't inherit a non-en_US
+        // override — same defensive reset `formattedSectionDate` does.
+        formatter.locale = Locale(identifier: "en_US")
+        return result
+    }
+
     // MARK: - Cached formatter
 
     /// Single shared `DateFormatter` instance. `DateFormatter` is

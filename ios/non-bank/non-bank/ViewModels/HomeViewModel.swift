@@ -220,17 +220,6 @@ class HomeViewModel: ObservableObject {
         ReminderService.reminders(from: allTransactions).count
     }
 
-    // MARK: - Formatting
-
-    func formattedSectionDate(_ date: Date) -> String {
-        let calendar = Calendar.current
-        let isCurrentYear = calendar.component(.year, from: date) == calendar.component(.year, from: Date())
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = isCurrentYear ? "EEE, MMM d" : "EEE, MMM d, yyyy"
-        return formatter.string(from: date).uppercased()
-    }
-
     // MARK: - Async filter pipeline impl
 
     /// Trigger an off-main filter + group pass and publish the result

@@ -607,16 +607,10 @@ struct SpendingCalendarCard: View {
     }
 
     private func monthLabel(for date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US")
-        formatter.dateFormat = "LLLL yyyy"
-        return formatter.string(from: date)
+        date.formattedMonthWithYear()
     }
 
     private func monthDayLabel(for date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US")
-        formatter.dateFormat = "MMMM d"
-        return formatter.string(from: date)
+        date.formatted(format: "MMMM d")
     }
 }

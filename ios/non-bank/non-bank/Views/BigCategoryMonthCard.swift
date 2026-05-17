@@ -51,7 +51,7 @@ struct BigCategoryMonthCard: View {
     private func narrative(for e: CategoryAnalyticsService.BigCategoryMonth) -> some View {
         let amount = formatAmount(e.total)
         let mult = formatMultiplier(e.multiplier)
-        let monthName = formatMonth(e.date)
+        let monthName = e.date.formattedMonth()
 
         return (
             Text("In ")
@@ -97,17 +97,4 @@ struct BigCategoryMonthCard: View {
         return String(format: "%.1f", mult)
     }
 
-    /// Year omitted when the extreme month is in the current
-    /// calendar year — keeps the narrative compact ("In March")
-    /// for the typical case while staying unambiguous when an
-    /// older outlier surfaces ("In November 2024").
-    private func formatMonth(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US")
-        let calendar = Calendar.current
-        let yearOfDate = calendar.component(.year, from: date)
-        let currentYear = calendar.component(.year, from: Date())
-        formatter.dateFormat = (yearOfDate == currentYear) ? "LLLL" : "LLLL yyyy"
-        return formatter.string(from: date)
-    }
 }

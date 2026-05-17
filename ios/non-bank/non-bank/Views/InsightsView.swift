@@ -45,17 +45,25 @@ struct InsightsView: View {
     /// when the sheet opens.
     @State private var period: InsightsPeriod = .previousFullMonth()
 
+    /// Per-screen cache for `AnalyticsContext`. Body reads
+    /// `analyticsContext` ~14 times per pass (one per card-visibility
+    /// gate); the cache skips the `normaliseForInsights` walk + emoji
+    /// map allocation when none of the upstream inputs changed. See
+    /// `AnalyticsContextCache` for the invalidation criteria.
+    @StateObject private var contextCache = AnalyticsContextCache()
+
     // MARK: - Derived data
 
-    /// Built once per render. Carries the home-transactions feed,
-    /// the active target currency + FX closure, and the live
-    /// category→emoji map. Cards receive this and avoid repeating
-    /// the 4-arg analytics call boilerplate.
+    /// Memoised — the heavy work of building the context (filtering
+    /// `homeTransactions`, normalising split amounts, building the
+    /// `[title: emoji]` map) runs only when transactions / categories
+    /// / target currency / the include-potential toggle change.
     private var analyticsContext: AnalyticsContext {
-        .from(
+        contextCache.context(
             transactionStore: transactionStore,
             currencyStore: currencyStore,
-            categoryStore: categoryStore
+            categoryStore: categoryStore,
+            insightsSettings: insightsSettings
         )
     }
 

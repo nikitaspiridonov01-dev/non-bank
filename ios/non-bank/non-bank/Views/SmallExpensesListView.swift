@@ -51,19 +51,6 @@ struct SmallExpensesListView: View {
         TransactionFilterService.groupByDay(purchases)
     }
 
-    /// `WED, APR 29` (or `WED, APR 29, 2024` cross-year). Same
-    /// formatting `HomeViewModel.formattedSectionDate` produces, so
-    /// the headers read identically to the home feed.
-    private func sectionLabel(for date: Date) -> String {
-        let calendar = Calendar.current
-        let isCurrentYear = calendar.component(.year, from: date)
-            == calendar.component(.year, from: Date())
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = isCurrentYear ? "EEE, MMM d" : "EEE, MMM d, yyyy"
-        return formatter.string(from: date).uppercased()
-    }
-
     /// Live emoji from `CategoryStore` so a renamed/recoloured
     /// category shows its current glyph. Falls back to the
     /// transaction's stored emoji for categories that no longer
@@ -78,7 +65,7 @@ struct SmallExpensesListView: View {
                 LazyVStack(spacing: 0, pinnedViews: []) {
                     ForEach(grouped, id: \.date) { group in
                         VStack(alignment: .leading, spacing: 0) {
-                            Text(sectionLabel(for: group.date))
+                            Text(group.date.formattedSectionDate())
                                 .font(AppFonts.sectionHeader)
                                 .foregroundColor(AppColors.textSecondary)
                                 .tracking(AppFonts.sectionHeaderTracking)

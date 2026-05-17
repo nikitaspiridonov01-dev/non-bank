@@ -4,8 +4,26 @@ import Combine
 
 @MainActor
 class CategoryStore: ObservableObject {
-    @Published private(set) var categories: [Category] = []
-    
+    /// Derived `[title: Category]` index, rebuilt whenever `categories`
+    /// changes. Lookups (`validatedCategory(for:)`, `findCategory
+    /// (byTitle:)`) hit this map in O(1) instead of scanning the
+    /// `categories` array linearly — important because the home feed,
+    /// detail card, debt list, and analytics cards all resolve
+    /// categories per-transaction at render time. With ~20 categories
+    /// and 500 transactions on a busy account, the unindexed lookup
+    /// was 10k string compares per render pass.
+    @Published private(set) var categories: [Category] = [] {
+        didSet { categoriesByTitle = Self.buildTitleIndex(categories) }
+    }
+    private(set) var categoriesByTitle: [String: Category] = [:]
+
+    private static func buildTitleIndex(_ categories: [Category]) -> [String: Category] {
+        var map: [String: Category] = [:]
+        map.reserveCapacity(categories.count)
+        for cat in categories { map[cat.title] = cat }
+        return map
+    }
+
     static let uncategorized = Category(emoji: "🙂", title: "General")
 
     static let defaultCategories: [Category] = [
@@ -125,17 +143,20 @@ class CategoryStore: ObservableObject {
     }
 
     func findCategory(byTitle title: String) -> Category? {
-        categories.first { $0.title == title }
+        categoriesByTitle[title]
     }
 
     func findCategory(byEmoji emoji: String) -> Category? {
+        // Emoji lookups are infrequent (manual add-category flow only),
+        // so no separate index — linear scan over ~20 categories is
+        // cheap and avoids carrying a second map for one cold path.
         categories.first { $0.emoji == emoji }
     }
-    
+
     /// Returns the validated category for a transaction.
     /// If the category title doesn't exist in settings, returns "General".
     func validatedCategory(for title: String) -> Category {
-        categories.first(where: { $0.title == title }) ?? Self.uncategorized
+        categoriesByTitle[title] ?? Self.uncategorized
     }
 
     /// Reserved set: "General" + the 18 seeded defaults. Matched by

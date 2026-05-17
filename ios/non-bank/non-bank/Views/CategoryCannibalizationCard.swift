@@ -57,7 +57,7 @@ struct CategoryCannibalizationCard: View {
     /// Y"), so the earlier up/down green/red colour split was
     /// retired in favour of a single warm emphasis colour.
     private func narrative(for e: CategoryAnalyticsService.CategoryCannibalization) -> some View {
-        let monthName = formatMonth(e.monthDate)
+        let monthName = e.monthDate.formattedMonth()
         let upAmount = formatAmount(e.deltaUp)
         let downAmount = formatAmount(e.deltaDown)
 
@@ -117,17 +117,4 @@ struct CategoryCannibalizationCard: View {
         return "\(int)\(dec) \(context.targetCurrency)".replacingOccurrences(of: " ", with: "\u{00A0}")
     }
 
-    /// Year omitted when the event month is in the current
-    /// calendar year — keeps the narrative compact for typical
-    /// recent events ("In April"), unambiguous when an older
-    /// substitution surfaces ("In November 2024").
-    private func formatMonth(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US")
-        let calendar = Calendar.current
-        let yearOfDate = calendar.component(.year, from: date)
-        let currentYear = calendar.component(.year, from: Date())
-        formatter.dateFormat = (yearOfDate == currentYear) ? "LLLL" : "LLLL yyyy"
-        return formatter.string(from: date)
-    }
 }

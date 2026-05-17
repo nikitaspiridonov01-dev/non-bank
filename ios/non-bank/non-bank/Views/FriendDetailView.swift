@@ -8,6 +8,7 @@ struct FriendDetailView: View {
     @EnvironmentObject var friendStore: FriendStore
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var receiptItemStore: ReceiptItemStore
+    @Environment(\.analytics) private var analytics
 
     @State private var selectedTransaction: Transaction? = nil
     @State private var showTransactionDetail: Bool = false
@@ -121,6 +122,7 @@ struct FriendDetailView: View {
                         editingTransaction = tx
                     },
                     onDelete: {
+                        analytics.trackTransactionDeleted(tx, hadReceiptItems: !receiptItemStore.items(forTransactionID: tx.id).isEmpty)
                         transactionStore.delete(id: tx.id)
                         showTransactionDetail = false
                         selectedTransaction = nil
@@ -315,6 +317,7 @@ struct FriendDetailView: View {
                                         showTransactionDetail = true
                                     },
                                     onDelete: {
+                                        analytics.trackTransactionDeleted(tx, hadReceiptItems: !receiptItemStore.items(forTransactionID: tx.id).isEmpty)
                                         transactionStore.delete(id: tx.id)
                                     }
                                 )

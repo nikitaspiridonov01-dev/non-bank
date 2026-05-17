@@ -219,4 +219,172 @@ extension AnalyticsServiceProtocol {
         ActivationStore.markFired("first_share")
         track(.activationFirstShareLinkSent)
     }
+
+    /// Convenience: fire `transactionDeleted` with the standard
+    /// derived params. `hadReceiptItems` is the caller's
+    /// responsibility because most delete-sites don't carry a
+    /// `ReceiptItemStore` reference — pass `false` when unknown
+    /// and the field reads as a conservative under-count rather
+    /// than a wrong-direction overcount.
+    func trackTransactionDeleted(_ tx: Transaction, hadReceiptItems: Bool) {
+        let ageDays = Calendar.current
+            .dateComponents([.day], from: tx.date, to: Date()).day ?? 0
+        track(.transactionDeleted(
+            hadSplit: tx.isSplit,
+            hadReceiptItems: hadReceiptItems,
+            ageDaysBucket: AnalyticsBuckets.dateRangeDays(max(0, ageDays))
+        ))
+    }
+
+    /// Single funnel-correct call-site for `receiptScanSucceeded`.
+    /// Encapsulates the new per-event params (provider, language,
+    /// store-category, image size, attempted-providers) so the call-
+    /// sites in `CreateTransactionModal` / `TransactionModeFlowSheet`
+    /// stay one-liners and the mapping logic doesn't drift between
+    /// them.
+    ///
+    /// `attemptedProvidersCount` defaults to 1 because the backend
+    /// doesn't currently surface the router fall-through depth in its
+    /// response. Bump this when the protocol grows that field.
+    func trackReceiptScanSucceeded(
+        _ result: HybridReceiptParser.Result,
+        imageBytes: Int,
+        durationSeconds: Double
+    ) {
+        let confidence: ScanConfidence = {
+            switch result.confidence {
+            case .high:   return .high
+            case .medium: return .medium
+            case .low:    return .low
+            }
+        }()
+        let (parser, provider): (ScanParser, ScanProvider) = {
+            switch result.source {
+            case .cloud(let providerName):
+                return (.cloud, ScanProvider(rawValue: providerName) ?? .unknown)
+            case .ocrFallback:
+                return (.ocrFallback, .ocrFallback)
+            }
+        }()
+        // Derived counts — discount lines have negative totals, fee
+        // and tax keywords are in the item names. Coarse but useful
+        // for "what does a typical receipt look like" segmentation.
+        let items = result.parsedReceipt.items
+        let discounts = items.filter { ($0.total ?? 0) < 0 }.count
+        let fees = items.filter { item in
+            let n = item.name.lowercased()
+            return n.contains("fee") || n.contains("service") || n.contains("delivery")
+        }.count
+        let taxes = items.filter { item in
+            let n = item.name.lowercased()
+            return n.contains("tax") || n.contains("vat") || n.contains("tip")
+        }.count
+
+        track(.receiptScanSucceeded(
+            itemsCountBucket: AnalyticsBuckets.count(items.count),
+            confidence: confidence,
+            parser: parser,
+            durationSecondsBucket: AnalyticsBuckets.seconds(durationSeconds),
+            discountCount: discounts,
+            feeCount: fees,
+            taxCount: taxes,
+            provider: provider,
+            attemptedProvidersCount: 1,
+            imageSizeKbBucket: AnalyticsBuckets.imageSizeKb(imageBytes),
+            language: .other,
+            storeCategory: StoreCategory.from(suggestedCategory: result.parsedReceipt.suggestedCategory)
+        ))
+    }
+}
+
+extension AnalyticsServiceProtocol {
+    /// Generic error sink. Use when a dedicated event (e.g.
+    /// `receiptScanFailed`) isn't appropriate. Keeps `code` stable
+    /// across runs by hashing the error description when there's
+    /// no domain-specific code available — raw `localizedDescription`
+    /// values drift with system locale and explode dashboard
+    /// cardinality.
+    func trackError(
+        domain: String,
+        error: Error,
+        recoverable: Bool,
+        contextScreen: String? = nil
+    ) {
+        let nsError = error as NSError
+        let code: String = {
+            if !nsError.domain.isEmpty && nsError.code != 0 {
+                return "\(nsError.domain).\(nsError.code)"
+            }
+            // Fingerprint the message into a low-cardinality token.
+            let hash = abs(nsError.localizedDescription.hashValue) % 100000
+            return "msg_" + String(hash, radix: 36)
+        }()
+        track(.errorOccurred(
+            domain: domain,
+            code: code,
+            recoverable: recoverable,
+            contextScreen: contextScreen
+        ))
+    }
+}
+
+// MARK: - User-property refresh
+//
+// Called at app boot and after key actions to keep the cohort-level
+// properties on Firebase up to date. Cheap — each `setUserProperty`
+// is a single in-memory write on the Firebase SDK side, no network
+// hop per call.
+
+extension AnalyticsServiceProtocol {
+    /// Re-derives every user-property the dashboards segment on from
+    /// the current store state. Safe to call repeatedly — Firebase
+    /// no-ops re-sets with the same value.
+    ///
+    /// Call sites:
+    ///   - `non_bankApp.onChange(scenePhase)` when foregrounded —
+    ///     covers daily refresh + the day-bucket roll-over.
+    ///   - After any large state change that flips a bucket (first
+    ///     transaction created, friend added, etc.) — caller can
+    ///     fire it as a follow-up to the specific event.
+    func refreshUserProperties(
+        transactionStore: TransactionStore,
+        friendStore: FriendStore,
+        currencyStore: CurrencyStore
+    ) {
+        let txCount = transactionStore.transactions.count
+        let splitCount = transactionStore.transactions.filter { $0.isSplit }.count
+        let friendCount = friendStore.friends.count
+        setUserProperty(.txCountBucket(AnalyticsBuckets.count(txCount)))
+        setUserProperty(.splitCountBucket(AnalyticsBuckets.count(splitCount)))
+        setUserProperty(.friendCountBucket(AnalyticsBuckets.friendCount(friendCount)))
+        setUserProperty(.defaultCurrency(currencyStore.selectedCurrency))
+        let days = InstallClock.minutesSinceInstall() / (60 * 24)
+        setUserProperty(.daysSinceInstallBucket(AnalyticsBuckets.daysSinceInstall(days)))
+        setUserProperty(.hasICloudSync(SyncManager.isCloudKitEnabled))
+    }
+}
+
+extension StoreCategory {
+    /// Maps the parser's `suggestedCategory` (a user-category name like
+    /// "Groceries") to the coarse `StoreCategory` analytics bucket.
+    /// Anything outside the known set collapses to `.other` —
+    /// never echo the raw name (PII risk for user-renamed categories).
+    static func from(suggestedCategory: String?) -> StoreCategory {
+        guard let raw = suggestedCategory?.lowercased() else { return .other }
+        switch raw {
+        case "groceries":     return .groceries
+        case "food":          return .restaurant
+        case "entertainment": return .entertainment
+        case "transport":     return .transport
+        case "fashion":       return .fashion
+        case "electronics":   return .electronics
+        case "healthcare":    return .healthcare
+        case "utilities", "rent", "subscription":
+            return .utilities
+        case "maintenance", "hotel", "pet", "family", "education", "gift":
+            return .services
+        default:
+            return .other
+        }
+    }
 }

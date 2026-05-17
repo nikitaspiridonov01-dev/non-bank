@@ -305,6 +305,7 @@ struct CreateTransactionModal: View {
     }
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.analytics) private var analytics
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var currencyStore: CurrencyStore
@@ -506,6 +507,7 @@ struct CreateTransactionModal: View {
                     await receiptItemStore.saveItems(pendingItems, for: tx.id)
                 }
             }
+            trackTransactionSaved(tx, isEdit: true)
             dismiss()
             return
         }
@@ -514,6 +516,7 @@ struct CreateTransactionModal: View {
             // Fast path — no scan, keep the original fire-and-forget add to
             // preserve existing behavior on devices without camera/AI.
             transactionStore.add(tx)
+            trackTransactionSaved(tx, isEdit: false)
             dismiss()
             promptShareIfSplit(tx)
             return
@@ -528,9 +531,73 @@ struct CreateTransactionModal: View {
                 await receiptItemStore.saveItems(pendingItems, for: newID)
             }
             await MainActor.run {
+                trackTransactionSaved(tx, isEdit: false)
                 dismiss()
                 promptShareIfSplit(tx)
             }
+        }
+    }
+
+    /// Fire `transaction_created` (or `transaction_edited`) with all
+    /// the per-event params derived from the just-committed tx. Also
+    /// records first-use + activation milestones so a single helper
+    /// covers every save path. Called from `commitTransaction` after
+    /// the store write but before dismiss; safe to call multiple
+    /// times within one commit because the activation/feature gates
+    /// are idempotent (UserDefaults-backed).
+    private func trackTransactionSaved(_ tx: Transaction, isEdit: Bool) {
+        if isEdit {
+            // Field-level diffing would need the original tx; we
+            // don't track which specific field changed in this pass.
+            // `.other` keeps the funnel intact until a richer diff
+            // lands.
+            analytics.track(.transactionEdited(fieldChanged: .other))
+            return
+        }
+
+        let source: TransactionCreationSource = {
+            if settleUpPrefill != nil { return .settleUp }
+            if !vm.pendingReceiptItems.isEmpty || autoOpenScanFlow { return .scan }
+            return .manual
+        }()
+
+        // For scan-derived creates: was the final category the
+        // parser's suggestion? `parsedReceiptResult` carries the
+        // last successful parse for this modal mount, including the
+        // suggestedCategory. `nil` on non-scan creates.
+        let categoryAutoMatched: Bool? = {
+            guard source == .scan,
+                  let suggested = parsedReceiptResult?.parsedReceipt.suggestedCategory else {
+                return nil
+            }
+            return tx.category.compare(suggested, options: .caseInsensitive) == .orderedSame
+        }()
+
+        analytics.track(.transactionCreated(
+            type: tx.isIncome ? .income : .expense,
+            hasSplit: tx.isSplit,
+            hasReceiptItems: !vm.pendingReceiptItems.isEmpty,
+            isRecurring: tx.repeatInterval != nil,
+            currency: tx.currency,
+            amountBucket: AnalyticsBuckets.amount(tx.amount),
+            category: tx.category,
+            source: source,
+            hasDescription: !(tx.description?.isEmpty ?? true),
+            wasCategoryAutoMatched: categoryAutoMatched
+        ))
+
+        // Feature-first-use + activation milestones — both helpers
+        // gate on UserDefaults so calling on every save is fine.
+        analytics.recordActivationFirstTransactionIfNeeded()
+        if source == .manual {
+            analytics.recordFeatureUseIfFirst(.transactionCreateManual)
+        }
+        if tx.isSplit {
+            analytics.recordFeatureUseIfFirst(.split)
+            analytics.recordActivationFirstSplitIfNeeded()
+        }
+        if tx.repeatInterval != nil {
+            analytics.recordFeatureUseIfFirst(.recurring)
         }
     }
 
@@ -553,6 +620,10 @@ struct CreateTransactionModal: View {
               let existing = editingTransaction else { return }
         transactionStore.delete(id: existing.id)
         transactionStore.add(replacement)
+        // Replace-reminder is a recurring-edit special case: the user
+        // intentionally rotates the row. Track as an edit so reminder
+        // churn doesn't inflate the "creates" funnel.
+        trackTransactionSaved(replacement, isEdit: true)
         pendingRecurringReplacement = nil
         showRecurringReplaceAlert = false
         dismiss()
@@ -652,6 +723,13 @@ struct CreateTransactionModal: View {
     private func handleScannedImage(_ image: UIImage) {
         pickedReceiptImage = image
         isParsingReceipt = true
+        // Analytics: scan_started fires up front so we can compute
+        // started-vs-succeeded conversion funnels. `source` is unknown
+        // here (camera vs library is upstream); assume `.camera` —
+        // the user just took or picked a photo and we can't tell
+        // which path without plumbing it through.
+        analytics.track(.receiptScanStarted(source: .camera, numPhotos: 1))
+        analytics.recordFeatureUseIfFirst(.receiptScan)
         // Build the cloud config on the main actor *before* hopping into the
         // task — `categoryStore` and `AISettings` are main-actor-bound, and
         // the resulting `Sendable` value is then safe to capture by the actor.
@@ -666,13 +744,23 @@ struct CreateTransactionModal: View {
                     cloudConfig: cloudConfig
                 )
                 await Self.enforceMinimumLoaderTime(startedAt: scanStartedAt)
+                // Image bytes computed off the main thread so the
+                // size-bucket reflects what the cloud actually
+                // uploaded. ~0.9 quality matches `CloudReceiptParser
+                // .prepareImage` first-pass.
+                let imageBytes = image.jpegData(compressionQuality: 0.9)?.count ?? 0
+                let durationSec = Date().timeIntervalSince(scanStartedAt)
                 await MainActor.run {
                     isParsingReceipt = false
                     if result.parsedReceipt.items.isEmpty {
+                        analytics.track(.receiptScanFailed(errorType: .noItems, source: .camera))
+                        analytics.recordActivationFirstReceiptScannedIfNeeded(outcome: .fail)
                         receiptParseError = "No items detected. Try a clearer photo or enter the amount manually."
                         showReceiptParseError = true
                         pickedReceiptImage = nil
                     } else {
+                        analytics.trackReceiptScanSucceeded(result, imageBytes: imageBytes, durationSeconds: durationSec)
+                        analytics.recordActivationFirstReceiptScannedIfNeeded(outcome: .success)
                         parsedReceiptResult = result
                         acceptedReceiptTotal = result.parsedReceipt.totalAmount
                         reviewPayload = ReceiptReviewPayload(result: result, image: image)
@@ -682,6 +770,16 @@ struct CreateTransactionModal: View {
                 await Self.enforceMinimumLoaderTime(startedAt: scanStartedAt)
                 await MainActor.run {
                     isParsingReceipt = false
+                    // Bucket the error by class — network vs timeout
+                    // vs parse-error need different fixes.
+                    let kind: ScanErrorType = {
+                        let desc = error.localizedDescription.lowercased()
+                        if desc.contains("timed out") || desc.contains("timeout") { return .timeout }
+                        if desc.contains("network") || desc.contains("connection") || desc.contains("offline") { return .network }
+                        return .parseError
+                    }()
+                    analytics.track(.receiptScanFailed(errorType: kind, source: .camera))
+                    analytics.recordActivationFirstReceiptScannedIfNeeded(outcome: .fail)
                     receiptParseError = error.localizedDescription
                     showReceiptParseError = true
                     pickedReceiptImage = nil
@@ -1507,6 +1605,32 @@ struct CreateTransactionModal: View {
                     let newItemsSum = items.reduce(0.0) { $0 + $1.lineTotal }
                     let itemsActuallyChanged = oldItemsCount != items.count
                         || abs(oldItemsSum - newItemsSum) > 0.001
+
+                    // Analytics: per-field edit breakdown against the
+                    // ORIGINAL parser output (not the latest committed
+                    // state), so re-opens that don't actually touch
+                    // anything report zero edits. Matching by index
+                    // is approximate — adds/deletes shift positions —
+                    // but it's the cheapest defensible heuristic for
+                    // "did the user have to correct text vs digits."
+                    if itemsActuallyChanged {
+                        let original = parsedReceiptResult?.parsedReceipt.items ?? []
+                        let added = max(0, items.count - original.count)
+                        let deleted = max(0, original.count - items.count)
+                        let pairs = zip(original, items)
+                        let nameEdits = pairs.filter { $0.0.name != $0.1.name }.count
+                        let priceEdits = pairs.filter { abs(($0.0.total ?? 0) - ($0.1.total ?? 0)) > 0.001 }.count
+                        let quantityEdits = pairs.filter { ($0.0.quantity ?? 0) != ($0.1.quantity ?? 0) }.count
+                        let totalChanged = abs((parsedReceiptResult?.parsedReceipt.totalAmount ?? newItemsSum) - total) > 0.001
+                        analytics.track(.receiptItemsEditedInReview(
+                            itemsAdded: added,
+                            itemsDeleted: deleted,
+                            nameEdits: nameEdits,
+                            priceEdits: priceEdits,
+                            quantityEdits: quantityEdits,
+                            totalChanged: totalChanged
+                        ))
+                    }
 
                     vm.applyReceiptItems(
                         items,

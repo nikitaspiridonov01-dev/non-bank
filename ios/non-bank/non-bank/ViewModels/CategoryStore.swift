@@ -50,6 +50,12 @@ class CategoryStore: ObservableObject {
     private let repo: CategoryRepositoryProtocol
     weak var syncManager: SyncManager?
 
+    /// DI-resolved analytics. Lazy so the store can be constructed
+    /// before `non_bankApp.init` finishes registering services.
+    @MainActor
+    private lazy var analytics: AnalyticsServiceProtocol =
+        DIContainer.shared.resolve(AnalyticsServiceProtocol.self)
+
     nonisolated init(defaults: [Category] = [], repo: CategoryRepositoryProtocol = CategoryRepository()) {
         self.repo = repo
         Task {
@@ -116,6 +122,8 @@ class CategoryStore: ObservableObject {
             await repo.insert(category)
             await syncManager?.pushCategory(category, action: .save)
         }
+        analytics.track(.categoryCreated)
+        analytics.recordFeatureUseIfFirst(.categories)
     }
 
     func removeCategory(_ category: Category) {
@@ -130,16 +138,29 @@ class CategoryStore: ObservableObject {
             await repo.delete(id: category.id)
             await syncManager?.pushCategory(category, action: .delete)
         }
+        // `hadTransactions` would require a TX cross-reference here;
+        // default to `false` until a richer integration lands.
+        analytics.track(.categoryDeleted(hadTransactions: false))
     }
 
     func updateCategory(_ category: Category) {
+        var titleChanged = false
+        var emojiChanged = false
         if let idx = categories.firstIndex(where: { $0.id == category.id }) {
+            let old = categories[idx]
+            titleChanged = old.title != category.title
+            emojiChanged = old.emoji != category.emoji
             categories[idx] = category
             Task {
                 await repo.update(category)
                 await syncManager?.pushCategory(category, action: .save)
             }
         }
+        analytics.track(.categoryEdited(
+            titleChanged: titleChanged,
+            emojiChanged: emojiChanged,
+            affectedTxCountBucket: AnalyticsBuckets.count(0)
+        ))
     }
 
     func findCategory(byTitle title: String) -> Category? {

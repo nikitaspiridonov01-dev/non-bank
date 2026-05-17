@@ -33,6 +33,7 @@ struct InsightsView: View {
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var currencyStore: CurrencyStore
+    @Environment(\.analytics) private var analytics
 
     /// Observed so the cards rebuild when the user changes the
     /// "include potential expenses" switch in Settings — the
@@ -220,6 +221,10 @@ struct InsightsView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
+            }
+            .onAppear {
+                analytics.track(.insightsViewed(tab: .overview))
+                analytics.recordFeatureUseIfFirst(.insights)
             }
         }
     }

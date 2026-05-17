@@ -110,6 +110,18 @@ struct non_bankApp: App {
                         shareLinkCoordinator.handle(url: url)
                     }
                 }
+                .task {
+                    // Refresh cohort user-properties on cold launch.
+                    // Cheap (~6 in-memory sets); keeps daily buckets
+                    // accurate without needing a foreground-resume
+                    // observer.
+                    let analytics = DIContainer.shared.resolve(AnalyticsServiceProtocol.self)
+                    analytics.refreshUserProperties(
+                        transactionStore: transactionStore,
+                        friendStore: friendStore,
+                        currencyStore: currencyStore
+                    )
+                }
         }
     }
 }

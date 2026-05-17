@@ -105,6 +105,13 @@ final class ShareLinkCoordinator: ObservableObject {
     /// `.byAmount` even when the server had items ready to serve.
     private var itemsFetchTask: Task<[ReceiptItem]?, Never>?
 
+    /// Resolved on first access from the DI container. Lazy so the
+    /// coordinator (constructed in `non_bankApp.init`) doesn't need
+    /// analytics in its own init signature — DI registration
+    /// completes before any share link could possibly arrive.
+    private lazy var analytics: AnalyticsServiceProtocol =
+        DIContainer.shared.resolve(AnalyticsServiceProtocol.self)
+
     // MARK: - Init
 
     init() {}
@@ -207,6 +214,20 @@ final class ShareLinkCoordinator: ObservableObject {
             existingTransactions: existingTransactions,
             checksumOf: { $0.payloadChecksum }
         )
+        // Analytics: `share_link_opened` with the classifier's
+        // verdict so we can see receive-side breakdown (auto-create
+        // = identity matched, picker = ambiguous, update = re-share,
+        // identical = no-op, malformed = bad payload).
+        let outcome: ShareLinkOpenOutcome = {
+            switch intent {
+            case .createAuto:    return .autoCreate
+            case .createWithPicker: return .pickerShown
+            case .identical:     return .identical
+            case .updatePrompt:  return .updatePrompt
+            case .malformed:     return .malformed
+            }
+        }()
+        analytics.track(.shareLinkOpened(outcome: outcome))
         switch intent {
         case .createAuto(let idx):
             // Receiver is unambiguous (single-participant or matched by
@@ -373,6 +394,11 @@ final class ShareLinkCoordinator: ObservableObject {
                     receiverParticipantIndex: index,
                     store: receiptItemStore
                 )
+                analytics.track(.shareLinkImported(
+                    hadPicker: false,
+                    numParticipantsBucket: AnalyticsBuckets.friendCount(payload.f.count),
+                    isUpdate: true
+                ))
                 routingState = .completed(syncID: resolved.transaction.syncID, kind: .updated)
             } else {
                 // `addAndReturnID` already awaits the load; we use
@@ -386,6 +412,16 @@ final class ShareLinkCoordinator: ObservableObject {
                         receiverParticipantIndex: index,
                         store: receiptItemStore
                     )
+                    // `hadPicker` distinguishes "system auto-picked
+                    // identity for us" from "user manually chose
+                    // themselves from the participant list" — the
+                    // first case is the friction-free happy path,
+                    // the second exposes the friend-graph match-rate.
+                    analytics.track(.shareLinkImported(
+                        hadPicker: !payload.f.isEmpty && payload.f.count > 1,
+                        numParticipantsBucket: AnalyticsBuckets.friendCount(payload.f.count),
+                        isUpdate: false
+                    ))
                     routingState = .completed(syncID: resolved.transaction.syncID, kind: .createdNew)
                 } else {
                     // `addAndReturnID` looks up by syncID after the load

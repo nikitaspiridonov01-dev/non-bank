@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DebtSummaryView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.analytics) private var analytics
     @Environment(\.colorContext) private var colorContext
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var currencyStore: CurrencyStore
@@ -163,6 +164,7 @@ struct DebtSummaryView: View {
                             editingTransaction = tx
                         },
                         onDelete: {
+                            analytics.trackTransactionDeleted(tx, hadReceiptItems: !receiptItemStore.items(forTransactionID: tx.id).isEmpty)
                             transactionStore.delete(id: tx.id)
                             showTransactionDetail = false
                             selectedTransaction = nil

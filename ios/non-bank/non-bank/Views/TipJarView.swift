@@ -13,6 +13,17 @@ import StoreKit
 struct TipJarView: View {
     @StateObject private var service = TipJarService.shared
     @State private var purchasingTier: TipJarService.Tier?
+    @Environment(\.analytics) private var analytics
+    /// Wall-clock anchor for `tip_jar_dismissed` dwell — measures
+    /// time-spent on the tip jar without converting, which is the
+    /// strongest "considered but didn't pay" signal.
+    @State private var openedAt: Date = Date()
+    /// True once the user scrolled or tapped a tier, distinguishes
+    /// "opened and bounced instantly" from "looked then walked
+    /// away." Set on the first tier-tap; scroll detection is
+    /// expensive in SwiftUI so we lean on tap as the proxy.
+    @State private var didEngageWithTier: Bool = false
+    @State private var lastTappedTier: TipJarService.Tier?
 
     var body: some View {
         List {
@@ -81,6 +92,31 @@ struct TipJarView: View {
         .task {
             await service.loadProducts()
         }
+        .onAppear {
+            openedAt = Date()
+            // `tipJarViewed` carries the entry source. The setting
+            // sub-route is the only path today; expand the enum
+            // when other entry points appear (post-split prompt,
+            // share-link follow-up, etc.).
+            analytics.track(.tipJarViewed(source: .settings))
+            analytics.recordFeatureUseIfFirst(.tipJar)
+        }
+        .onDisappear {
+            // Fire dismissal only if the user didn't actually
+            // purchase — `lastPurchasedTier` going non-nil means
+            // they bought and `tipPurchaseSucceeded` already fired
+            // from the service. The dismissed event tracks the
+            // funnel-leak side: "saw the jar, didn't pay."
+            if service.lastPurchasedTier == nil {
+                let dwell = Date().timeIntervalSince(openedAt)
+                analytics.track(.tipJarDismissed(
+                    source: .settings,
+                    dwellSecondsBucket: AnalyticsBuckets.dwellSeconds(dwell),
+                    scrolledTiers: didEngageWithTier,
+                    tappedTier: lastTappedTier.map { mapTier($0) }
+                ))
+            }
+        }
         .alert(
             "Something went wrong",
             isPresented: Binding(
@@ -98,8 +134,60 @@ struct TipJarView: View {
 
     private func purchase(_ tier: TipJarService.Tier) async {
         purchasingTier = tier
+        didEngageWithTier = true
+        lastTappedTier = tier
+        let analyticsTier = mapTier(tier)
+        analytics.track(.tipPurchaseStarted(tier: analyticsTier))
         await service.purchase(tier)
         purchasingTier = nil
+        // Inspect the resulting service state to fire the right
+        // outcome event. The service drives `purchaseState`, which
+        // the alert reads above — we mirror its post-purchase
+        // value here so the funnel events line up with the alert
+        // semantics.
+        switch service.purchaseState {
+        case .succeeded:
+            analytics.track(.tipPurchaseSucceeded(
+                tier: analyticsTier,
+                priceBucket: priceBucket(for: tier)
+            ))
+        case .cancelled:
+            analytics.track(.tipPurchaseCancelled(tier: analyticsTier))
+        case .failed(let msg):
+            // Short stable code over the localised message — drop
+            // the message into a fingerprint hash to keep the
+            // dashboard's `error_code` cardinality low while
+            // staying distinguishable.
+            let code = "msg_\(String(msg.hashValue % 100000, radix: 36))"
+            analytics.track(.tipPurchaseFailed(tier: analyticsTier, errorCode: code))
+        case .idle, .purchasing:
+            break
+        }
+    }
+
+    /// Maps the `TipJarService.Tier` enum to the analytics-side
+    /// `TipTier` enum so the taxonomy file doesn't have to import
+    /// StoreKit.
+    private func mapTier(_ tier: TipJarService.Tier) -> TipTier {
+        switch tier {
+        case .coffee:     return .coffee
+        case .croissant:  return .croissant
+        case .pizza:      return .pizza
+        case .chefsTable: return .chefstable
+        }
+    }
+
+    /// Coarse price bucket — we don't want a per-locale exact USD
+    /// amount in the event, just "cheap / med / high / premium" so
+    /// the dashboard can group by intent rather than localised
+    /// display price.
+    private func priceBucket(for tier: TipJarService.Tier) -> String {
+        switch tier {
+        case .coffee:     return "<2"
+        case .croissant:  return "2-5"
+        case .pizza:      return "5-7"
+        case .chefsTable: return "7+"
+        }
     }
 }
 

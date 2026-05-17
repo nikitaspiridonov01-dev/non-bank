@@ -4,6 +4,7 @@ import UIKit
 struct SettingsView: View {
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var categoryStore: CategoryStore
+    @Environment(\.analytics) private var analytics
     @State private var showCurrencyRatesSheet = false
     @State private var showCategoriesSheet = false
 
@@ -311,6 +312,7 @@ struct SettingsView: View {
                 router.hideTabBar = false
                 Task { await syncManager.checkAvailability() }
                 displayName = UserProfileService.displayName() ?? ""
+                analytics.track(.settingsViewed)
             }
             .sheet(isPresented: $showProfileNameSheet) {
                 ProfileNameSheet(

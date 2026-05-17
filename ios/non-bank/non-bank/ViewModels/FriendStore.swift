@@ -16,6 +16,15 @@ class FriendStore: ObservableObject {
     /// references to the stores).
     weak var syncManager: SyncManager?
 
+    /// Resolved on first access from the DI container. Lazy so the
+    /// store can be constructed before DI registration (the
+    /// `nonisolated init` runs in `@StateObject` property
+    /// initialisation, which can fire before `non_bankApp.init`
+    /// finishes `registerDefaults`).
+    @MainActor
+    private lazy var analytics: AnalyticsServiceProtocol =
+        DIContainer.shared.resolve(AnalyticsServiceProtocol.self)
+
     nonisolated init(repo: FriendRepositoryProtocol = FriendRepository()) {
         self.repo = repo
         Task { await load() }
@@ -32,6 +41,14 @@ class FriendStore: ObservableObject {
         await repo.insert(friend)
         await load()
         await syncManager?.pushFriend(friend, action: .save)
+        // Analytics: `friend.isConnected` distinguishes share-link-
+        // upgraded friends (came through a real round-trip) from
+        // manual ones. The activation event also fires only once
+        // per install.
+        let source: FriendCreationSource = friend.isConnected ? .shareLink : .manual
+        analytics.track(.friendCreated(source: source))
+        analytics.recordFeatureUseIfFirst(.friends)
+        analytics.recordActivationFirstFriendIfNeeded(source: source)
     }
 
     func update(_ friend: Friend) {
@@ -43,6 +60,7 @@ class FriendStore: ObservableObject {
             await repo.update(friend)
             await syncManager?.pushFriend(friend, action: .save)
         }
+        analytics.track(.friendEdited)
     }
 
     func remove(_ friend: Friend) {
@@ -51,6 +69,14 @@ class FriendStore: ObservableObject {
             await repo.delete(id: friend.id)
             await syncManager?.pushFriend(friend, action: .delete)
         }
+        // `hadSplits` is true if the friend appears on any split-
+        // mode transaction — useful for "are users deleting active
+        // friends or just contact-list cleanup."
+        let hadSplits = false  // we don't have a TX cross-reference
+                               // here without a wider rewrite; default
+                               // conservatively until the integration
+                               // surfaces a real signal.
+        analytics.track(.friendDeleted(hadSplits: hadSplits))
     }
 
     func friend(byID id: String) -> Friend? {

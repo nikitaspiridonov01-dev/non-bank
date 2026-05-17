@@ -20,6 +20,7 @@ enum TransactionDetailSource {
 struct TransactionDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorContext) private var colorContext
+    @Environment(\.analytics) private var analytics
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var friendStore: FriendStore
@@ -766,6 +767,7 @@ struct TransactionDetailView: View {
                         editingFromLinkedReminder = reminder
                     },
                     onDelete: {
+                        analytics.trackTransactionDeleted(reminder, hadReceiptItems: false)
                         transactionStore.delete(id: reminder.id)
                         linkedReminder = nil
                     },
@@ -924,6 +926,23 @@ struct TransactionDetailView: View {
                 // text is the only path by which the receiver sees
                 // them at all.
                 ShareActivityView(items: [shareItemSource(for: url)])
+                    .onAppear {
+                        // Track share-link generation. The share
+                        // sheet appearing is the closest proxy to
+                        // "user actually sent" we have on the iOS
+                        // side — UIActivityViewController doesn't
+                        // notify which activity was picked unless
+                        // we wire `completionWithItemsHandler`,
+                        // which is non-trivial through the
+                        // SwiftUI representable. Counting at
+                        // open-time is the standard pattern.
+                        analytics.track(.shareLinkSent(
+                            source: .detail,
+                            shareType: transaction.isSplit ? .split : .singleTx
+                        ))
+                        analytics.recordFeatureUseIfFirst(.shareLink)
+                        analytics.recordActivationFirstShareSentIfNeeded()
+                    }
             }
         }
     }
@@ -1038,6 +1057,7 @@ struct TransactionDetailView: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         let next = !transaction.excludedFromInsights
         transactionStore.update(transaction.settingExcludedFromInsights(next))
+        analytics.track(next ? .transactionExcludedFromInsights : .transactionIncludedInInsights)
     }
 
     // MARK: - Split Section

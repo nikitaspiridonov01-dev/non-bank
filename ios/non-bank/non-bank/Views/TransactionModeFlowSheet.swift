@@ -38,6 +38,7 @@ struct TransactionModeFlowSheet: View {
     let onDone: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.analytics) private var analytics
     @EnvironmentObject var friendStore: FriendStore
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var categoryStore: CategoryStore
@@ -1363,6 +1364,32 @@ struct TransactionModeFlowSheet: View {
         //     when the user backed out before completing).
         didCompleteFlow = true
         vm.persistLastUsedSplitMode()
+        // Analytics: `split_completed` whenever the user lands on a
+        // real split mode (anything except Pay-for-yourself, which
+        // dismisses to a self-paid expense). The numFriends count
+        // covers `.selectedFriends` plus optionally `me` so the
+        // bucket matches what the user actually sees on the chip.
+        if let mode = vm.splitMode {
+            let label: SplitModeLabel = {
+                switch mode {
+                case .evenly:   return .evenly
+                case .byItems:  return .byItems
+                case .byAmount: return .byAmount
+                case .settleUp: return .settleUp
+                }
+            }()
+            let num = vm.selectedFriends.count + (vm.youIncludedInSplit ? 1 : 0)
+            analytics.track(.splitCompleted(
+                mode: label,
+                numFriends: num,
+                hasReceipt: !vm.pendingReceiptItems.isEmpty,
+                totalAmountBucket: AnalyticsBuckets.amount(vm.parsedAmount),
+                currency: currency
+            ))
+            if mode == .settleUp {
+                analytics.track(.settleUpCompleted)
+            }
+        }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         onDone()
         dismiss()
@@ -1472,6 +1499,28 @@ struct TransactionModeFlowSheet: View {
         // the flag so the next walk uses normal vm.payers-driven
         // defaults instead of forcing the fresh-You preselect.
         multiPayerCalcInFlight = false
+        // Analytics: track which mode the user picked at the root.
+        // `splitCompleted` fires later in `completeFlow()` once the
+        // walk finishes; this captures the intent at decision time
+        // so we can see picker → completion drop-off per mode.
+        if case .splitMode(let m) = mode {
+            let label: SplitModeLabel = {
+                switch m {
+                case .evenly:   return .evenly
+                case .byItems:  return .byItems
+                case .byAmount: return .byAmount
+                case .settleUp: return .settleUp
+                }
+            }()
+            analytics.track(.splitModeSelected(
+                mode: label,
+                numFriends: vm.selectedFriends.count + (vm.youIncludedInSplit ? 1 : 0)
+            ))
+            if m == .settleUp {
+                analytics.track(.settleUpInitiated(source: .manual))
+                analytics.recordFeatureUseIfFirst(.settleUp)
+            }
+        }
         switch mode {
         case .payForYourself:
             // Wipe every shred of split state — TZ explicitly: "все

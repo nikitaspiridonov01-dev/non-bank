@@ -338,6 +338,7 @@ struct FriendCardView: View {
     var onEdit: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.analytics) private var analytics
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var currencyStore: CurrencyStore
     @EnvironmentObject var friendStore: FriendStore
@@ -432,6 +433,7 @@ struct FriendCardView: View {
                         transaction: tx,
                         onEdit: { editingTransaction = tx },
                         onDelete: {
+                            analytics.trackTransactionDeleted(tx, hadReceiptItems: !receiptItemStore.items(forTransactionID: tx.id).isEmpty)
                             transactionStore.delete(id: tx.id)
                             showTransactionDetail = false
                             selectedTransaction = nil
@@ -587,6 +589,7 @@ struct FriendCardView: View {
                                     showTransactionDetail = true
                                 },
                                 onDelete: {
+                                    analytics.trackTransactionDeleted(tx, hadReceiptItems: !receiptItemStore.items(forTransactionID: tx.id).isEmpty)
                                     transactionStore.delete(id: tx.id)
                                 }
                             )

@@ -245,6 +245,34 @@ export async function handleFetchShareItems(
   return jsonResponse({ payload: row.payload }, 200);
 }
 
+/// Cron-triggered sweep that drops rows whose `expires_at` is in the
+/// past. The read path already filters expired rows from responses
+/// (see `handleFetchShareItems`), so correctness doesn't depend on
+/// this — its job is purely to bound D1 storage growth. Without it
+/// the table accumulates ciphertext indefinitely (5 GB Free-tier cap
+/// would still take years to hit at our scale, but housekeeping is
+/// cheap and worth doing).
+///
+/// Uses the `idx_share_items_expires` B-tree from the migration so
+/// the WHERE scan is index-driven, not a table scan.
+export async function sweepExpiredShareItems(
+  env: ShareItemsEnv,
+  nowSec: number,
+): Promise<{ deleted: number }> {
+  const result = await env.DB
+    .prepare(`DELETE FROM share_items WHERE expires_at <= ?1`)
+    .bind(nowSec)
+    .run();
+  // D1's `meta.changes` is the post-delete row count. Safe to access
+  // even on zero-row sweeps (returns 0).
+  const deleted = result.meta?.changes ?? 0;
+  logEvent(env, "info", {
+    route: "cron sweepExpiredShareItems",
+    deleted,
+  });
+  return { deleted };
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,

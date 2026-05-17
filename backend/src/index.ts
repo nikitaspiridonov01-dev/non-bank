@@ -4,6 +4,7 @@ import { handleSharePage } from "./share.ts";
 import {
   handleUploadShareItems,
   handleFetchShareItems,
+  sweepExpiredShareItems,
 } from "./share_items.ts";
 import { handleTestProviders } from "./test_providers.ts";
 import { logEvent } from "./log.ts";
@@ -164,6 +165,39 @@ export default {
       });
       return withCors(jsonResponse({ error: "internal_error" }, 500), cors);
     }
+  },
+
+  /// Cron Trigger entry point. Bound in `wrangler.toml` under
+  /// `[triggers] crons`. Currently fires once a day to drop expired
+  /// `share_items` rows so the table stays bounded — the read path
+  /// already filters expired rows from responses, so users see a
+  /// 30-day TTL either way; this sweep just reclaims the storage.
+  /// Wrap each task in its own try/catch so one failure can't skip
+  /// the others when more cron jobs land here.
+  async scheduled(
+    _event: ScheduledEvent,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    const nowSec = Math.floor(Date.now() / 1000);
+    ctx.waitUntil((async () => {
+      try {
+        const { deleted } = await sweepExpiredShareItems(env, nowSec);
+        if (deleted > 0) {
+          logEvent(env, "info", {
+            route: "cron",
+            task: "sweepExpiredShareItems",
+            deleted,
+          });
+        }
+      } catch (e) {
+        logEvent(env, "error", {
+          route: "cron",
+          task: "sweepExpiredShareItems",
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    })());
   },
 };
 

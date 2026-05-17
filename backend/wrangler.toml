@@ -46,6 +46,15 @@ LOG_LEVEL = "info"
 #   [limits]
 #   cpu_ms = 30000
 
+# Cron Triggers — daily housekeeping. The `scheduled` handler in
+# `src/index.ts` is the entry point; it currently runs
+# `sweepExpiredShareItems` (drops rows whose 30-day TTL elapsed).
+# 04:10 UTC = off-peak for the EU/RU user base and far from the
+# midnight quota-reset boundary in `quota.ts`, so the sweep can't
+# race a per-IP counter rollover.
+[triggers]
+crons = ["10 4 * * *"]
+
 # -----------------------------------------------------------------------------
 # Staging environment
 # -----------------------------------------------------------------------------
@@ -105,3 +114,9 @@ PER_DEVICE_DAILY_LIMIT = "60"
 PER_IP_DAILY_LIMIT = "200"
 PER_IP_SHARE_PER_MINUTE_LIMIT = "60"
 LOG_LEVEL = "info"
+
+# Mirrors prod's daily share-items sweep so staging exercises the
+# same code path on every push — keeps the cron handler from rotting
+# between deploys.
+[env.staging.triggers]
+crons = ["10 4 * * *"]

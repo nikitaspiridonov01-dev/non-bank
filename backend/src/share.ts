@@ -428,9 +428,20 @@ function renderSharePage(
   // `rawValue`s — we translate here so the web preview reads as
   // English instead of camelCase identifiers ("settleUp" → "Settle
   // up"). The 2-person 50/50 case keeps the iOS-side "50/50" label.
+  //
+  // `byAmount` + items present: promoted to "By items in receipt".
+  // Mirrors `ReceivedTransactionMapper`'s items-aware resolution on
+  // iOS — when the share-items channel delivers items, the receiver
+  // upgrades the displayed mode to byItems regardless of the wire
+  // sm. Without this the web preview would mislabel pre-fix shares
+  // (the iOS encoder used to coerce byItems → byAmount on the wire
+  // before Phase 10, so any link generated before that change has
+  // sm=byAmount stored permanently in the URL even though the
+  // sender meant byItems and items did make it through).
   const splitModeLabel = (() => {
     const sm = payload.sm;
     if (sm === "50/50" && sharerCount === 2) return "50/50";
+    if (sm === "byAmount" && hasItems) return "By items in receipt";
     switch (sm) {
       case "50/50":     return "Evenly";
       case "byAmount":  return "By amount";

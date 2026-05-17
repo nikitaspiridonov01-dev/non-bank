@@ -422,6 +422,20 @@ function renderSharePage(
     .filter((p) => p.share > 0.005)
     .map((p) => sheetParticipantRow(p, p.share, payload.c))
     .join("\n");
+
+  // Identity picker rows (rendered inside the modal). Only friends —
+  // the sharer is who SENT the link, can't also be the recipient.
+  const identityPickerRowsHTML = friendsOnly
+    .map((p) => identityPickerRowHTML(p))
+    .join("\n");
+
+  // Receipt items — pulled from the encrypted `share_items` table
+  // and decrypted server-side (see `fetchAndDecryptItems`). Render
+  // only when there's something to show; the formula block above
+  // already covers the "no items" case.
+  const itemsCount = items?.length ?? 0;
+  const hasItems = itemsCount > 0;
+
   // Map the wire mode string to the user-facing label iOS shows.
   // Source of truth: `SplitMode.displayLabel` on the iOS side
   // (`Models/SplitMode.swift`). Wire values are the raw enum
@@ -437,7 +451,8 @@ function renderSharePage(
   // (the iOS encoder used to coerce byItems → byAmount on the wire
   // before Phase 10, so any link generated before that change has
   // sm=byAmount stored permanently in the URL even though the
-  // sender meant byItems and items did make it through).
+  // sender meant byItems and items did make it through). Must run
+  // after `hasItems` is computed.
   const splitModeLabel = (() => {
     const sm = payload.sm;
     if (sm === "50/50" && sharerCount === 2) return "50/50";
@@ -450,19 +465,6 @@ function renderSharePage(
       default:          return "Evenly";
     }
   })();
-
-  // Identity picker rows (rendered inside the modal). Only friends —
-  // the sharer is who SENT the link, can't also be the recipient.
-  const identityPickerRowsHTML = friendsOnly
-    .map((p) => identityPickerRowHTML(p))
-    .join("\n");
-
-  // Receipt items — pulled from the encrypted `share_items` table
-  // and decrypted server-side (see `fetchAndDecryptItems`). Render
-  // only when there's something to show; the formula block above
-  // already covers the "no items" case.
-  const itemsCount = items?.length ?? 0;
-  const hasItems = itemsCount > 0;
   const itemsRowsHTML = hasItems
     ? items!
         .map((it) => receiptItemRowHTML(it, payload.c))

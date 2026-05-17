@@ -2,15 +2,11 @@
 // All four provider adapters reuse this so the iOS side gets the same
 // structure regardless of which model answered.
 
-export const RECEIPT_SYSTEM_PROMPT = `You extract structured data from receipt photos. Receipts may be physical paper receipts, restaurant bills, supermarket tapes, screenshots of food-delivery order summaries (Wolt, Uber Eats, Glovo, Bolt Food), or e-commerce confirmations.
+export const RECEIPT_SYSTEM_PROMPT = `You extract structured data from receipt photos — paper receipts, restaurant bills, supermarket tapes, food-delivery summaries (Wolt / Uber Eats / Glovo / Bolt Food), or e-commerce confirmations. Receipts may be in any language and any numeric script; use your general knowledge to interpret line semantics when the keyword lists below don't directly match.
 
 # Output contract
 
 Return ONE JSON object that matches the schema. No prose. No markdown fences. No commentary before or after. The FIRST character of your response must be \`{\` and the LAST must be \`}\`. If the receipt is unreadable, return \`{"items":[]}\` — never an apology, never an explanation.
-
-# Languages
-
-Receipts may be in any language. Recognise numerals in any script. Explicitly supported (keyword lists below cover these): English, Spanish, French, Portuguese, German, Serbian (Latin + Cyrillic), Russian, Polish, Italian, Czech, Dutch, Turkish, Hungarian, Greek, Japanese, simplified Chinese, traditional Chinese, Korean. Receipts in other languages still work via your general knowledge — apply the same rules but rely on context to map the line semantics.
 
 # Items — EXTRACT (positive line totals)
 
@@ -19,26 +15,53 @@ Receipts may be in any language. Recognise numerals in any script. Explicitly su
 - Packaging / bag fee → item.
 - Service-priced items (haircut, repair, consultation) → items.
 
+# Weighted / measured items — CRITICAL: use the LINE TOTAL, never the unit price
+
+This is the single most common extraction mistake. Treat it as a hard rule.
+
+## Decision procedure (apply per item row)
+
+When a row has ANY of these markers — \`/кг\`, \`/kg\`, \`/100г\`, \`/100g\`, \`/л\`, \`/L\`, \`/oz\`, \`/lb\`, \`/шт\`, \`/pc\`, \`×\`, \`@\`, \`per\`, "за", "цена" — the item is weighted/measured and there are **at least two distinct numbers** on (or around) the row:
+
+  1. **Quantity / weight / volume** — usually labeled with units (\`кг\`, \`g\`, \`л\`, \`ml\`, \`шт\`, \`pcs\`), and is the SMALLEST numeric value on the row when the quantity is < 1.
+  2. **Per-unit price** — appears between the quantity marker and the line total, typically followed or preceded by a unit denominator (\`/кг\`, \`/100г\`, \`/L\`). Sometimes flanked by \`×\` (Cyrillic receipts) or \`@\` (EU/UK).
+  3. **Line total** — the RIGHTMOST number on the row (or on the line directly below for two-line layouts). This is the only number you put in \`total\`.
+
+**Anchor on the RIGHTMOST number on the row.** Supermarket receipts print line totals in a fixed right-edge column. The unit price, when visible, sits to the LEFT of the line total. If you see two numbers and you're unsure, the one further to the right is the line total — unless there's a third number even further right, in which case THAT one wins.
+
+## Worked examples (read carefully — the rightmost number is the answer)
+
+  Source on receipt                                  JSON values
+  -----------------                                  -----------
+  Бананы 1.234 кг × 150,00 RUB/кг       185,10       name: "Бананы", quantity: 1.234, total: 185.10
+  Tomatoes 0.500 kg @ €4.00/kg          €2,00        name: "Tomatoes", quantity: 0.500, total: 2.00
+  Apples                                              (two-line variant — total on the next line)
+     0.750 kg × 3,20 €/kg               €2,40        name: "Apples", quantity: 0.750, total: 2.40
+  Сыр Пармезан      100г / 450,00       337,50       name: "Сыр Пармезан", quantity: 0.075, total: 337.50
+                                                     (0.075 kg charged at 450/100g = 337.50; NEVER total = 450)
+  Beer 6 шт × 1.20                      7.20         name: "Beer", quantity: 6, total: 7.20
+  Картофель 2,540 кг × 89,90            228,35       name: "Картофель", quantity: 2.540, total: 228.35
+  Молоко 1 л × 95,00                    95,00        name: "Молоко", quantity: 1, total: 95.00
+
+## Anti-pattern check (do not emit any of these)
+
+- ❌ \`total = 150.00\` for "Бананы 1.234 кг × 150,00" → that's the per-kg price; the line total \`185,10\` sits further right.
+- ❌ \`total = 4.00\` for "Tomatoes 0.500 kg @ €4.00/kg" → per-kg price; the line total \`€2,00\` is the rightmost number.
+- ❌ \`total = 450.00\` for "Сыр Пармезан 100г / 450" → per-100g rate; \`337,50\` is the rightmost number.
+- ❌ \`total = 89.90\` for "Картофель 2,540 кг × 89,90" → per-kg; \`228,35\` is what the customer paid.
+
+## Sanity heuristic
+
+For most weighted items \`total ≠ unit_price\`. If the number you picked happens to equal the per-unit rate \`/кг\`, \`/100g\`, \`/L\` exactly (especially when the quantity is clearly NOT 1.000), you grabbed the WRONG number — look again for a number further to the right on the same row, or on the line below.
+
+If the receipt genuinely shows only weight + unit price with NO printed line total, fall back to \`total = quantity × unit-price\`. This is a last resort, only when no rightmost-column number exists.
+
 # Items — EXTRACT as NEGATIVE totals (deductions)
 
-ONLY explicit discount markers count:
-- Words by language:
-  - EN: discount, promo, voucher, coupon, loyalty discount, rebate
-  - RU: "скидка"
-  - DE: "Rabatt"
-  - FR: "remise"
-  - IT: "sconto"
-  - ES: "descuento"
-  - PT: "desconto"
-  - PL: "rabat"
-  - SR: "popust"
-  - HU: "kedvezmény", "akció"
-  - TR: "indirim"
-  - EL: "έκπτωση"
-  - JA: "割引", "値引き"
-  - ZH: "折扣", "减价", "優惠" (traditional)
-  - KO: "할인"
-- OR a line displayed with a clearly negative price like \`-2,50\` / \`−2,50\` next to a separate base item.
+This rule covers BILL-WIDE discounts only (voucher / coupon / loyalty card / "%-off everything" applied after the subtotal). Per-item discounts have a separate rule — see the "Per-item discounts" section below.
+
+ONLY explicit discount markers count. Common labels: EN \`discount\` / \`promo\` / \`voucher\` / \`coupon\` / \`rebate\`, RU \`скидка\`, DE \`Rabatt\`, FR \`remise\`, IT \`sconto\`, ES \`descuento\`, PT \`desconto\`, PL \`rabat\`, SR \`popust\`, TR \`indirim\`, JA \`割引\`, ZH \`折扣\`, KO \`할인\` — plus the equivalents in any other language you recognise. A line displayed with a clearly negative price (\`-2,50\` / \`−2,50\`) next to a base item also counts.
+
 - Emit \`total\` as a negative number (\`-2.50\`).
 - Percentage-only discounts with no absolute amount → skip.
 
@@ -47,91 +70,47 @@ When a line is NOT a discount:
 - A line is a discount ONLY when there are OTHER positive items above it that it could plausibly be reducing. If you can't point to which item the discount applies to, it isn't a discount.
 - Fees, taxes, tips, and service charges are NOT discounts.
 
+# Per-item discounts — COLLAPSE into the item, do NOT emit a separate row
+
+When a discount applies to ONE specific product (not the whole cart), the receipt typically shows:
+- the product line with its original price, AND
+- a discount line directly under it (or alongside it) referring to that product — labels like "promo", "акция", "скидка по карте", "-20%", or a strikethrough original next to a smaller final figure.
+
+For this shape, emit ONE item whose \`total\` is the ALREADY-DISCOUNTED final price. Do NOT also emit the negative discount line — that would double-count. The original / pre-discount price is NOT needed in the output.
+
+Heuristic for "this discount belongs to ONE item, not the whole bill":
+- It sits directly under (or adjacent to) a single product line, with no other product between them.
+- Its label references that product (e.g. "Cheese promo -20%"), or it's a strikethrough next to the same product's final price.
+- It appears BEFORE the subtotal — bill-wide discounts come AFTER the subtotal.
+
+Examples — single item out per group:
+
+  Source on receipt                              JSON output
+  -----------------                              -----------
+  Cheese 500g                  €8,00
+  -20% promo                   -€1,60            ONE item:
+                                €6,40              name: "Cheese 500g", quantity: 1, total: 6.40
+
+  Молоко 1л                    120,00
+  Скидка по карте              -30,00            ONE item:
+                                90,00              name: "Молоко 1л", quantity: 1, total: 90.00
+
+  Yogurt                       4,50 (strikethrough)
+                               3,20              ONE item:
+                                                   name: "Yogurt", quantity: 1, total: 3.20
+
+A discount that sits AFTER the subtotal and references the cart as a whole ("Loyalty discount", "Voucher AB12", "Promo SUMMER10 -10%") STILL goes through the "Items — EXTRACT as NEGATIVE totals" rule above (separate item with negative total).
+
 # Items — SKIP (don't include in the items array)
 
-- **Tax / VAT / sales-tax lines** (by language):
-  - EN: VAT, tax, taxes
-  - FR: TVA, taxe
-  - ES: IVA, impuesto
-  - DE: MwSt, USt, Umsatzsteuer
-  - IT: IVA
-  - PT: IVA
-  - PL: VAT, podatek
-  - RU: НДС, налог, NDS
-  - SR Latin: PDV, porez
-  - SR Cyrillic: ПДВ, ПОРЕЗ
-  - LV: PVN
-  - TR: KDV
-  - HU: ÁFA
-  - EL: ΦΠΑ, φόρος
-  - JA: 税, 消費税, 内税, 外税
-  - ZH: 税 (simplified), 稅 (traditional), 增值税
-  - KO: 부가세, 세금
-- **Subtotal** (by language):
-  - EN: Subtotal, sub-total
-  - FR: Sous-total
-  - IT: Subtotale
-  - DE: Zwischensumme
-  - PL: Międzysuma
-  - RU: Подытог, Промежуточный итог
-  - SR Cyrillic: Промет (turnover / subtotal)
-  - HU: Részösszeg
-  - TR: Ara toplam
-  - EL: Μερικό σύνολο
-  - JA: 小計
-  - ZH: 小计 (simplified), 小計 (traditional)
-  - KO: 소계
-- **Grand total** (NEVER include as an item — it goes into the SEPARATE \`totalAmount\` field, see below):
-  - See the full grand-total label list under \`totalAmount\`.
-- **Tip / gratuity / service charge** (by language):
-  - EN: tip, gratuity, service charge, svc fee
-  - DE: trinkgeld
-  - FR: pourboire
-  - ES: propina
-  - IT: mancia, coperto
-  - PT: gorjeta
-  - PL: napiwek, obsługa
-  - RU: чаевые, обслуживание, сервисный сбор, услуга, сервис (as a standalone line)
-  - SR Latin: servis, servisna naknada, napojnica
-  - HU: borravaló
-  - TR: bahşiş, servis ücreti
-  - EL: φιλοδώρημα
-  - JA: チップ, サービス料
-  - ZH: 小费, 服务费
-  - KO: 팁, 봉사료
-  These are payments, not items.
-- **Cash / card payment rows** (by language):
-  - EN: Cash, Card, Visa, Mastercard, "Card *1234"
-  - DE: Bargeld, Karte
-  - FR: Espèces, Carte bancaire
-  - ES: Efectivo, Tarjeta
-  - IT: Contanti, Carta
-  - PT: Dinheiro, Cartão
-  - PL: Gotówka, Karta
-  - RU: Наличные, Карта, Картой
-  - SR Latin: Gotovina, Kartica
-  - HU: Készpénz, Kártya
-  - TR: Nakit, Kart
-  - EL: Μετρητά, Κάρτα
-  - JA: 現金, クレジット, カード
-  - ZH: 现金, 卡 (simplified); 現金, 卡 (traditional)
-  - KO: 현금, 카드
-- **Change / refund** (by language):
-  - EN: Change, Refund
-  - DE: Rückgeld
-  - FR: Monnaie, Rendu
-  - ES: Vuelto, Cambio
-  - IT: Resto
-  - PT: Troco
-  - PL: Reszta
-  - RU: Сдача, Возврат
-  - SR Latin: Kusur
-  - HU: Visszajáró
-  - TR: Para üstü
-  - EL: Ρέστα
-  - JA: お釣り, おつり
-  - ZH: 找零
-  - KO: 거스름돈
+For each category below, recognise the listed keywords AND their equivalents in every other language you can identify (Czech, Dutch, Latvian, Hungarian, Greek, etc.). The lists are anchors, not exhaustive enumerations.
+
+- **Tax / VAT / sales-tax lines** — EN \`VAT\` / \`tax\`, FR \`TVA\`, DE \`MwSt\` / \`USt\` / \`Umsatzsteuer\`, ES/IT/PT \`IVA\`, PL \`VAT\` / \`podatek\`, RU \`НДС\` / \`налог\`, SR \`PDV\` / \`ПДВ\` / \`porez\`, TR \`KDV\`, JA \`税\` / \`消費税\`, ZH \`税\` / \`增值税\`, KO \`부가세\` / \`세금\`.
+- **Subtotal** — EN \`Subtotal\`, FR \`Sous-total\`, IT \`Subtotale\`, DE \`Zwischensumme\`, PL \`Międzysuma\`, RU \`Подытог\` / \`Промежуточный итог\`, SR \`Промет\` (turnover / subtotal), JA \`小計\`, ZH \`小计\`, KO \`소계\`.
+- **Grand total** — NEVER include as an item. It goes into the SEPARATE \`totalAmount\` field (see below).
+- **Tip / gratuity / service charge** — EN \`tip\` / \`gratuity\` / \`service charge\`, DE \`Trinkgeld\`, FR \`pourboire\`, ES \`propina\`, IT \`mancia\` / \`coperto\`, PL \`napiwek\` / \`obsługa\`, RU \`чаевые\` / \`обслуживание\` / \`сервисный сбор\` / \`сервис\` (standalone), SR \`servis\` / \`napojnica\`, JA \`チップ\` / \`サービス料\`, KO \`팁\` / \`봉사료\`. These are payments, not items.
+- **Cash / card payment rows** — EN \`Cash\` / \`Card\` / \`Visa\` / \`Mastercard\` / \`Card *1234\`, DE \`Bargeld\` / \`Karte\`, FR \`Espèces\` / \`Carte bancaire\`, IT \`Contanti\` / \`Carta\`, PL \`Gotówka\` / \`Karta\`, RU \`Наличные\` / \`Карта\` / \`Картой\`, SR \`Gotovina\` / \`Kartica\`, JA \`現金\` / \`カード\`, ZH \`现金\` / \`卡\`, KO \`현금\` / \`카드\`.
+- **Change / refund** — EN \`Change\` / \`Refund\`, DE \`Rückgeld\`, FR \`Monnaie\` / \`Rendu\`, IT \`Resto\`, PT \`Troco\`, PL \`Reszta\`, RU \`Сдача\` / \`Возврат\`, SR \`Kusur\`, JA \`お釣り\`, ZH \`找零\`, KO \`거스름돈\`.
 - Phone / address / tax ID / receipt number / waiter / table / cashier / fiscal-protocol number.
 - Date / time as a standalone line.
 - Strikethrough / crossed-out price next to a final price — keep ONLY the final (smaller) price.
@@ -167,150 +146,65 @@ CRITICAL pitfall: a number like \`11.090,19\` on a Serbian / EU receipt is **ele
 
 ## How to identify it
 
-1. Find the LINE labelled as a grand total. Recognised labels (case-insensitive, language-aware):
-   - English: TOTAL, GRAND TOTAL, AMOUNT DUE, BALANCE DUE, TOTAL DUE
-   - Russian: Итого, Всего, К ОПЛАТЕ
-   - German: GESAMT, ENDSUMME, Gesamtbetrag
-   - French: TOTAL, MONTANT, À payer
-   - Spanish: TOTAL, IMPORTE TOTAL
-   - Italian: TOTALE
-   - Portuguese: TOTAL
-   - Serbian Latin: UKUPNO, UKUPAN IZNOS, ZA NAPLATU
-   - Serbian Cyrillic: УКУПНО, УКУПАН ИЗНОС, ЗА НАПЛАТУ
-   - Polish: RAZEM, SUMA, DO ZAPŁATY
-   - Czech: CELKEM, K ÚHRADĚ
-   - Dutch: TOTAAL
-   - Hungarian: ÖSSZESEN, VÉGÖSSZEG, FIZETENDŐ
-   - Turkish: TOPLAM, GENEL TOPLAM, ÖDENECEK
-   - Greek: ΣΥΝΟΛΟ, ΓΕΝΙΚΟ ΣΥΝΟΛΟ, ΠΛΗΡΩΤΕΟ
-   - Japanese: 合計, 御会計, 計
-   - Chinese (simplified): 合计, 总计, 总额, 应付
-   - Chinese (traditional): 合計, 總計, 總額, 應付
-   - Korean: 합계, 총액, 결제금액
+1. Find the LINE labelled as a grand total. Common keywords (recognise these AND their equivalents in any other language you can identify):
+   - EN \`TOTAL\` / \`GRAND TOTAL\` / \`AMOUNT DUE\` / \`BALANCE DUE\`
+   - RU \`Итого\` / \`Всего\` / \`К ОПЛАТЕ\`
+   - DE \`GESAMT\` / \`ENDSUMME\` / \`Gesamtbetrag\`
+   - FR \`TOTAL\` / \`MONTANT\` / \`À payer\` / \`TTC\` (tax-included; NEVER \`HT\` / pre-tax)
+   - ES \`IMPORTE TOTAL\`, IT \`TOTALE\`, PT \`TOTAL\`
+   - SR \`UKUPNO\` / \`УКУПНО\` / \`UKUPAN IZNOS\` / \`ZA NAPLATU\`
+   - PL \`RAZEM\` / \`SUMA\` / \`DO ZAPŁATY\`
+   - CS \`CELKEM\` / \`K ÚHRADĚ\`, NL \`TOTAAL\`, HU \`ÖSSZESEN\` / \`VÉGÖSSZEG\`
+   - TR \`TOPLAM\` / \`GENEL TOPLAM\`, EL \`ΣΥΝΟΛΟ\` / \`ΓΕΝΙΚΟ ΣΥΝΟΛΟ\`
+   - JA \`合計\` / \`御会計\`, ZH \`合计\` / \`总计\` / \`應付\`, KO \`합계\` / \`총액\`
 2. The grand total MUST be ≥ the sum of all positive items (it includes any tax / tip / service already baked into the receipt).
-3. If multiple total-shaped lines appear (subtotal, tax breakdown, grand total), pick the LAST one in document order, which is typically the grand total after tax.
+3. If multiple total-shaped lines appear (subtotal, tax breakdown, grand total), pick the LAST one in document order — that's the grand total after tax.
 4. Multi-guest restaurant receipts (Guest 1 / Guest 2): the GRAND TOTAL is the final figure at the very bottom, not the per-guest subtotals.
 5. A payment line ("Cash: 11090.19", "Card: 11090.19") right after the grand total is NOT a separate total — pick the labelled grand-total line above it.
 
 ## CRITICAL — do NOT pick a tax breakdown as the grand total
 
-This is the most common single mistake. Tax breakdowns ("PDV", "VAT", "TVA", "MwSt", "ПОРЕЗ", "НДС", "IVA", "USt") show the TAX PORTION of the receipt — usually 5-25% of the receipt total. They are NOT the grand total. Always pick the line labelled with a TOTAL keyword from the list above.
+This is the most common single mistake. Tax breakdowns (\`PDV\`, \`VAT\`, \`TVA\`, \`MwSt\`, \`ПОРЕЗ\`, \`НДС\`, \`IVA\`, \`USt\`) show the TAX PORTION — usually 5-25 % of the receipt total. They are NEVER the grand total. Always pick the line labelled with a TOTAL keyword from the list above.
 
-### Concrete example — Serbian Lidl receipt
+## Worked examples (covering the three common traps)
+
+### Serbian Lidl — the dot-thousands trap
 
 \`\`\`
-... items ...
 ПРОМЕТ ПРОДАТА          11.090,19      ← subtotal (turnover)
 УКУПАН ИЗНОС            11.090,19      ← GRAND TOTAL  ← totalAmount = 11090.19  ✅
-ПОРЕЗ (10%)             1.243,86       ← tax breakdown — NOT a total
-GOTOVINA                12.000,00      ← payment given
-KUSUR                   909,81         ← change due back
+ПОРЕЗ (10%)             1.243,86       ← tax breakdown — NOT the total
+GOTOVINA                12.000,00      ← cash given — NOT the total
+KUSUR                   909,81         ← change — NOT the total
 \`\`\`
 
-Correct extraction: \`totalAmount = 11090.19\`. WRONG extractions to avoid:
-- ❌ \`totalAmount = 1243.86\` (that's the tax breakdown, not the total)
-- ❌ \`totalAmount = 12000.00\` (that's the cash payment, not the total)
-- ❌ \`totalAmount = 909.81\` (that's the change, not the total)
+\`11.090,19\` is eleven thousand ninety, not eleven point ohnine — the DOT is a thousands separator on EU receipts. WRONG picks: \`1243.86\` (the tax), \`12000.00\` (cash), \`909.81\` (change).
 
-### Concrete example — German receipt
+### US restaurant — tip + tax + payment row confusion
 
 \`\`\`
-Zwischensumme           42,80         ← subtotal
-MwSt. 19%               6,84          ← tax breakdown — NOT a total
-Gesamtbetrag            49,64         ← GRAND TOTAL  ← totalAmount = 49.64  ✅
-\`\`\`
-
-WRONG would be \`totalAmount = 6.84\` (the VAT amount).
-
-### Concrete example — Japanese receipt
-
-\`\`\`
-... 商品 ...
-小計                    ¥3,800        ← subtotal — NOT the grand total
-消費税(10%)             ¥380          ← tax — NOT the grand total
-合計                    ¥4,180        ← GRAND TOTAL  ← totalAmount = 4180  ✅
-お預かり                ¥5,000        ← cash given — NOT the total
-お釣り                  ¥820          ← change — NOT the total
-\`\`\`
-
-\`totalAmount = 4180\` and \`currency = "JPY"\`. JPY uses no decimals on retail receipts.
-
-### Concrete example — Korean receipt
-
-\`\`\`
-... 상품 ...
-소계                    27,000        ← subtotal — NOT the grand total
-부가세                  2,700         ← VAT — NOT the grand total
-합계                    29,700        ← GRAND TOTAL  ← totalAmount = 29700  ✅
-\`\`\`
-
-\`totalAmount = 29700\` and \`currency = "KRW"\`. KRW uses no decimals.
-
-### Concrete example — US restaurant receipt (with tip + sales tax)
-
-\`\`\`
-... menu items ...
-Subtotal                $42.50        ← pre-tax / pre-tip subtotal — NOT the grand total
-Sales Tax (8.25%)       $3.51         ← tax — NOT the grand total
-Tip (20%)               $9.00         ← gratuity — SKIP (don't include as an item, don't pick as total)
+Subtotal                $42.50        ← pre-tax/pre-tip — NOT the total
+Sales Tax (8.25%)       $3.51         ← tax — NOT the total
+Tip (20%)               $9.00         ← tip — skip as item, NOT the total
 Grand Total             $55.01        ← GRAND TOTAL  ← totalAmount = 55.01  ✅
 Visa **** 1234          $55.01        ← payment line — NOT a separate total
 \`\`\`
 
-\`totalAmount = 55.01\` and \`currency = "USD"\`. The tip and tax are both BELOW the subtotal and the grand total is the LAST positive amount shown — not the subtotal (which excludes tax/tip) and not the tip line.
+The grand total is the LAST positive amount labelled with \`Total\` — it already includes tax + tip.
 
-### Concrete example — French restaurant (HT vs TTC trap)
-
-\`\`\`
-... articles ...
-Total HT                €38,50        ← pre-tax subtotal ("hors taxes") — NOT the grand total
-TVA 20%                 €7,70         ← tax breakdown — NOT the grand total
-Total TTC               €46,20        ← GRAND TOTAL ("toutes taxes comprises") ← totalAmount = 46.20  ✅
-Carte bancaire          €46,20        ← payment, NOT a separate total
-\`\`\`
-
-\`totalAmount = 46.20\`. "HT" means pre-tax, "TTC" means tax-included — French restaurant receipts label them explicitly. Always pick TTC.
-
-### Concrete example — Polish supermarket (Biedronka / Lidl PL)
+### Russian grocery — space as thousands separator
 
 \`\`\`
-... towary ...
-Suma                    139,40        ← subtotal — NOT the grand total
-Podatek VAT             11,18         ← VAT — NOT the grand total
-Razem                   150,58        ← GRAND TOTAL ← totalAmount = 150.58  ✅
-Gotówka                 200,00        ← payment given
-Reszta                  49,42         ← change due back
-\`\`\`
-
-\`totalAmount = 150.58\` and \`currency = "PLN"\`. "Razem" is the most common grand-total label on Polish supermarket receipts; "Do zapłaty" is the equivalent on restaurant receipts.
-
-### Concrete example — Russian grocery (Пятёрочка / Магнит)
-
-\`\`\`
-... товары ...
 ИТОГО                   ₽1 248,90     ← GRAND TOTAL  ← totalAmount = 1248.90  ✅
-В т.ч. НДС 20%          ₽208,15       ← VAT included in the total — NOT a separate total
-К ОПЛАТЕ                ₽1 248,90     ← duplicate "amount due" — same as ИТОГО, also the grand total
-Наличными               ₽1 250,00     ← payment given
+В т.ч. НДС 20%          ₽208,15       ← VAT inside the total — NOT a separate total
+К ОПЛАТЕ                ₽1 248,90     ← "amount due" — same value, also the grand total
+Наличными               ₽1 250,00     ← cash given
 Сдача                   ₽1,10         ← change
 \`\`\`
 
-\`totalAmount = 1248.90\` and \`currency = "RUB"\`. The Russian space-as-thousands-separator (\`1 248,90\`) parses the same way as European EU comma decimal — convert to \`1248.90\` in JSON.
+The Russian space-as-thousands-separator (\`1 248,90\`) parses identically to EU comma-decimal → \`1248.90\`.
 
-### Concrete example — Wolt / Bolt food delivery summary
-
-\`\`\`
-Pizza Margherita                €8.50         ← item
-Pasta Carbonara                 €11.00        ← item
-Coca-Cola 0.5L                  €2.50         ← item
-─────────────────────────────────────────
-Subtotal                        €22.00        ← subtotal — skip
-Delivery fee                    €3.50         ← keep as item with name "Delivery"
-Service fee                     €1.10         ← keep as item with name "Service fee"
-Total                           €26.60        ← GRAND TOTAL  ← totalAmount = 26.60  ✅
-\`\`\`
-
-\`totalAmount = 26.60\` and \`currency = "EUR"\`. Note: "Delivery fee" and "Service fee" on a delivery-app order summary are **buyer charges**, so they go into the items array (with positive total) — they're not "tax breakdown" lines. They make the items sum match the grand total cleanly.
+Other locales follow the same pattern — JPY/KRW receipts use no decimals (e.g. JP \`合計 ¥4180\` → \`totalAmount: 4180\`); PL supermarkets label the grand total \`Razem\`; FR restaurants pick \`Total TTC\` and never \`Total HT\` (pre-tax); food-delivery summaries (Wolt / Bolt) keep delivery + service fees AS items and the final \`Total\` line is the grand total.
 
 ## Sanity check before committing
 
@@ -351,6 +245,15 @@ Extract items from EVERY guest section. Don't stop at the first sub-total. Grand
 # Category
 
 Pick exactly one \`suggestedCategory\` from the user's category list provided in the user message. Match by semantic meaning, not literal substring (e.g. "McDonald's" → "Food & Restaurants" if present in the list). If nothing fits, set \`suggestedCategory\` to null. NEVER invent new categories.
+
+# Pre-emit sanity check (do this silently before writing the JSON)
+
+Before producing the JSON, re-scan your items list for two specific failure modes:
+
+1. **Weighted items with the wrong number in \`total\`.** Walk through every item whose row contains \`/кг\`, \`/kg\`, \`/100г\`, \`/100g\`, \`/L\`, \`/л\`, \`/oz\`, \`/lb\`, \`×\`, \`@\`, \`per\`, or \`шт\`. For each, check: does the value you put in \`total\` look like the per-unit rate from the receipt, or like the actual line total in the rightmost column? If it equals a per-kg / per-100g / per-litre rate while quantity ≠ 1, REPLACE it with the rightmost number on that row (or the line below) before emitting.
+2. **Edge items dropped.** Walk the items array against the receipt top-to-bottom. Did you skip the FIRST few items at the top of the receipt, or the LAST few before the subtotal? Long receipts often have items running close to the page edges. Add anything you missed.
+
+Only after both passes, emit the JSON.
 
 # Final reminder
 

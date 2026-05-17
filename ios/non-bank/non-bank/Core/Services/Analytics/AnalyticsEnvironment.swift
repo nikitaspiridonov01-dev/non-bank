@@ -289,9 +289,9 @@ extension AnalyticsServiceProtocol {
             feeCount: fees,
             taxCount: taxes,
             provider: provider,
-            attemptedProvidersCount: 1,
+            attemptedProvidersCount: result.attemptedProvidersCount,
             imageSizeKbBucket: AnalyticsBuckets.imageSizeKb(imageBytes),
-            language: .other,
+            language: ReceiptLanguage(rawValue: result.parsedReceipt.language ?? "") ?? .other,
             storeCategory: StoreCategory.from(suggestedCategory: result.parsedReceipt.suggestedCategory)
         ))
     }

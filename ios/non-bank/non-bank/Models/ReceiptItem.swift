@@ -227,9 +227,13 @@ struct ParsedReceipt: Codable, Sendable {
     /// only on the cloud path. Plain string (not a `Category.id`) so the
     /// matcher in `CreateTransactionViewModel` can do a tolerant title compare.
     let suggestedCategory: String?
+    /// ISO-639-1 two-letter code of the dominant receipt language,
+    /// or `nil` if the parser couldn't identify it with confidence.
+    /// Surfaced to analytics only — no UI consumption.
+    let language: String?
 
     enum CodingKeys: String, CodingKey {
-        case storeName, date, items, totalAmount, currency, suggestedCategory
+        case storeName, date, items, totalAmount, currency, suggestedCategory, language
     }
 
     init(from decoder: Decoder) throws {
@@ -239,6 +243,7 @@ struct ParsedReceipt: Codable, Sendable {
         currency = try? container.decode(String.self, forKey: .currency)
         totalAmount = (try? container.decode(FlexibleDouble.self, forKey: .totalAmount))?.value
         suggestedCategory = try? container.decode(String.self, forKey: .suggestedCategory)
+        language = try? container.decode(String.self, forKey: .language)
 
         let rawItems = (try? container.decode([ReceiptItem].self, forKey: .items)) ?? []
         // Filter out garbage items with no valid price
@@ -252,7 +257,8 @@ struct ParsedReceipt: Codable, Sendable {
         items: [ReceiptItem],
         totalAmount: Double?,
         currency: String?,
-        suggestedCategory: String? = nil
+        suggestedCategory: String? = nil,
+        language: String? = nil
     ) {
         self.storeName = storeName
         self.date = date
@@ -260,5 +266,6 @@ struct ParsedReceipt: Codable, Sendable {
         self.totalAmount = totalAmount
         self.currency = currency
         self.suggestedCategory = suggestedCategory
+        self.language = language
     }
 }

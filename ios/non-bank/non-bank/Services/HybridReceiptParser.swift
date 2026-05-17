@@ -50,6 +50,10 @@ actor HybridReceiptParser {
         /// `.medium`. For `.low` (no grand total) defaults to `true`.
         let totalsMatch: Bool
         let source: Source
+        /// Count of providers the router walked before succeeding.
+        /// `1` for the OCR-fallback path (no router involved); `1+`
+        /// from the cloud router. Surfaced to analytics only.
+        let attemptedProvidersCount: Int
     }
 
     /// Built on the main actor by the caller (where `AISettings` and
@@ -138,7 +142,8 @@ actor HybridReceiptParser {
             parsedReceipt: cleaned,
             confidence: match ? .high : .medium,
             totalsMatch: match,
-            source: .cloud(provider: cloudResult.provider)
+            source: .cloud(provider: cloudResult.provider),
+            attemptedProvidersCount: cloudResult.attemptedProvidersCount
         )
     }
 
@@ -188,7 +193,10 @@ actor HybridReceiptParser {
             parsedReceipt: cleaned,
             confidence: .low,
             totalsMatch: true,
-            source: .ocrFallback
+            source: .ocrFallback,
+            // OCR fallback never goes through the router — 1 is a
+            // honest "this single local path attempted once" value.
+            attemptedProvidersCount: 1
         )
     }
 

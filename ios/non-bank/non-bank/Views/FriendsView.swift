@@ -3,6 +3,7 @@ import SwiftUI
 struct FriendsView: View {
     @EnvironmentObject var friendStore: FriendStore
     @EnvironmentObject var transactionStore: TransactionStore
+    @Environment(\.analytics) private var analytics
     @State private var searchText = ""
     @State private var selectedGroup: String? = nil
     @State private var sheetFriend: FriendSheetItem? = nil
@@ -194,6 +195,18 @@ struct FriendsView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .searchable(text: $searchText, prompt: "Search friends")
+        .onChange(of: searchText) { newQuery in
+            // No debounce — friend search is short-list / fast-typing;
+            // the spam cost is negligible (≤20 keystrokes per query)
+            // and the immediate fire keeps "user is frustrated"
+            // closer to the actual frustration moment.
+            let trimmed = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.count >= 3, filteredFriends.isEmpty else { return }
+            analytics.track(.searchNoResults(
+                searchType: .friends,
+                queryLengthBucket: AnalyticsBuckets.queryLength(trimmed.count)
+            ))
+        }
     }
 
     private var noResultsInline: some View {

@@ -39,6 +39,11 @@ class SyncManager: ObservableObject {
 
     private var isSyncing = false
 
+    /// DI-resolved analytics. Lazy so the manager can be constructed
+    /// before `non_bankApp.init` finishes registering services.
+    private lazy var analytics: AnalyticsServiceProtocol =
+        DIContainer.shared.resolve(AnalyticsServiceProtocol.self)
+
     nonisolated init() {}
 
     // MARK: - Check iCloud
@@ -478,12 +483,18 @@ class SyncManager: ObservableObject {
         var toInsertLocally: [Transaction] = []
         var toUpdateLocally: [Transaction] = []
         var toPushRemote: [Transaction] = []
+        // Count of records present on both sides with a divergent
+        // `lastModified` — the "real conflict" cases the user's
+        // dashboard cares about. Pure insert / pure push aren't
+        // conflicts (no divergence to resolve).
+        var conflictCount = 0
 
         // Remote records not in local → insert locally
         for (syncID, remoteTx) in remoteBySyncID {
             if let localTx = localBySyncID[syncID] {
                 // Both exist — newest wins
                 if remoteTx.lastModified > localTx.lastModified {
+                    conflictCount += 1
                     let updated = Transaction(
                         id: localTx.id, syncID: syncID,
                         emoji: remoteTx.emoji, category: remoteTx.category,
@@ -499,6 +510,7 @@ class SyncManager: ObservableObject {
                     )
                     toUpdateLocally.append(updated)
                 } else if localTx.lastModified > remoteTx.lastModified {
+                    conflictCount += 1
                     toPushRemote.append(localTx)
                 }
             } else {
@@ -511,6 +523,16 @@ class SyncManager: ObservableObject {
             if remoteBySyncID[syncID] == nil {
                 toPushRemote.append(localTx)
             }
+        }
+
+        // Fire one event per resolved conflict so the dashboard's
+        // "conflicts per kind" count is honest (multiple conflicts in
+        // a single sync = multiple events). Capped event volume isn't
+        // a concern at our scale; if a single sync cycle ever
+        // produces 100+ conflicts we have bigger sync-quality
+        // problems to investigate.
+        for _ in 0..<conflictCount {
+            analytics.track(.iCloudConflictResolved(kind: .transactionDuplicate))
         }
 
         return MergeResult(toInsertLocally: toInsertLocally, toUpdateLocally: toUpdateLocally, toPushRemote: toPushRemote)
@@ -526,11 +548,14 @@ class SyncManager: ObservableObject {
         var toUpdateLocally: [Friend] = []
         var toPushRemote: [Friend] = []
 
+        var conflictCount = 0
         for (id, remoteFriend) in remoteByID {
             if let localFriend = localByID[id] {
                 if remoteFriend.lastModified > localFriend.lastModified {
+                    conflictCount += 1
                     toUpdateLocally.append(remoteFriend)
                 } else if localFriend.lastModified > remoteFriend.lastModified {
+                    conflictCount += 1
                     toPushRemote.append(localFriend)
                 }
             } else {
@@ -541,6 +566,9 @@ class SyncManager: ObservableObject {
             if remoteByID[id] == nil {
                 toPushRemote.append(localFriend)
             }
+        }
+        for _ in 0..<conflictCount {
+            analytics.track(.iCloudConflictResolved(kind: .friendMerge))
         }
         return MergeResult(toInsertLocally: toInsertLocally, toUpdateLocally: toUpdateLocally, toPushRemote: toPushRemote)
     }
@@ -564,6 +592,7 @@ class SyncManager: ObservableObject {
         var toUpdateLocally: [ReceiptItem] = []
         var toPushRemote: [ReceiptItem] = []
 
+        var conflictCount = 0
         for (syncID, tuple) in remoteBySyncID {
             // Resolve parent — drop the item if we don't have the
             // owning transaction locally yet.
@@ -573,9 +602,11 @@ class SyncManager: ObservableObject {
 
             if let localItem = localBySyncID[syncID] {
                 if tuple.item.lastModified > localItem.lastModified {
+                    conflictCount += 1
                     stamped.persistedID = localItem.persistedID
                     toUpdateLocally.append(stamped)
                 } else if localItem.lastModified > tuple.item.lastModified {
+                    conflictCount += 1
                     toPushRemote.append(localItem)
                 }
             } else {
@@ -586,6 +617,13 @@ class SyncManager: ObservableObject {
             if remoteBySyncID[syncID] == nil {
                 toPushRemote.append(localItem)
             }
+        }
+        // Receipt-item conflicts don't have a dedicated `kind` enum
+        // case — they fall under `.other` to keep the taxonomy
+        // compact. The dashboard can correlate with the
+        // accompanying transaction-conflict spike to attribute.
+        for _ in 0..<conflictCount {
+            analytics.track(.iCloudConflictResolved(kind: .other))
         }
         return MergeResult(toInsertLocally: toInsertLocally, toUpdateLocally: toUpdateLocally, toPushRemote: toPushRemote)
     }
@@ -603,16 +641,22 @@ class SyncManager: ObservableObject {
         var toUpdateLocally: [Category] = []
         var toPushRemote: [Category] = []
 
+        var conflictCount = 0
         for (id, remoteCat) in remoteByID {
             if let localCat = localByID[id] {
                 if remoteCat.lastModified > localCat.lastModified {
+                    conflictCount += 1
                     toUpdateLocally.append(remoteCat)
                 } else if localCat.lastModified > remoteCat.lastModified {
+                    conflictCount += 1
                     toPushRemote.append(localCat)
                 }
             } else if localByTitle[remoteCat.title.lowercased()] != nil {
                 // Category with same title exists locally (different UUID) — skip to avoid duplicates
-                // Keep local version, push it to cloud
+                // Keep local version, push it to cloud. Counts as a
+                // conflict because two distinct UUIDs accidentally
+                // share a title — sync had to pick a winner.
+                conflictCount += 1
                 let existing = localByTitle[remoteCat.title.lowercased()]!
                 toPushRemote.append(existing)
             } else {
@@ -625,6 +669,10 @@ class SyncManager: ObservableObject {
             if remoteByID[id] == nil {
                 toPushRemote.append(localCat)
             }
+        }
+
+        for _ in 0..<conflictCount {
+            analytics.track(.iCloudConflictResolved(kind: .categoryMerge))
         }
 
         return MergeResult(toInsertLocally: toInsertLocally, toUpdateLocally: toUpdateLocally, toPushRemote: toPushRemote)

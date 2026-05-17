@@ -4,7 +4,12 @@ struct SearchTransactionsView: View {
     @Binding var isPresented: Bool
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var transactionStore: TransactionStore
+    @Environment(\.analytics) private var analytics
     @State private var query: String = ""
+    /// Debounce window for `searchNoResults` — fires when the user
+    /// pauses for 600ms with a non-trivial query that returned
+    /// nothing. Avoids spamming an event on every keystroke.
+    @State private var noResultsDebounce: DispatchWorkItem?
     let transactions: [Transaction]
     var onSelect: ((Transaction) -> Void)?
 
@@ -88,6 +93,25 @@ struct SearchTransactionsView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { isPresented = false }
                 }
+            }
+            .onChange(of: query) { newQuery in
+                // Cancel any pending debounced fire — the user is
+                // still typing. Schedule a fresh one 600ms out; if
+                // they pause and the latest snapshot is "non-trivial
+                // query, zero results," fire `searchNoResults`.
+                noResultsDebounce?.cancel()
+                let trimmed = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard trimmed.count >= 3 else { return }
+                let work = DispatchWorkItem {
+                    if grouped.isEmpty {
+                        analytics.track(.searchNoResults(
+                            searchType: .transactions,
+                            queryLengthBucket: AnalyticsBuckets.queryLength(trimmed.count)
+                        ))
+                    }
+                }
+                noResultsDebounce = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
             }
         }
     }

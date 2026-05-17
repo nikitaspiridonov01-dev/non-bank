@@ -65,10 +65,11 @@ actions. We track each first occurrence so cohort tools can compute
 
 | Event | Params | Question |
 |---|---|---|
-| `transaction_created` | `type` (income/expense), `has_split`, `has_receipt_items`, `is_recurring`, `currency`, `amount_bucket`, `category`, `source` (manual/scan/share_link/settle_up), `has_description` | Daily volume by feature. Category mix. |
+| `transaction_created` | `type` (income/expense), `has_split`, `has_receipt_items`, `is_recurring`, `currency`, `amount_bucket`, `category`, `source` (manual/scan/share_link/settle_up), `has_description`, `category_auto_matched`? (bool — only emitted for scan-derived creates) | Daily volume by feature. Category mix. The `category_auto_matched` field measures auto-category accuracy. |
 | `transaction_edited` | `field_changed` (amount/title/category/date/split/other) | Which fields trip people up? Edits = friction signal. |
 | `transaction_deleted` | `had_split`, `had_receipt_items`, `age_days_bucket` | Quick deletes = user mistake. Old deletes = housekeeping. |
 | `transaction_excluded_from_insights` | — | Insights credibility — too many opt-outs = bad defaults. |
+| `transaction_included_in_insights` | — | Reversal counterpart. |
 
 ### 5. Engagement — split flow (the killer feature)
 
@@ -86,9 +87,9 @@ actions. We track each first occurrence so cohort tools can compute
 | Event | Params | Question |
 |---|---|---|
 | `receipt_scan_started` | `source` (camera/gallery), `num_photos` (1/2/3) | Capture path. Multi-image adoption. |
-| `receipt_scan_succeeded` | `items_count_bucket`, `confidence` (high/medium/low), `parser` (cloud/ocr_fallback), `duration_seconds_bucket`, `discount_count`, `fee_count`, `tax_count` | AI quality per cohort. Edit-rate × confidence = trust signal. |
+| `receipt_scan_succeeded` | `items_count_bucket`, `confidence` (high/medium/low), `parser` (cloud/ocr_fallback), `duration_seconds_bucket`, `discount_count`, `fee_count`, `tax_count`, `provider` (gemini/groq/cloudflare/openrouter/mistral/sambanova/nvidia/huggingface/ocr_fallback/unknown), `attempted_providers_count`, `image_size_kb_bucket`, `language` (en/ru/de/.../other), `store_category` (groceries/restaurant/services/entertainment/transport/fashion/electronics/healthcare/utilities/other) | AI quality + cost segmentation. `provider` shows real-world hit distribution; `attempted_providers_count > 1` flags silent provider degradation; `image_size_kb_bucket` is cost proxy without tokens; `language` + `store_category` segment by receipt type without leaking store names or item content. |
 | `receipt_scan_failed` | `error_type` (network/no_items/parse_error/timeout), `source` | Failure categorisation drives parser improvements. |
-| `receipt_items_edited_in_review` | `items_added`, `items_deleted`, `items_modified`, `total_changed` | Did the user trust the AI output? High edit-count = retrain prompt. |
+| `receipt_items_edited_in_review` | `items_added`, `items_deleted`, `name_edits`, `price_edits`, `quantity_edits`, `total_changed` | Per-field parser-accuracy. High `name_edits` = OCR text problems; high `price_edits` = OCR digit problems; high `quantity_edits` = weighted-item misparsing. |
 
 ### 7. Share-link round-trip
 
@@ -164,17 +165,62 @@ actions. We track each first occurrence so cohort tools can compute
 ### 15. Screen views (SwiftUI manual tracking)
 
 Firebase autotracks UIKit screens, but SwiftUI requires us to fire
-`screen_view` manually. Wrap with a `.analyticsScreen("home")` view
-modifier so the call-site is one line.
+`screen_view` manually. Wrap with the `.trackScreen("HomeView")`
+view modifier (defined in `AnalyticsEnvironment.swift`) so the
+call-site is one line. The modifier also fires
+`screen_bounced_quick` for sub-second dwells — automatic
+misnavigation signal.
 
 | Event | Params | Why |
 |---|---|---|
 | `screen_view` | `screen_name` | Funnel building. Aggregate session paths. |
+| `screen_bounced_quick` | `screen`, `dwell_ms` | <1s dwell — user landed on the wrong screen or expected something else. Discoverability signal. |
 
-Main screens to track: `home`, `debts`, `friends`, `friend_detail`,
-`insights`, `settings`, `transaction_detail`, `create_transaction`,
-`import`, `export`, `tip_jar`, `licenses`, `onboarding`, `lock_screen`,
-`reminders`.
+Currently instrumented: `HomeView`, `InsightsView`, `DebtSummaryView`,
+`FriendsView`, `FriendDetailView`, `TransactionDetailView`,
+`SettingsView`, `TipJarView`, `CreateTransactionModal` (name
+flips to `EditTransactionModal` when editing).
+
+### 16. Navigation breadth (tabs + sheets)
+
+| Event | Params | Question |
+|---|---|---|
+| `tab_switched` | `from` (home/profile), `to` | Tab-bar usage distribution. |
+| `sheet_opened` | `name`, `source` | Modal-flow entry-point measurement. |
+| `sheet_dismissed` | `name`, `action` (completed/cancelled/swiped_down), `dwell_seconds_bucket` | Sheet-funnel drop-off + commit-vs-bail. |
+
+### 17. Feature adoption
+
+| Event | Params | Question |
+|---|---|---|
+| `feature_first_use` | `feature` (transaction_create_manual / receipt_scan / split / settle_up / recurring / friends / categories / search / quick_filter / all_filters / insights / import_transactions / export_transactions / share_link / tip_jar / icloud_sync) | "% users who ever touched X" — fires once per install per feature via UserDefaults-gated helper. |
+
+### 18. Tip-jar funnel (extension)
+
+In addition to the `tip_purchase_*` events in §13:
+
+| Event | Params | Question |
+|---|---|---|
+| `tip_jar_dismissed` | `source`, `dwell_seconds_bucket`, `scrolled_tiers` (bool), `tapped_tier`? (coffee/croissant/pizza/chefstable — only when user tapped a tier without buying) | Funnel-leak side of the jar. Distinguishes "saw and bounced" from "considered but didn't buy." `tapped_tier` present = near-conversion. |
+
+### 19. Confusion signals
+
+| Event | Params | Question |
+|---|---|---|
+| `rage_tap_detected` | `element`, `tap_count` | User mashed the same button ≥3 times within 800ms. Wrap candidate buttons with `.rageTapTracked("element_name")`. |
+| `flow_abandoned` | `flow` (onboarding/transaction_create/transaction_edit/split_flow/receipt_scan/import_transactions/settle_up/share_receive/tip_jar), `at_step`, `dwell_seconds_bucket` | User opened a multi-step flow, dwelled, dismissed without committing. Drive with `analytics.startFlow(.X, atStep:)` token; call `complete()` on success path. |
+| `search_no_results` | `search_type` (transactions/friends/categories), `query_length_bucket` (<3/3-5/6-10/11-20/20+) | Empty-results frustration. `query_length >= 11` = "user searched something specific" = potential missing feature or poor matching. |
+| `form_validation_failed` | `form` (new_transaction/friend_form/category_form/currency_picker), `field`, `reason` (empty/invalid_format/out_of_range/duplicate/unavailable/other) | Where does the UX fail to set expectations before the user types? |
+
+### 20. Errors (generic)
+
+In addition to domain-specific failure events (`receipt_scan_failed`,
+`tip_purchase_failed`, `import_failed`):
+
+| Event | Params | Question |
+|---|---|---|
+| `error_occurred` | `domain` (sync/db/share_decode/...), `code`, `recoverable` (bool), `context_screen`? | Catchall for the long tail. Use `analytics.trackError(domain:error:recoverable:contextScreen:)` from any catch site. |
+| `icloud_conflict_resolved` | `kind` (transaction_duplicate/friend_merge/category_merge/other) | Fired per resolved conflict in `SyncManager.merge*` functions. Volume here tracks "how often does iCloud actually find divergent state to merge." |
 
 ## User properties
 
@@ -191,6 +237,9 @@ cohort splits — never for targeting individuals.
 | `has_completed_onboarding` | bool | Funnel stage. |
 | `has_made_tip` | bool | Direct revenue signal. |
 | `days_since_install_bucket` | `0` / `1-7` / `8-30` / `31-90` / `90+` | Lifecycle stage. |
+| `features_used_days7_bucket` | count of distinct `AnalyticsFeature` kinds touched in past 7 days | Engagement breadth — a user touching 6+ features in a week is a power-user candidate even at low tx volume. |
+| `avg_scan_edits_bucket` | average items-edited per scan | Parser-quality cohort. Low edits = parser works well for this user (likely store/language match). Useful for retention analysis. |
+| `tip_funnel_stage` | `none` / `viewed` / `dismissed_near` / `purchased` | Where the user sits in the tip-jar funnel. Updated after each `tip_jar_*` event. |
 
 ## What we deliberately don't track
 

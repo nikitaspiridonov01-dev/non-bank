@@ -51,6 +51,11 @@ actor CloudReceiptParser {
         let provider: String  // "gemini" | "groq" | "cloudflare" | "openrouter"
         let poolRemaining: Int
         let poolLow: Bool
+        /// Count of providers the router walked before getting a
+        /// successful parse. `1` is the happy path; `4+` means the
+        /// head-of-queue provider is silently degrading. Surfaced
+        /// to analytics only — no UI consumption.
+        let attemptedProvidersCount: Int
     }
 
     private let session: URLSession
@@ -132,7 +137,11 @@ actor CloudReceiptParser {
                 receipt: decoded.receipt,
                 provider: decoded.provider,
                 poolRemaining: decoded.pool_remaining,
-                poolLow: decoded.pool_low
+                poolLow: decoded.pool_low,
+                // Backward-compat: pre-fix Worker builds don't emit
+                // the field, decode-default `1` matches the happy
+                // path (head-of-queue wins) for those responses.
+                attemptedProvidersCount: decoded.attempted_providers_count ?? 1
             )
         } catch {
             throw Error.decodingFailed(error.localizedDescription)
@@ -253,6 +262,9 @@ actor CloudReceiptParser {
         let provider: String
         let pool_remaining: Int
         let pool_low: Bool
+        /// Optional for backward-compat with Worker builds that
+        /// predate the schema bump. `nil` = legacy = assume 1.
+        let attempted_providers_count: Int?
     }
 
     private struct ServerError: Decodable {

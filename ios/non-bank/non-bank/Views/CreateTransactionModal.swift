@@ -715,7 +715,11 @@ struct CreateTransactionModal: View {
             parsedReceipt: parsed,
             confidence: .high,
             totalsMatch: true,
-            source: parsedReceiptResult?.source ?? .ocrFallback
+            source: parsedReceiptResult?.source ?? .ocrFallback,
+            // Synthetic Result construction (rebuilt from in-VM
+            // items for a re-open) — preserve the original attempts
+            // when we have a prior cloud parse, otherwise 1.
+            attemptedProvidersCount: parsedReceiptResult?.attemptedProvidersCount ?? 1
         )
         reviewPayload = ReceiptReviewPayload(result: result, image: pickedReceiptImage)
     }
@@ -897,7 +901,11 @@ struct CreateTransactionModal: View {
             // mismatch so the review screen tells the user to double
             // check rather than silently committing the sum.
             totalsMatch: false,
-            source: mergedSource
+            source: mergedSource,
+            // For multi-image stitches the attempts-count is the
+            // worst across the batch — surfaces the messiest cloud
+            // run rather than averaging it away.
+            attemptedProvidersCount: results.map { $0.attemptedProvidersCount }.max() ?? 1
         )
     }
 

@@ -5,6 +5,7 @@ import SwiftUI
 struct CategoriesSheetView: View {
     @EnvironmentObject var categoryStore: CategoryStore
     @EnvironmentObject var transactionStore: TransactionStore
+    @Environment(\.analytics) private var analytics
     @Binding var isPresented: Bool
     @State private var searchText: String = ""
     @State private var showCreateModal: Bool = false
@@ -139,6 +140,14 @@ struct CategoriesSheetView: View {
             // glass instead of pinning it under the title, which felt
             // visually heavier than the rest of the picker family.
             .searchable(text: $searchText, prompt: "Search categories")
+            .onChange(of: searchText) { newQuery in
+                let trimmed = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard trimmed.count >= 3, sortedCategories.isEmpty else { return }
+                analytics.track(.searchNoResults(
+                    searchType: .categories,
+                    queryLengthBucket: AnalyticsBuckets.queryLength(trimmed.count)
+                ))
+            }
             .navigationTitle("Categories")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {

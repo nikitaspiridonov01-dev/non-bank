@@ -4,6 +4,7 @@ import SwiftUI
 
 struct CreateCategoryModal: View {
     @EnvironmentObject var categoryStore: CategoryStore
+    @Environment(\.analytics) private var analytics
     @Binding var isPresented: Bool
     @State private var emoji: String = ""
     @State private var title: String = ""
@@ -120,6 +121,24 @@ struct CreateCategoryModal: View {
             isDismissing = false
             setRandomEmoji()
             title = ""
+        }
+        // Fire on the FALSE → TRUE edge only — repeated keystrokes
+        // inside a conflicting state shouldn't multiply events.
+        .onChange(of: emojiConflict) { newValue in
+            guard newValue else { return }
+            analytics.track(.formValidationFailed(
+                form: .categoryForm,
+                field: "emoji",
+                reason: .duplicate
+            ))
+        }
+        .onChange(of: titleConflict) { newValue in
+            guard newValue else { return }
+            analytics.track(.formValidationFailed(
+                form: .categoryForm,
+                field: "title",
+                reason: .duplicate
+            ))
         }
     }
 }

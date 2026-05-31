@@ -595,7 +595,15 @@ struct TransactionDetailView: View {
                         OccurrenceTimelineView(
                             interval: interval,
                             startDate: transaction.date,
-                            amount: transaction.amount,
+                            // Mirror the header amount, not the raw
+                            // `transaction.amount`: in share mode the
+                            // header shows the user's share, so each
+                            // occurrence row must show the same share
+                            // (not the full split total) to stay
+                            // consistent. `primaryDisplayAmount` is the
+                            // exact value the header renders, so the two
+                            // always agree across the share/real toggle.
+                            amount: primaryDisplayAmount,
                             currency: transaction.currency,
                             isIncome: transaction.isIncome
                         )
@@ -603,7 +611,7 @@ struct TransactionDetailView: View {
                         // Non-recurring future transaction — single-entry timeline
                         SingleOccurrenceView(
                             date: transaction.date,
-                            amount: transaction.amount,
+                            amount: primaryDisplayAmount,
                             currency: transaction.currency,
                             isIncome: transaction.isIncome
                         )

@@ -159,10 +159,12 @@ struct SettingsView: View {
                     HStack {
                         Label("iCloud Sync", systemImage: "icloud")
                         Spacer()
-                        if syncManager.syncStatus == .syncing {
-                            ProgressView()
-                                .padding(.trailing, AppSpacing.xs)
-                        }
+                        // No inline ProgressView: the spinner appearing
+                        // and disappearing on every foreground sync
+                        // reflowed the row and read as a flicker. The
+                        // "Last synced" date (below) is the only progress
+                        // signal — it just updates in place when a sync
+                        // completes, no animation.
                         Toggle("", isOn: Binding(
                             get: { syncManager.isSyncEnabled },
                             set: { newValue in
@@ -183,29 +185,29 @@ struct SettingsView: View {
                         ))
                         .labelsHidden()
                     }
-                    if case .lastSynced(let date) = syncManager.syncStatus {
+                    // Driven by the persistent `lastSyncedDate`, NOT the
+                    // transient `syncStatus`, so the row stays put (no
+                    // appear/disappear flicker) and just refreshes its
+                    // date when a sync lands. Gated on `isSyncEnabled`
+                    // so a stale date doesn't linger after the user
+                    // turns sync off (that toggle is a deliberate
+                    // action, not the automatic flicker we fixed).
+                    if syncManager.isSyncEnabled, let synced = syncManager.lastSyncedDate {
                         HStack {
                             Text("Last synced")
                                 .foregroundColor(AppColors.textSecondary)
                             Spacer()
-                            // Plain absolute timestamp — no live-ticking
-                            // relative timer. `.abbreviated` date +
-                            // `.shortened` time reads e.g. "May 31, 2026,
-                            // 5:49 PM".
-                            Text(date.formatted(date: .abbreviated, time: .shortened))
+                            Text(synced.formatted(date: .abbreviated, time: .shortened))
                                 .foregroundColor(AppColors.textSecondary)
                                 .font(.caption)
                         }
                     }
-                    if case .error(let msg) = syncManager.syncStatus {
-                        Text(msg)
-                            .font(.caption)
-                            .foregroundColor(AppColors.danger)
-                    }
                 } header: {
                     Text("Sync")
                 } footer: {
-                    Text("Your data is stored on this device. Keep iCloud Sync on to back it up — without it, deleting the app or losing your phone loses everything.")
+                    Text("Backs up your data and keeps it in sync across your devices.")
+                        .font(AppFonts.footnote)
+                        .foregroundColor(AppColors.textTertiary)
                 }
                 .listRowBackground(AppColors.backgroundElevated)
                 } // end if isCloudKitEnabled

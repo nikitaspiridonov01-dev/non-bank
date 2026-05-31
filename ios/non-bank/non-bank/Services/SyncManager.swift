@@ -27,6 +27,23 @@ class SyncManager: ObservableObject {
     @Published var syncStatus: SyncStatus = .idle
     @Published var iCloudAvailable: Bool = false
 
+    /// Timestamp of the last successful sync, persisted so the Settings
+    /// UI can show a STABLE "Last synced …" date that survives across
+    /// the transient `.syncing` status and app relaunches. Decoupling
+    /// the displayed date from `syncStatus` is what kills the flicker:
+    /// the row no longer appears/disappears each time a foreground sync
+    /// flips the status to `.syncing` and back.
+    @Published private(set) var lastSyncedDate: Date? = {
+        let t = UserDefaults.standard.double(forKey: "iCloudLastSyncedAt")
+        return t > 0 ? Date(timeIntervalSince1970: t) : nil
+    }()
+
+    private func markSynced() {
+        let now = Date()
+        lastSyncedDate = now
+        UserDefaults.standard.set(now.timeIntervalSince1970, forKey: "iCloudLastSyncedAt")
+    }
+
     enum SyncStatus: Equatable {
         case idle
         case syncing
@@ -83,6 +100,7 @@ class SyncManager: ObservableObject {
             // this into real-time sync with no other code change.
             try? await cloudKit.createSubscriptionIfNeeded()
             try await performInitialSync()
+            markSynced()
             syncStatus = .lastSynced(Date())
         } catch {
             print("Enable sync error: \(error)")
@@ -468,6 +486,7 @@ class SyncManager: ObservableObject {
                 await reloadStores()
             }
 
+            markSynced()
             syncStatus = .lastSynced(Date())
         } catch {
             syncStatus = .error(error.localizedDescription)

@@ -343,25 +343,51 @@ final class CloudKitService {
         let query = CKQuery(recordType: type, predicate: predicate)
         let zone = zoneID()
 
-        var cursor: CKQueryOperation.Cursor?
-        let (firstResults, firstCursor) = try await privateDB.records(matching: query, inZoneWith: zone, resultsLimit: CKQueryOperation.maximumResults)
-        for (_, result) in firstResults {
-            if let record = try? result.get() {
-                results.append(record)
-            }
-        }
-        cursor = firstCursor
-
-        while let currentCursor = cursor {
-            let (moreResults, nextCursor) = try await privateDB.records(continuingMatchFrom: currentCursor, resultsLimit: CKQueryOperation.maximumResults)
-            for (_, result) in moreResults {
+        do {
+            var cursor: CKQueryOperation.Cursor?
+            let (firstResults, firstCursor) = try await privateDB.records(matching: query, inZoneWith: zone, resultsLimit: CKQueryOperation.maximumResults)
+            for (_, result) in firstResults {
                 if let record = try? result.get() {
                     results.append(record)
                 }
             }
-            cursor = nextCursor
+            cursor = firstCursor
+
+            while let currentCursor = cursor {
+                let (moreResults, nextCursor) = try await privateDB.records(continuingMatchFrom: currentCursor, resultsLimit: CKQueryOperation.maximumResults)
+                for (_, result) in moreResults {
+                    if let record = try? result.get() {
+                        results.append(record)
+                    }
+                }
+                cursor = nextCursor
+            }
+            return results
+        } catch let error as CKError where Self.isMissingRecordType(error) {
+            // The record type doesn't exist in the schema yet. This is
+            // the expected state on a fresh CloudKit container before
+            // anything has been pushed — the development environment
+            // auto-creates record types only on the first *save*, but
+            // `performInitialSync` queries (fetch) first. Treat a
+            // missing type as "no remote records" so the sync proceeds
+            // to the push step, which creates the schema; every
+            // subsequent fetch of that type then succeeds. Without this
+            // the first-ever sync on a new container always errored
+            // with "Did not find record type: Transaction".
+            return []
         }
-        return results
+    }
+
+    /// True when a CloudKit query failed because the queried record type
+    /// isn't in the container schema yet (fresh container, nothing
+    /// pushed). `unknownItem` is the documented code; the server's
+    /// "Did not find record type: X" message is matched as a
+    /// cross-version fallback.
+    private static func isMissingRecordType(_ error: CKError) -> Bool {
+        if error.code == .unknownItem { return true }
+        let desc = error.localizedDescription.lowercased()
+        return desc.contains("did not find record type")
+            || desc.contains("unknown record type")
     }
 
     // MARK: - Fetch changes (delta sync)

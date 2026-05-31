@@ -30,28 +30,23 @@ enum BackendConfig {
     private static let productionHost: String = "non-bank.app"
 
     /// Hostname of the staging Worker. Used by Debug builds (Xcode
-    /// `Cmd+R` on a real device or simulator). **Intentionally still
-    /// on the workers.dev subdomain.** The `staging.non-bank.app`
-    /// custom domain is already bound in `wrangler.toml`, but the
-    /// `non-bank.app` zone is still finishing activation in the new
-    /// Cloudflare account — until it's Active, that hostname won't
-    /// resolve, which would break local receipt-scan testing on
-    /// Debug builds. Flip this to `"staging.non-bank.app"` once
-    /// `https://staging.non-bank.app/v1/health` returns `ok`.
-    private static let stagingHost: String = "non-bank-receipt-proxy-staging.non-bank-ai.workers.dev"
+    /// `Cmd+R` on a real device or simulator). On the
+    /// `staging.non-bank.app` subdomain custom domain (bound in
+    /// `wrangler.toml`'s `[env.staging]` block) so Debug builds
+    /// exercise the same edge path as prod.
+    private static let stagingHost: String = "staging.non-bank.app"
 
-    /// Hosts kept ONLY in `acceptedHosts` (never used as the active
-    /// `host`) so any share link generated at one of them still
-    /// resolves as a valid share URL and opens the app:
-    ///   - `legacyProductionHost` — the pre-custom-domain prod host,
-    ///     for links already circulating in messengers.
-    ///   - `futureStagingHost` — the staging custom domain we'll flip
-    ///     `stagingHost` to once the zone is Active; pre-listed so
-    ///     links from it are accepted the moment we switch.
-    /// Safe to prune once we're confident no old-host links remain in
-    /// the wild — but they cost nothing, so there's no urgency.
+    /// Pre-custom-domain workers.dev hosts. Kept ONLY in
+    /// `acceptedHosts` (never used as the active `host`) so any share
+    /// link generated before the `non-bank.app` switch still resolves
+    /// as a valid share URL and opens the app — links already
+    /// circulating in messengers keep deep-linking forever. The
+    /// workers.dev subdomains still serve in parallel (custom domains
+    /// were additive), so these aren't dead — just no longer the
+    /// hosts we *generate* links at. Safe to prune once we're
+    /// confident no old-host links remain in the wild.
     private static let legacyProductionHost = "non-bank-receipt-proxy.non-bank-ai.workers.dev"
-    private static let futureStagingHost = "staging.non-bank.app"
+    private static let legacyStagingHost = "non-bank-receipt-proxy-staging.non-bank-ai.workers.dev"
 
     /// **The** active host the app talks to right now. Selected at
     /// compile time:
@@ -87,7 +82,7 @@ enum BackendConfig {
             productionHost,
             stagingHost,
             legacyProductionHost,
-            futureStagingHost,
+            legacyStagingHost,
         ])
     }
 

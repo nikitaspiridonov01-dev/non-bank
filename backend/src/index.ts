@@ -1,3 +1,7 @@
+// Must run before `@peculiar/x509` (loaded via ./appattest.ts) — its
+// transitive `tsyringe` dependency throws at module load without the
+// `Reflect.metadata` polyfill.
+import "reflect-metadata";
 import { route, RouterExhaustedError } from "./router.ts";
 import { bumpDeviceQuota, bumpIpParseQuota } from "./quota.ts";
 import { handleSharePage } from "./share.ts";
@@ -7,6 +11,15 @@ import {
   sweepExpiredShareItems,
 } from "./share_items.ts";
 import { handleTestProviders } from "./test_providers.ts";
+import {
+  issueChallenge,
+  verifyAttestation,
+  verifyAssertion,
+  getStoredKey,
+  storeKey,
+  bumpCounter,
+  type AttestEnv,
+} from "./appattest.ts";
 import { logEvent } from "./log.ts";
 import {
   MAX_CATEGORY_NAME,
@@ -36,6 +49,15 @@ export interface Env {
   // production without setting this.
   IP_HASH_SALT?: string;
   LOG_LEVEL: string;
+  // App Attest. `APP_ATTEST_APP_ID` is "<TeamID>.<BundleID>" (public,
+  // in `[vars]`). `ATTEST_SECRET` signs the stateless challenge HMAC —
+  // set via `wrangler secret put ATTEST_SECRET` (any 32+ random chars).
+  // `APP_ATTEST_REQUIRED` ("1"/"0") gates strictness: prod requires a
+  // valid assertion, staging is lenient so simulator dev (no App
+  // Attest) still works.
+  APP_ATTEST_APP_ID?: string;
+  ATTEST_SECRET?: string;
+  APP_ATTEST_REQUIRED?: string;
   GEMINI_API_KEY?: string;
   GROQ_API_KEY?: string;
   OPENROUTER_API_KEY?: string;
@@ -98,6 +120,17 @@ export default {
       }
       if (url.pathname === "/v1/health" && req.method === "GET") {
         return withCors(jsonResponse({ ok: true, env: env.ENV }, 200), cors);
+      }
+      // App Attest — issue a stateless challenge for the one-time key
+      // attestation. Cheap (HMAC, no storage); gated by the per-IP
+      // quota so it can't be used to burn CPU.
+      if (url.pathname === "/v1/attest/challenge" && req.method === "GET") {
+        return withCors(await handleAttestChallenge(req, env), cors);
+      }
+      // App Attest — verify an attestation and pin the device's public
+      // key. Runs the Apple cert-chain validation; rate-gated per IP.
+      if (url.pathname === "/v1/attest/verify" && req.method === "POST") {
+        return withCors(await handleAttestVerify(req, env), cors);
       }
       if (url.pathname === "/v1/quota" && req.method === "GET") {
         return withCors(await handleQuotaSnapshot(env), cors);
@@ -210,6 +243,106 @@ function callerIp(req: Request): string {
   return req.headers.get("CF-Connecting-IP") ?? "unknown";
 }
 
+// ─── App Attest ───────────────────────────────────────────────────────
+
+/// Per-IP gate reused by the two attestation endpoints. The cert-chain
+/// validation in `/v1/attest/verify` is CPU-heavy, so rate-limiting it
+/// (against the same daily per-IP budget as parse-receipt) matters.
+async function attestIpGate(req: Request, env: Env, nowSec: number): Promise<Response | null> {
+  const ipHash = await hashIp(callerIp(req), env.IP_HASH_SALT ?? "non-bank-dev-salt");
+  const ipLimit = Number.parseInt(env.PER_IP_DAILY_LIMIT ?? "", 10) || DEFAULT_PER_IP_DAILY;
+  const gate = await bumpIpParseQuota(env.DB, ipHash, ipLimit, nowSec);
+  if (!gate.ok) {
+    return jsonResponse(
+      { error: "ip_rate_limited", reset_at: gate.reset_at },
+      429,
+    );
+  }
+  return null;
+}
+
+async function handleAttestChallenge(req: Request, env: Env): Promise<Response> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const blocked = await attestIpGate(req, env, nowSec);
+  if (blocked) return blocked;
+  if (!env.ATTEST_SECRET) {
+    return jsonResponse({ error: "attest_misconfigured" }, 500);
+  }
+  const challenge = await issueChallenge(env.ATTEST_SECRET, nowSec);
+  return jsonResponse({ challenge }, 200);
+}
+
+async function handleAttestVerify(req: Request, env: Env): Promise<Response> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const blocked = await attestIpGate(req, env, nowSec);
+  if (blocked) return blocked;
+  if (!env.ATTEST_SECRET || !env.APP_ATTEST_APP_ID) {
+    return jsonResponse({ error: "attest_misconfigured" }, 500);
+  }
+  let body: { keyId?: string; attestation?: string; challenge?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: "bad_request", detail: "invalid JSON" }, 400);
+  }
+  if (!body.keyId || !body.attestation || !body.challenge) {
+    return jsonResponse({ error: "bad_request", detail: "keyId, attestation, challenge required" }, 400);
+  }
+  const attEnv: AttestEnv = {
+    appId: env.APP_ATTEST_APP_ID,
+    // Production Worker accepts only the production aaguid; staging also
+    // accepts the development aaguid (Xcode-signed Debug builds).
+    expectDev: env.ENV !== "production",
+  };
+  const result = await verifyAttestation(
+    { keyId: body.keyId, attestationB64: body.attestation, challengeB64: body.challenge },
+    env.ATTEST_SECRET, attEnv, nowSec,
+  );
+  if (!result.ok) {
+    logEvent(env, "warn", { route: "/v1/attest/verify", msg: "attestation_failed", reason: result.reason });
+    return jsonResponse({ error: "attestation_failed", detail: result.reason }, 403);
+  }
+  await storeKey(env.DB, body.keyId, result.publicKeyB64!, env.ENV, nowSec);
+  logEvent(env, "info", { route: "/v1/attest/verify", msg: "attested", key_prefix: body.keyId.slice(0, 8) });
+  return jsonResponse({ ok: true }, 200);
+}
+
+/// Verify the App Attest assertion on a protected request. Returns
+/// `{ ok: true }` to proceed, or a failure with the HTTP status to
+/// return. Strict (prod): missing/invalid → 403. Lenient (staging):
+/// missing/invalid → allowed (so simulator dev without App Attest
+/// works). On success, bumps the stored Secure-Enclave counter.
+async function gateAttestation(
+  req: Request, env: Env, nowSec: number,
+): Promise<{ ok: true } | { ok: false; status: number; reason: string }> {
+  const required = env.APP_ATTEST_REQUIRED === "1";
+  const keyId = req.headers.get("X-Attest-Key-Id");
+  const assertionB64 = req.headers.get("X-Attest-Assertion");
+  const clientDataB64 = req.headers.get("X-Attest-Client-Data");
+
+  if (!keyId || !assertionB64 || !clientDataB64) {
+    return required ? { ok: false, status: 403, reason: "attestation_required" } : { ok: true };
+  }
+  if (!env.APP_ATTEST_APP_ID) {
+    // Misconfigured: fail closed when strict, open when lenient.
+    return required ? { ok: false, status: 500, reason: "attest_misconfigured" } : { ok: true };
+  }
+  const stored = await getStoredKey(env.DB, keyId);
+  if (!stored) {
+    return required ? { ok: false, status: 403, reason: "key_not_registered" } : { ok: true };
+  }
+  const attEnv: AttestEnv = { appId: env.APP_ATTEST_APP_ID, expectDev: env.ENV !== "production" };
+  const result = await verifyAssertion(
+    { keyId, assertionB64, clientDataB64, storedPublicKeyB64: stored.public_key, storedCounter: stored.counter },
+    attEnv, nowSec,
+  );
+  if (!result.ok) {
+    return required ? { ok: false, status: 403, reason: result.reason ?? "assertion_invalid" } : { ok: true };
+  }
+  await bumpCounter(env.DB, keyId, result.newCounter!, nowSec);
+  return { ok: true };
+}
+
 async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
   const startMs = Date.now();
   const ip = callerIp(req);
@@ -265,6 +398,25 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
         reset_at: ipCheck.reset_at,
       },
       429,
+    );
+  }
+
+  // App Attest gate — verify the request carries a valid Secure-Enclave
+  // assertion from a registered key. Runs BEFORE the multipart parse +
+  // LLM call so a forged/replayed request never reaches the expensive
+  // path. In production this is required; on staging it's lenient
+  // (missing attestation is allowed) so simulator dev keeps working.
+  const attGate = await gateAttestation(req, env, nowSec);
+  if (!attGate.ok) {
+    logEvent(env, "warn", {
+      route: "/v1/parse-receipt",
+      ip_hash: ipHash,
+      msg: "attestation_failed",
+      reason: attGate.reason,
+    });
+    return jsonResponse(
+      { error: "attestation_failed", detail: attGate.reason },
+      attGate.status,
     );
   }
 

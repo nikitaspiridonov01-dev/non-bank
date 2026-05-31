@@ -50,6 +50,17 @@ PER_IP_DAILY_LIMIT = "200"
 # IP from draining Worker CPU budget.
 PER_IP_SHARE_PER_MINUTE_LIMIT = "60"
 LOG_LEVEL = "info"
+# App Attest. App-id = "<TeamID>.<BundleID>". The HMAC challenge secret
+# is a Worker secret: `wrangler secret put ATTEST_SECRET`.
+#
+# `APP_ATTEST_REQUIRED` starts at "0" (lenient) for a SAFE ROLLOUT:
+# attestation is verified when present but a missing/invalid assertion
+# still passes, so a subtle verification bug can't brick receipt
+# scanning for the legit app. FLIP TO "1" once the attestation +
+# assertion round-trip is confirmed working on a real device (watch
+# `wrangler tail` for `attested` / absence of `attestation_failed`).
+APP_ATTEST_APP_ID = "28PGV25T47.nikitaspiridonov.non-bank"
+APP_ATTEST_REQUIRED = "0"
 
 # Note: the [limits] section was removed because cpu_ms is a paid-plan
 # feature (the Cloudflare API rejects it on Free with code 100328). The
@@ -133,6 +144,12 @@ PER_DEVICE_DAILY_LIMIT = "60"
 PER_IP_DAILY_LIMIT = "200"
 PER_IP_SHARE_PER_MINUTE_LIMIT = "60"
 LOG_LEVEL = "info"
+# App Attest on staging: same app-id, but LENIENT — a missing/invalid
+# assertion is allowed so simulator dev (no App Attest support) keeps
+# working. Present assertions are still verified. Real-device Debug
+# builds attest in the development environment (dev aaguid accepted).
+APP_ATTEST_APP_ID = "28PGV25T47.nikitaspiridonov.non-bank"
+APP_ATTEST_REQUIRED = "0"
 
 # Mirrors prod's daily share-items sweep so staging exercises the
 # same code path on every push — keeps the cron handler from rotting

@@ -86,6 +86,17 @@ actor HybridReceiptParser {
         cloudConfig: CloudParseConfig? = nil
     ) async throws -> Result {
         let started = Date()
+        // Tall-receipt tiling (cloud path only): a very tall supermarket
+        // tape compressed into a single vision-model pass loses small
+        // text and drops lines. Split it into overlapping bands, parse
+        // each at full width in parallel, and stitch the results with
+        // overlap-aware dedup. Falls through to the normal single-image
+        // path when the receipt isn't tall enough OR every band fails.
+        if let config = cloudConfig,
+           let bands = ImagePreprocessing.tallReceiptBands(image),
+           let tiled = await parseTiled(bands: bands, config: config, started: started) {
+            return tiled
+        }
         // Downscale up front so every parser path (cloud upload,
         // local Vision OCR, future Foundation Models) sees the same
         // memory ceiling. The downscale is idempotent — already-
@@ -145,6 +156,113 @@ actor HybridReceiptParser {
             source: .cloud(provider: cloudResult.provider),
             attemptedProvidersCount: cloudResult.attemptedProvidersCount
         )
+    }
+
+    // MARK: - Tall-receipt tiling
+
+    /// Parse a tall receipt that was split into overlapping bands. Each
+    /// band is parsed against the cloud in parallel, then the per-band
+    /// item lists are stitched back with an overlap-aware dedup so the
+    /// seam items aren't double-counted. Returns `nil` when every band
+    /// failed — the caller falls back to the single-image path.
+    private func parseTiled(
+        bands: [UIImage],
+        config: CloudParseConfig,
+        started: Date
+    ) async -> Result? {
+        let cloud = self.cloud
+        let cats = config.categories.map { ($0.name, $0.emoji) }
+        let backendURL = config.backendURL
+        let locale = config.localeIdentifier
+
+        var indexed: [(index: Int, result: CloudReceiptParser.Result)] = []
+        await withTaskGroup(of: (Int, CloudReceiptParser.Result)?.self) { group in
+            for (i, band) in bands.enumerated() {
+                group.addTask {
+                    let r = try? await cloud.parse(
+                        image: band, backendURL: backendURL,
+                        categories: cats, localeIdentifier: locale
+                    )
+                    return r.map { (i, $0) }
+                }
+            }
+            for await out in group {
+                if let out { indexed.append((out.0, out.1)) }
+            }
+        }
+        guard !indexed.isEmpty else { return nil }
+        indexed.sort { $0.index < $1.index }
+
+        let receipts = indexed.map { Self.postProcess($0.result.receipt) }
+        let mergedItems = Self.mergeBandItems(receipts.map { $0.items })
+
+        // The grand-total line is at the BOTTOM of the receipt → the last
+        // band. Prefer its total; else the largest non-nil band total;
+        // else nil so downstream falls back to the items sum.
+        let total: Double? = {
+            if let last = receipts.last?.totalAmount, last > 0 { return last }
+            return receipts.compactMap { $0.totalAmount }.filter { $0 > 0 }.max()
+        }()
+
+        let merged = ParsedReceipt(
+            storeName: receipts.compactMap { $0.storeName }.first,
+            date: receipts.compactMap { $0.date }.first,
+            items: mergedItems,
+            totalAmount: total,
+            currency: receipts.compactMap { $0.currency }.first,
+            suggestedCategory: receipts.compactMap { $0.suggestedCategory }.first,
+            language: receipts.compactMap { $0.language }.first
+        )
+        let match = Self.totalsMatch(in: merged)
+        let provider = indexed.first?.result.provider ?? "tiled"
+        let attempts = indexed.map { $0.result.attemptedProvidersCount }.max() ?? 1
+        await Self.recordTelemetry(tier: .cloud, provider: provider, receipt: merged, startedAt: started)
+
+        return Result(
+            parsedReceipt: merged,
+            confidence: match ? .high : .medium,
+            totalsMatch: match,
+            source: .cloud(provider: provider),
+            attemptedProvidersCount: attempts
+        )
+    }
+
+    /// Stitch per-band item lists, dropping the overlap region's
+    /// duplicated run at each seam. Bands are top-to-bottom; the overlap
+    /// crop makes the LAST items of band K reappear as the FIRST items
+    /// of band K+1, so we remove the longest matching boundary run.
+    static func mergeBandItems(_ bands: [[ReceiptItem]]) -> [ReceiptItem] {
+        guard var merged = bands.first else { return [] }
+        for next in bands.dropFirst() {
+            let overlap = boundaryOverlap(tailOf: merged, headOf: next)
+            merged.append(contentsOf: next.dropFirst(overlap))
+        }
+        return merged
+    }
+
+    /// Largest L such that the last L items of `a` equal the first L
+    /// items of `b`. Only a CONTIGUOUS boundary run is matched, so two
+    /// identical items that legitimately appear far apart on the receipt
+    /// are never collapsed — only the seam duplicates are removed.
+    static func boundaryOverlap(tailOf a: [ReceiptItem], headOf b: [ReceiptItem]) -> Int {
+        let maxL = min(a.count, b.count)
+        guard maxL > 0 else { return 0 }
+        for L in stride(from: maxL, through: 1, by: -1) {
+            if zip(a.suffix(L), b.prefix(L)).allSatisfy({ bandItemsMatch($0.0, $0.1) }) {
+                return L
+            }
+        }
+        return 0
+    }
+
+    /// Seam-dedup equality: same name (case/space-insensitive) AND same
+    /// line total. Deliberately strict — under-dedup leaves a duplicate
+    /// the user can delete in review, whereas over-dedup silently drops
+    /// a real item, which is the worse failure.
+    static func bandItemsMatch(_ x: ReceiptItem, _ y: ReceiptItem) -> Bool {
+        let nx = x.name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let ny = y.name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return nx == ny && abs(x.lineTotal - y.lineTotal) < 0.01
     }
 
     // MARK: - Fallback (Tier 1: OCR + regex)

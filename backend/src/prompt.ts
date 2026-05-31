@@ -15,6 +15,20 @@ Return ONE JSON object that matches the schema. No prose. No markdown fences. No
 - Packaging / bag fee → item.
 - Service-priced items (haircut, repair, consultation) → items.
 
+# Completeness — extract EVERY line, top to bottom
+
+Process the receipt exhaustively from the very first product line to the
+very last. Do NOT stop early, summarise, or sample — a receipt with 40
+product lines must yield 40 items. The most damaging failure is silently
+dropping lines from the middle or the ends of a long receipt. Before you
+finish, sweep once more from top to bottom and add anything you skipped.
+
+If the image is a CROPPED SLICE of a longer receipt (the top or bottom
+row is cut by the image edge so you cannot read its full name AND its
+price), SKIP only that single sliced, unreadable row — it is captured in
+full in an adjacent slice. Every fully-readable row, including ones close
+to the edge, must still be extracted.
+
 # Weighted / measured items — CRITICAL: use the LINE TOTAL, never the unit price
 
 This is the single most common extraction mistake. Treat it as a hard rule.

@@ -94,6 +94,18 @@ actor CloudReceiptParser {
             localeIdentifier: localeIdentifier
         )
 
+        // App Attest: attach the device-attestation assertion headers so
+        // the backend can verify this is a genuine app instance. On the
+        // simulator / unsupported devices this returns `[:]` and the
+        // request goes through unattested — staging allows it, prod
+        // (real devices only) requires it. Any attest failure also
+        // yields `[:]`; the resulting prod 403 surfaces as a normal
+        // parse error and the caller falls back to local OCR.
+        let attestHeaders = await AppAttestService.shared.authHeaders(backendURL: backendURL)
+        for (key, value) in attestHeaders {
+            req.setValue(value, forHTTPHeaderField: key)
+        }
+
         let data: Data
         let response: URLResponse
         do {

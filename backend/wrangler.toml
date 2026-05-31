@@ -3,6 +3,19 @@ main = "src/index.ts"
 compatibility_date = "2026-04-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Custom domain — binds the production Worker to the apex `non-bank.app`
+# so share links read `https://non-bank.app/share?p=…` instead of the
+# `*.workers.dev` subdomain. `custom_domain = true` makes Cloudflare
+# auto-provision the proxied DNS record + edge SSL cert on deploy; the
+# zone must already be Active in this same account (the domain was
+# moved in alongside this Worker). The Worker's `/` route 404s, so the
+# apex isn't "taken" for a future landing page — that would just need a
+# `/` handler added here. iOS `BackendConfig.productionHost` is flipped
+# to match so generated links use this host.
+routes = [
+  { pattern = "non-bank.app", custom_domain = true }
+]
+
 # Workers AI binding — runs Llama 3.2 11B Vision on the same Worker
 # (this is provider #3 in the routing pool; zero network hop).
 [ai]
@@ -88,6 +101,12 @@ crons = ["10 4 * * *"]
 # math.
 [env.staging]
 name = "non-bank-receipt-proxy-staging"
+
+# Staging mirrors prod's custom-domain setup on a subdomain so Debug
+# builds exercise the same edge path. Apex stays prod-only.
+routes = [
+  { pattern = "staging.non-bank.app", custom_domain = true }
+]
 
 [[env.staging.d1_databases]]
 binding = "DB"

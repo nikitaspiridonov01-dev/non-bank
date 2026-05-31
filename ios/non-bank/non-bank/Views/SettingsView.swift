@@ -188,7 +188,11 @@ struct SettingsView: View {
                             Text("Last synced")
                                 .foregroundColor(AppColors.textSecondary)
                             Spacer()
-                            Text(date, style: .relative)
+                            // Plain absolute timestamp — no live-ticking
+                            // relative timer. `.abbreviated` date +
+                            // `.shortened` time reads e.g. "May 31, 2026,
+                            // 5:49 PM".
+                            Text(date.formatted(date: .abbreviated, time: .shortened))
                                 .foregroundColor(AppColors.textSecondary)
                                 .font(.caption)
                         }
@@ -200,6 +204,8 @@ struct SettingsView: View {
                     }
                 } header: {
                     Text("Sync")
+                } footer: {
+                    Text("Your data is stored on this device. Keep iCloud Sync on to back it up — without it, deleting the app or losing your phone loses everything.")
                 }
                 .listRowBackground(AppColors.backgroundElevated)
                 } // end if isCloudKitEnabled

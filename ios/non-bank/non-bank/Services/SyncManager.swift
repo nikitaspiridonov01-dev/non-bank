@@ -5,9 +5,21 @@ import Combine
 @MainActor
 class SyncManager: ObservableObject {
 
-    // ⚡️ MASTER SWITCH — set to `true` when you have a paid Apple Developer account
-    // and have enabled the iCloud + CloudKit capability in Xcode.
-    static let isCloudKitEnabled = false
+    // ⚡️ MASTER SWITCH — ON. Requires the iCloud (CloudKit) capability
+    // enabled in Xcode (Signing & Capabilities → +iCloud → CloudKit →
+    // container `iCloud.<bundle-id>`) plus the matching entitlement
+    // (uncommented in `non-bank.entitlements`). With those in place the
+    // sync engine activates; without them CloudKit calls fail gracefully
+    // (`checkAvailability` sets `iCloudAvailable = false`), so the app
+    // still runs locally if signing isn't fully configured yet.
+    //
+    // Sync model: foreground-driven. `MainTabView` calls
+    // `syncIfEnabled()` on scene-active, so changes propagate when the
+    // user opens the app on another device. Real-time push sync (a
+    // remote-notification handler consuming the CloudKit subscription)
+    // is a future enhancement — the subscription is created best-effort
+    // below but its silent pushes aren't consumed yet.
+    static let isCloudKitEnabled = true
 
     @Published var isSyncEnabled: Bool = UserDefaults.standard.bool(forKey: syncEnabledKey) {
         didSet { UserDefaults.standard.set(isSyncEnabled, forKey: Self.syncEnabledKey) }
@@ -62,7 +74,14 @@ class SyncManager: ObservableObject {
         syncStatus = .syncing
         do {
             try await cloudKit.createCustomZoneIfNeeded()
-            try await cloudKit.createSubscriptionIfNeeded()
+            // Best-effort: registering a `shouldSendContentAvailable`
+            // subscription needs the Push Notifications capability +
+            // `aps-environment`, which v1 doesn't ship (we don't yet
+            // consume the silent push). If the save fails, swallow it
+            // and continue — foreground sync still works. Wiring a
+            // remote-notification handler + Push capability later turns
+            // this into real-time sync with no other code change.
+            try? await cloudKit.createSubscriptionIfNeeded()
             try await performInitialSync()
             syncStatus = .lastSynced(Date())
         } catch {

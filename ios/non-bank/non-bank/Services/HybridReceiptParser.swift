@@ -92,10 +92,25 @@ actor HybridReceiptParser {
         // each at full width in parallel, and stitch the results with
         // overlap-aware dedup. Falls through to the normal single-image
         // path when the receipt isn't tall enough OR every band fails.
-        if let config = cloudConfig,
-           let bands = ImagePreprocessing.tallReceiptBands(image),
-           let tiled = await parseTiled(bands: bands, config: config, started: started) {
-            return tiled
+        if let config = cloudConfig {
+            let bands = ImagePreprocessing.tallReceiptBands(image)
+            #if DEBUG
+            if let bands {
+                let dims = bands.map { "\(Int($0.size.width))×\(Int($0.size.height))" }.joined(separator: ", ")
+                print("[HybridReceiptParser] tall-receipt tiling: \(bands.count) bands [\(dims)] ← source \(Int(image.size.width))×\(Int(image.size.height)) pt")
+            } else {
+                let ar = image.size.height / max(image.size.width, 1)
+                print("[HybridReceiptParser] tiling SKIPPED: source \(Int(image.size.width))×\(Int(image.size.height)) pt, H/W=\(String(format: "%.2f", ar)) ≤ \(ImagePreprocessing.tallReceiptAspectThreshold) threshold")
+            }
+            #endif
+            if let bands, let tiled = await parseTiled(bands: bands, config: config, started: started) {
+                return tiled
+            }
+            #if DEBUG
+            if bands != nil {
+                print("[HybridReceiptParser] tiling abandoned (a band failed after retry) → whole-image fallback")
+            }
+            #endif
         }
         // Downscale up front so every parser path (cloud upload,
         // local Vision OCR, future Foundation Models) sees the same
@@ -160,41 +175,64 @@ actor HybridReceiptParser {
 
     // MARK: - Tall-receipt tiling
 
-    /// Parse a tall receipt that was split into overlapping bands. Each
-    /// band is parsed against the cloud in parallel, then the per-band
-    /// item lists are stitched back with an overlap-aware dedup so the
-    /// seam items aren't double-counted. Returns `nil` when every band
-    /// failed — the caller falls back to the single-image path.
+    /// Parse a tall receipt that was split into overlapping bands. Bands are
+    /// parsed **sequentially**, not concurrently: parallel uploads compete
+    /// for bandwidth and blow the per-request 30 s timeout on cellular, and
+    /// their App Attest assertions reach the backend with out-of-order
+    /// monotonic counters — both silently drop a band's items. One at a time
+    /// gives each upload the full pipe and keeps the counter ordered. Each
+    /// band gets a single retry (a failure is usually a transient blip).
+    ///
+    /// Crucially, if any band still can't be parsed after its retry we return
+    /// `nil` to **abandon** the tiled path — the caller then re-parses the
+    /// whole image. A whole-image parse at slightly lower resolution beats a
+    /// tiled result that silently drops the top (or middle) of the receipt,
+    /// which is exactly the failure this guards against.
     private func parseTiled(
         bands: [UIImage],
         config: CloudParseConfig,
         started: Date
     ) async -> Result? {
-        let cloud = self.cloud
         let cats = config.categories.map { ($0.name, $0.emoji) }
         let backendURL = config.backendURL
         let locale = config.localeIdentifier
 
-        var indexed: [(index: Int, result: CloudReceiptParser.Result)] = []
-        await withTaskGroup(of: (Int, CloudReceiptParser.Result)?.self) { group in
-            for (i, band) in bands.enumerated() {
-                group.addTask {
-                    let r = try? await cloud.parse(
-                        image: band, backendURL: backendURL,
-                        categories: cats, localeIdentifier: locale
-                    )
-                    return r.map { (i, $0) }
-                }
+        var receipts: [ParsedReceipt] = []
+        var providers: [String] = []
+        var attemptsMax = 1
+        for (i, band) in bands.enumerated() {
+            var parsed = try? await cloud.parse(
+                image: band, backendURL: backendURL, categories: cats, localeIdentifier: locale
+            )
+            if parsed == nil {
+                // One retry keeps us on the high-quality tiled path instead of
+                // dropping to the whole-image fallback for a single timeout.
+                parsed = try? await cloud.parse(
+                    image: band, backendURL: backendURL, categories: cats, localeIdentifier: locale
+                )
             }
-            for await out in group {
-                if let out { indexed.append((out.0, out.1)) }
+            guard let parsed else {
+                #if DEBUG
+                print("[HybridReceiptParser.parseTiled] band \(i + 1)/\(bands.count) failed after retry — abandoning tiled path → whole-image fallback")
+                #endif
+                return nil
             }
+            let cleaned = Self.postProcess(parsed.receipt)
+            receipts.append(cleaned)
+            providers.append(parsed.provider)
+            attemptsMax = max(attemptsMax, parsed.attemptedProvidersCount)
+            #if DEBUG
+            let totalStr = cleaned.totalAmount.map { String(format: "%.2f", $0) } ?? "nil"
+            print("[HybridReceiptParser.parseTiled] band \(i + 1)/\(bands.count): \(cleaned.items.count) items, total=\(totalStr) (provider=\(parsed.provider))")
+            #endif
         }
-        guard !indexed.isEmpty else { return nil }
-        indexed.sort { $0.index < $1.index }
+        guard !receipts.isEmpty else { return nil }
 
-        let receipts = indexed.map { Self.postProcess($0.result.receipt) }
         let mergedItems = Self.mergeBandItems(receipts.map { $0.items })
+        #if DEBUG
+        let perBand = receipts.map { String($0.items.count) }.joined(separator: "+")
+        print("[HybridReceiptParser.parseTiled] merged \(perBand) band items → \(mergedItems.count) after seam-dedup")
+        #endif
 
         // The grand-total line is at the BOTTOM of the receipt → the last
         // band. Prefer its total; else the largest non-nil band total;
@@ -214,8 +252,7 @@ actor HybridReceiptParser {
             language: receipts.compactMap { $0.language }.first
         )
         let match = Self.totalsMatch(in: merged)
-        let provider = indexed.first?.result.provider ?? "tiled"
-        let attempts = indexed.map { $0.result.attemptedProvidersCount }.max() ?? 1
+        let provider = providers.first ?? "tiled"
         await Self.recordTelemetry(tier: .cloud, provider: provider, receipt: merged, startedAt: started)
 
         return Result(
@@ -223,7 +260,7 @@ actor HybridReceiptParser {
             confidence: match ? .high : .medium,
             totalsMatch: match,
             source: .cloud(provider: provider),
-            attemptedProvidersCount: attempts
+            attemptedProvidersCount: attemptsMax
         )
     }
 

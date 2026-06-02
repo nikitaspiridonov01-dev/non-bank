@@ -1,4 +1,5 @@
 import UIKit
+import CoreImage
 
 /// Shared image-preparation helpers used by every receipt-parsing path
 /// (cloud upload, local Vision OCR, Foundation Models).
@@ -95,7 +96,8 @@ enum ImagePreprocessing {
             let bottom = min(pxH, CGFloat(i + 1) * baseBandPxH + overlapPx)
             let rect = CGRect(x: 0, y: top, width: pxW, height: bottom - top)
             guard let cropped = cg.cropping(to: rect) else { continue }
-            bands.append(downscaled(UIImage(cgImage: cropped), maxDimension: bandMaxDimension))
+            let band = downscaled(UIImage(cgImage: cropped), maxDimension: bandMaxDimension)
+            bands.append(sharpenedForOCR(band))
         }
         return bands.count > 1 ? bands : nil
     }
@@ -111,5 +113,40 @@ enum ImagePreprocessing {
         format.opaque = true
         let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
         return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: image.size)) }
+    }
+
+    // MARK: - OCR sharpening
+
+    /// Reused across calls — `CIContext` allocation is expensive and the
+    /// filter chain is stateless.
+    private static let ciContext = CIContext(options: nil)
+
+    /// Mild contrast + unsharp-mask pass that makes thin digit strokes
+    /// survive a vision model's internal downsampling of small receipt
+    /// text. The bar that separates `8` from `0` (or `6` from `0`, `5`
+    /// from `6`) is exactly the thin feature that dissolves first when a
+    /// 1179-px-wide screenshot of a long receipt is tiled and re-sampled
+    /// by the model — boosting local edge contrast keeps those strokes
+    /// legible. Settings are deliberately gentle: just enough emphasis to
+    /// preserve strokes, not so much that ringing invents phantom ones.
+    /// Returns the input unchanged if Core Image can't process it.
+    static func sharpenedForOCR(_ image: UIImage) -> UIImage {
+        guard let cg = image.cgImage else { return image }
+        let input = CIImage(cgImage: cg)
+        guard
+            let contrasted = CIFilter(name: "CIColorControls", parameters: [
+                kCIInputImageKey: input,
+                kCIInputContrastKey: 1.08,
+                kCIInputSaturationKey: 1.0,
+                kCIInputBrightnessKey: 0.0,
+            ])?.outputImage,
+            let sharpened = CIFilter(name: "CIUnsharpMask", parameters: [
+                kCIInputImageKey: contrasted,
+                kCIInputRadiusKey: 1.8,
+                kCIInputIntensityKey: 0.7,
+            ])?.outputImage,
+            let out = ciContext.createCGImage(sharpened, from: input.extent)
+        else { return image }
+        return UIImage(cgImage: out)
     }
 }

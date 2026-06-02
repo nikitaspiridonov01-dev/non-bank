@@ -59,6 +59,21 @@ struct ReceiptReviewView: View {
         parseResult.parsedReceipt.totalAmount
     }
 
+    /// Σ(items) measured against the parser's detected grand total. A
+    /// correctly-read receipt matches to the cent — the register prints
+    /// the total AS the sum of the line items — so a gap beyond a few
+    /// cents flags a likely misread digit (a price's last decimal 8→0) or
+    /// a dropped item. Checked INDEPENDENTLY of `parseResult.confidence`:
+    /// a single last-decimal slip stays deep inside the 1 % confidence
+    /// tolerance, so the receipt is bucketed `.high` and would otherwise
+    /// show no warning at all. Returns the absolute gap when worth
+    /// surfacing, else nil.
+    private var priceTotalMismatch: Double? {
+        guard let grand = grandTotal, grand > 0 else { return nil }
+        let diff = abs(itemsTotal - grand)
+        return diff > 0.05 ? diff : nil
+    }
+
     var body: some View {
         if wrapInNavigationStack {
             NavigationStack { contentBody }
@@ -188,26 +203,30 @@ struct ReceiptReviewView: View {
 
     @ViewBuilder
     private var confidenceBannerIfNeeded: some View {
-        switch parseResult.confidence {
-        case .high:
-            EmptyView()
-        case .medium:
-            // Same warning treatment as `.low` — the user doesn't need
-            // to know "totals divergence" vs "no AI was used", they just
-            // need the same prompt: please double-check.
+        if let grand = grandTotal, priceTotalMismatch != nil {
+            // Most actionable signal: the items don't sum to the printed
+            // total. Points the user straight at "a price is misread"
+            // even when overall confidence is `.high`.
             banner(
                 icon: "exclamationmark.triangle.fill",
                 tint: AppColors.warning,
-                title: "Double-check the receipt",
-                subtitle: "Some details may be off — please review the items below before saving."
+                title: "Prices don't add up",
+                subtitle: "Items add up to \(ReceiptItem.formatAmount(itemsTotal)), but the receipt total is \(ReceiptItem.formatAmount(grand)). Check the items for a misread amount."
             )
-        case .low:
-            banner(
-                icon: "exclamationmark.triangle.fill",
-                tint: AppColors.warning,
-                title: "Double-check the receipt",
-                subtitle: "Some details may be off — please review the items below before saving."
-            )
+        } else {
+            switch parseResult.confidence {
+            case .high:
+                EmptyView()
+            case .medium, .low:
+                // The user doesn't need to know "totals divergence" vs "no
+                // AI was used" — both want the same prompt: double-check.
+                banner(
+                    icon: "exclamationmark.triangle.fill",
+                    tint: AppColors.warning,
+                    title: "Double-check the receipt",
+                    subtitle: "Some details may be off — please review the items below before saving."
+                )
+            }
         }
     }
 

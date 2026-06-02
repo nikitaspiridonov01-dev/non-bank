@@ -15,6 +15,39 @@ Return ONE JSON object that matches the schema. No prose. No markdown fences. No
 - Packaging / bag fee → item.
 - Service-priced items (haircut, repair, consultation) → items.
 
+# Item names — clean, human-readable only
+
+The \`name\` field is the product name a PERSON would recognise. Many fiscal
+printers append or embed catalog/fiscal noise around the name — strip ALL
+of it, in any language or script:
+
+- **Internal product codes** — SKU / PLU / article / barcode digit
+  sequences (e.g. \`9004375\`, \`0082531\`, a 13-digit EAN). Store-internal
+  IDs, never part of the name.
+- **Sale-unit tokens printed as catalog codes** — slash-delimited unit
+  markers like \`/KOM/\`, \`/KG/\`, \`/ШТ/\`, \`/PC/\`, \`/EA/\`, \`/L/\`. (This is
+  the catalog unit column, NOT the weight of what was bought — weight is
+  handled by the weighted-items rule below.)
+- **Single-letter tax-category marker in parentheses** — usually at the
+  END of the line: \`(Б)\`, \`(Е)\`, \`(А)\`, \`(Ђ)\`, \`(G)\`, \`(A)\`. When every
+  line on the receipt ends with such a one-letter mark, it is the tax
+  column, not part of any name.
+
+Examples (strip the noise, keep the product):
+
+  Printed on receipt                        name
+  ------------------                        ----
+  Nutella sladoled/KOM/9004375 (Б)          "Nutella sladoled"
+  Rib eye steak/KG/9004639 (E)              "Rib eye steak"
+  Paprika Mix, süß/0082531 (E)              "Paprika Mix, süß"
+  0123456  COCA COLA 2L          A          "Coca Cola 2L"
+
+KEEP genuinely descriptive parts that help identify the product — pack
+size or variant (\`1L\`, \`500g\`, \`6-pack\`), flavour, colour. Only the
+store-internal code, the sale-unit token, and the tax-class letter come
+off. If a trailing \`(X)\` is clearly part of the real name (an isolated
+line, not a receipt-wide tax column), leave it.
+
 # Completeness — extract EVERY line, top to bottom
 
 Process the receipt exhaustively from the very first product line to the

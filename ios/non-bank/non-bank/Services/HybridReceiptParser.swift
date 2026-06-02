@@ -264,42 +264,104 @@ actor HybridReceiptParser {
         )
     }
 
-    /// Stitch per-band item lists, dropping the overlap region's
-    /// duplicated run at each seam. Bands are top-to-bottom; the overlap
-    /// crop makes the LAST items of band K reappear as the FIRST items
-    /// of band K+1, so we remove the longest matching boundary run.
+    /// Stitch per-band item lists, removing each seam's duplicated overlap
+    /// region. Bands are top-to-bottom; the overlap crop makes the LAST
+    /// items of band K reappear as the FIRST items of band K+1. For each
+    /// seam we drop the cut partials off band K's tail and the duplicated
+    /// run off band K+1's head (see `seamOverlap`).
     static func mergeBandItems(_ bands: [[ReceiptItem]]) -> [ReceiptItem] {
         guard var merged = bands.first else { return [] }
         for next in bands.dropFirst() {
-            let overlap = boundaryOverlap(tailOf: merged, headOf: next)
-            merged.append(contentsOf: next.dropFirst(overlap))
+            let (dropTail, dropHead) = seamOverlap(tailOf: merged, headOf: next)
+            if dropTail > 0 { merged.removeLast(min(dropTail, merged.count)) }
+            merged.append(contentsOf: next.dropFirst(min(dropHead, next.count)))
         }
         return merged
     }
 
-    /// Largest L such that the last L items of `a` equal the first L
-    /// items of `b`. Only a CONTIGUOUS boundary run is matched, so two
-    /// identical items that legitimately appear far apart on the receipt
-    /// are never collapsed — only the seam duplicates are removed.
-    static func boundaryOverlap(tailOf a: [ReceiptItem], headOf b: [ReceiptItem]) -> Int {
-        let maxL = min(a.count, b.count)
-        guard maxL > 0 else { return 0 }
-        for L in stride(from: maxL, through: 1, by: -1) {
-            if zip(a.suffix(L), b.prefix(L)).allSatisfy({ bandItemsMatch($0.0, $0.1) }) {
-                return L
+    /// Locate the overlap between the end of `a` and the start of `b` and
+    /// return `(items to drop off a's tail, items to drop off b's head)`.
+    /// Robust to the two ways real tiled bands diverge from a clean
+    /// suffix==prefix match — each parsed independently by the model:
+    ///   1. EDGE-CUT items — the band crop slices an item at the exact
+    ///      seam, so a's very last / b's very first item is a partial that
+    ///      won't match. A small skew (≤ `maxSkip`) on each side steps
+    ///      over them (and the one on a's side is dropped as a partial).
+    ///   2. MODEL VARIANCE — the same line read twice yields truncated
+    ///      names and wobbling prices, so matching is fuzzy
+    ///      (diacritic/punct-insensitive, prefix-tolerant, price within
+    ///      tolerance).
+    /// Biased AGAINST over-dedup (the costlier error): a lone single-item
+    /// match that needed a skew is treated as coincidence and ignored, so
+    /// only a contiguous run — or an exact boundary touch — collapses. A
+    /// legitimately-repeated item away from the seam is never considered.
+    static func seamOverlap(tailOf a: [ReceiptItem], headOf b: [ReceiptItem]) -> (dropTail: Int, dropHead: Int) {
+        let window = 12
+        let aCount = a.count, bCount = b.count
+        guard aCount > 0, bCount > 0 else { return (0, 0) }
+        let maxSkip = 3
+        var best: (len: Int, skipA: Int, skipB: Int)?
+        for skipA in 0...min(maxSkip, aCount - 1) {
+            for skipB in 0...min(maxSkip, bCount - 1) {
+                let maxL = min(window, aCount - skipA, bCount - skipB)
+                guard maxL >= 1 else { continue }
+                for L in stride(from: maxL, through: 1, by: -1) {
+                    var ok = true
+                    for k in 0..<L where !fuzzyItemMatch(a[aCount - skipA - L + k], b[skipB + k]) {
+                        ok = false
+                        break
+                    }
+                    if ok {
+                        if best == nil || L > best!.len
+                            || (L == best!.len && skipA + skipB < best!.skipA + best!.skipB) {
+                            best = (L, skipA, skipB)
+                        }
+                        break  // longest L for this (skipA, skipB)
+                    }
+                }
             }
         }
-        return 0
+        guard let best else { return (0, 0) }
+        // A single fuzzy match that required stepping over a cut item is
+        // too weak to trust — leave a possible duplicate (the user can
+        // delete it) rather than risk dropping a real item.
+        if best.len == 1 && (best.skipA + best.skipB) > 0 { return (0, 0) }
+        return (best.skipA, best.skipB + best.len)
     }
 
-    /// Seam-dedup equality: same name (case/space-insensitive) AND same
-    /// line total. Deliberately strict — under-dedup leaves a duplicate
-    /// the user can delete in review, whereas over-dedup silently drops
-    /// a real item, which is the worse failure.
-    static func bandItemsMatch(_ x: ReceiptItem, _ y: ReceiptItem) -> Bool {
-        let nx = x.name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        let ny = y.name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        return nx == ny && abs(x.lineTotal - y.lineTotal) < 0.01
+    /// Seam-dedup fuzzy equality. Name comparison folds diacritics/case and
+    /// keeps only alphanumerics, then accepts an exact match OR a solid
+    /// shared prefix (one band truncating a long name at its crop edge).
+    /// A clearly different price still means a different line — so two
+    /// same-named items with diverging totals are kept (this is what stops
+    /// genuine repeat purchases from collapsing). A missing price on a cut
+    /// partial doesn't veto an otherwise-strong name match.
+    static func fuzzyItemMatch(_ x: ReceiptItem, _ y: ReceiptItem) -> Bool {
+        let nx = foldedName(x.name), ny = foldedName(y.name)
+        guard !nx.isEmpty, !ny.isEmpty else { return false }
+        let nameMatch: Bool
+        if nx == ny {
+            nameMatch = true
+        } else {
+            let shorter = nx.count <= ny.count ? nx : ny
+            let longer = nx.count <= ny.count ? ny : nx
+            nameMatch = shorter.count >= 4 && longer.hasPrefix(shorter)
+        }
+        guard nameMatch else { return false }
+        let px = x.lineTotal, py = y.lineTotal
+        if px == 0 || py == 0 { return true }
+        return abs(px - py) <= max(0.05, abs(px) * 0.01)
+    }
+
+    /// Lowercased, diacritic-folded, alphanumerics-only form of a name so
+    /// "Mammi Ćufte sa pire kro." and "mammi cufte sa pire krompirom"
+    /// compare as a clean prefix and Serbian/diacritic spelling wobble
+    /// across bands doesn't break the seam match.
+    private static func foldedName(_ s: String) -> String {
+        String(
+            s.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+                .filter { $0.isLetter || $0.isNumber }
+        )
     }
 
     // MARK: - Fallback (Tier 1: OCR + regex)

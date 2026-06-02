@@ -52,10 +52,41 @@ final class HybridReceiptParserTilingTests: XCTestCase {
         XCTAssertEqual(merged.map(\.name), ["A", "B", "C", "D"])
     }
 
-    func testBoundaryOverlapMatchesLongestRun() {
+    func testSeamOverlapReportsLongestRun() {
         let a = [item("X", 1), item("C", 3), item("D", 4)]
         let b = [item("C", 3), item("D", 4), item("E", 5)]
-        XCTAssertEqual(HybridReceiptParser.boundaryOverlap(tailOf: a, headOf: b), 2)
+        let (dropTail, dropHead) = HybridReceiptParser.seamOverlap(tailOf: a, headOf: b)
+        XCTAssertEqual(dropTail, 0)
+        XCTAssertEqual(dropHead, 2)   // drop [C, D] off b's head
+    }
+
+    /// The band crop slices an item at the seam, so a's last and b's first
+    /// items are partials that don't match. The skew search must step over
+    /// both and still dedup the real [C, D] overlap.
+    func testMergeToleratesEdgeCutPartials() {
+        let bandA = [item("A", 1), item("B", 2), item("C", 3), item("D", 4), item("Xcut", 9)]
+        let bandB = [item("Ycut", 8), item("C", 3), item("D", 4), item("E", 5), item("F", 6)]
+        let merged = HybridReceiptParser.mergeBandItems([bandA, bandB])
+        XCTAssertEqual(merged.map(\.name), ["A", "B", "C", "D", "E", "F"])
+    }
+
+    /// Model variance: one band truncates a long name and folds diacritics
+    /// differently. A solid shared prefix + equal price must still dedup.
+    func testMergeDedupesFuzzyTruncatedDiacriticName() {
+        let bandA = [item("Coca", 1), item("Mammi Cufte sa pire krompirom", 5)]
+        let bandB = [item("Mammi Ćufte sa pire kro.", 5), item("Banana", 2)]
+        let merged = HybridReceiptParser.mergeBandItems([bandA, bandB])
+        XCTAssertEqual(merged.map(\.name), ["Coca", "Mammi Cufte sa pire krompirom", "Banana"])
+    }
+
+    /// Guard against over-dedup: a short shared token must NOT collapse two
+    /// different items (prefix rule needs ≥4 chars; "Tea"/"Tea" is fine
+    /// only on exact-equal, but different prices keep them apart).
+    func testSeamOverlapDoesNotMergeDifferentPricedSameName() {
+        let a = [item("Bread", 2.00)]
+        let b = [item("Bread", 3.50)]
+        let (_, dropHead) = HybridReceiptParser.seamOverlap(tailOf: a, headOf: b)
+        XCTAssertEqual(dropHead, 0)
     }
 
     func testMergeEmptyAndSingle() {

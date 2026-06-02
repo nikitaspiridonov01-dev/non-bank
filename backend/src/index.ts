@@ -343,6 +343,13 @@ async function gateAttestation(
   return { ok: true };
 }
 
+// Provider ids the client may name in `exclude_provider`. Mirrors the
+// registry in router.ts; an unknown id in the request is silently dropped.
+const VALID_PROVIDER_IDS: ReadonlySet<string> = new Set([
+  "gemini", "groq", "cloudflare", "openrouter",
+  "mistral", "sambanova", "nvidia", "huggingface",
+]);
+
 async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
   const startMs = Date.now();
   const ip = callerIp(req);
@@ -496,6 +503,17 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
     ? sanitizePromptText(rawLocale, MAX_LOCALE_HINT) || undefined
     : undefined;
 
+  // Optional "second opinion" hint: comma-separated provider ids to SKIP
+  // this request, so the client's reconciliation retry (Σ items ≠ printed
+  // total) is answered by a DIFFERENT model than the first parse. Unknown
+  // ids are dropped; an empty/all-unknown value means no exclusion.
+  const excludeProviders = new Set(
+    ((form.get("exclude_provider") as string | null) ?? "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => VALID_PROVIDER_IDS.has(s)),
+  );
+
   const deviceLimit =
     Number.parseInt(env.PER_DEVICE_DAILY_LIMIT, 10) || DEFAULT_PER_DEVICE_DAILY;
   const deviceCheck = await bumpDeviceQuota(
@@ -529,6 +547,7 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
       { imageBytes, imageMime: mime, categories, localeHint },
       env,
       nowSec,
+      excludeProviders,
     );
     const response: ParseResponse = {
       receipt: result.receipt,

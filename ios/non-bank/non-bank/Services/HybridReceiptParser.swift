@@ -103,7 +103,7 @@ actor HybridReceiptParser {
                 print("[HybridReceiptParser] tiling SKIPPED: source \(Int(image.size.width))×\(Int(image.size.height)) pt, H/W=\(String(format: "%.2f", ar)) ≤ \(ImagePreprocessing.tallReceiptAspectThreshold) threshold")
             }
             #endif
-            if let bands, let tiled = await parseTiled(bands: bands, config: config, started: started) {
+            if let bands, let tiled = await parseTiledCascade(image: image, bands: bands, config: config, started: started) {
                 return tiled
             }
             #if DEBUG
@@ -175,6 +175,78 @@ actor HybridReceiptParser {
 
     // MARK: - Tall-receipt tiling
 
+    /// Reconciliation cascade around `parseTiled`, gated by the printed
+    /// grand total used as a checksum. A correctly-read receipt has
+    /// Σ(items) == total; a gap means a likely misread digit. Escalation
+    /// (each step's extra calls are paid ONLY when the previous step's
+    /// result still doesn't reconcile, i.e. rarely):
+    ///   1. Normal bands, best provider. Reconciles → done.
+    ///   2. UPSCALED bands (more model tiles → finer sampling of small
+    ///      text), same provider pool. Reconciles → use it.
+    ///   3. SECOND OPINION — re-parse excluding the provider that answered
+    ///      pass 1, so a different model gets a turn (breaks a single
+    ///      model's deterministic digit confusion). Reconciles → use it.
+    ///   4. Nothing reconciled → keep pass 1; the review screen's
+    ///      `priceTotalMismatch` banner flags the residual gap.
+    /// Returns nil only when pass 1 itself fails every band (caller then
+    /// takes the whole-image path).
+    private func parseTiledCascade(
+        image: UIImage,
+        bands: [UIImage],
+        config: CloudParseConfig,
+        started: Date
+    ) async -> Result? {
+        guard let pass1 = await parseTiled(bands: bands, config: config, started: started) else {
+            return nil
+        }
+        guard Self.hasTotalMismatch(pass1) else { return pass1 }
+        #if DEBUG
+        print("[HybridReceiptParser] pass1 Σ≠total — escalating (upscale → second opinion)")
+        #endif
+
+        // Pass 2 — upscaled bands, same provider pool.
+        if let upBands = ImagePreprocessing.tallReceiptBands(image, upscaleFactor: 1.6),
+           let pass2 = await parseTiled(
+               bands: upBands, config: config, started: started,
+               maxUploadDimension: ImagePreprocessing.upscaledBandUploadDimension),
+           !Self.hasTotalMismatch(pass2) {
+            #if DEBUG
+            print("[HybridReceiptParser] pass2 (upscaled) reconciled")
+            #endif
+            return pass2
+        }
+
+        // Pass 3 — second opinion from a different model.
+        let firstProvider: String? = {
+            if case .cloud(let p) = pass1.source { return p }
+            return nil
+        }()
+        if let pass3 = await parseTiled(
+               bands: bands, config: config, started: started,
+               excludeProvider: firstProvider),
+           !Self.hasTotalMismatch(pass3) {
+            #if DEBUG
+            print("[HybridReceiptParser] pass3 (second opinion, excluded=\(firstProvider ?? "—")) reconciled")
+            #endif
+            return pass3
+        }
+
+        #if DEBUG
+        print("[HybridReceiptParser] no pass reconciled — keeping pass1, mismatch banner will show")
+        #endif
+        return pass1
+    }
+
+    /// True when the receipt carries a positive printed grand total that
+    /// Σ(items) misses by more than 0.05. Mirrors the review screen's
+    /// `priceTotalMismatch` threshold so the cascade escalates on exactly
+    /// the cases the UI would otherwise flag for manual fixing.
+    private static func hasTotalMismatch(_ result: Result) -> Bool {
+        guard let total = result.parsedReceipt.totalAmount, total > 0 else { return false }
+        let sum = result.parsedReceipt.items.reduce(0.0) { $0 + $1.lineTotal }
+        return abs(sum - total) > 0.05
+    }
+
     /// Parse a tall receipt that was split into overlapping bands. Bands are
     /// parsed **sequentially**, not concurrently: parallel uploads compete
     /// for bandwidth and blow the per-request 30 s timeout on cellular, and
@@ -191,7 +263,9 @@ actor HybridReceiptParser {
     private func parseTiled(
         bands: [UIImage],
         config: CloudParseConfig,
-        started: Date
+        started: Date,
+        excludeProvider: String? = nil,
+        maxUploadDimension: CGFloat? = nil
     ) async -> Result? {
         let cats = config.categories.map { ($0.name, $0.emoji) }
         let backendURL = config.backendURL
@@ -202,7 +276,8 @@ actor HybridReceiptParser {
         var attemptsMax = 1
         for (i, band) in bands.enumerated() {
             var parsed = try? await cloud.parse(
-                image: band, backendURL: backendURL, categories: cats, localeIdentifier: locale
+                image: band, backendURL: backendURL, categories: cats, localeIdentifier: locale,
+                excludeProvider: excludeProvider, maxUploadDimension: maxUploadDimension
             )
             if parsed == nil {
                 // One retry keeps us on the high-quality tiled path instead of

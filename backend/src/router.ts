@@ -80,12 +80,23 @@ export async function route(
   req: ProviderRequest,
   env: ProviderEnv & { DB: D1Database },
   nowSec: number,
+  // Providers the caller wants skipped this request — the client's
+  // "second opinion" retry passes the provider that answered the first
+  // (unreconciled) parse here, so a DIFFERENT model gets a turn. If the
+  // exclusion would empty the candidate list it's ignored (better to
+  // answer with the excluded provider than fail the request outright).
+  excludeProviders?: ReadonlySet<string>,
 ): Promise<RouteResult> {
   const quotas = await loadProviderQuotas(env.DB, nowSec);
-  const ranked = rankProviders(quotas, nowSec);
+  const allRanked = rankProviders(quotas, nowSec);
+  const ranked =
+    excludeProviders && excludeProviders.size > 0
+      ? allRanked.filter((r) => !excludeProviders.has(r.provider))
+      : allRanked;
+  const candidates = ranked.length > 0 ? ranked : allRanked;
   const tried: Array<{ provider: ProviderId; error: string }> = [];
 
-  for (const candidate of ranked) {
+  for (const candidate of candidates) {
     const provider = PROVIDERS[candidate.provider];
     try {
       const result = await provider.parse(req, env);

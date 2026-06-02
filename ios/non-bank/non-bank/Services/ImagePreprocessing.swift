@@ -49,6 +49,26 @@ enum ImagePreprocessing {
         return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
     }
 
+    /// Long-edge ceiling for the upscaled reconciliation-retry bands. High
+    /// enough that `CloudReceiptParser.prepareImage` won't shrink a
+    /// 1.6×-enlarged band straight back to the normal cap. Only paid on the
+    /// rare receipts whose items don't reconcile with the printed total.
+    static let upscaledBandUploadDimension: CGFloat = 3600
+
+    /// Enlarge with bilinear interpolation (scale=1, no Retina baggage).
+    /// Adds no real detail, but hands a tile-based vision model a bigger
+    /// canvas so it samples the existing pixels at finer granularity. A
+    /// no-op for `factor <= 1`.
+    static func upscaled(_ image: UIImage, factor: CGFloat) -> UIImage {
+        guard factor > 1 else { return image }
+        let target = CGSize(width: image.size.width * factor, height: image.size.height * factor)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: target, format: format)
+        return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
+    }
+
     // MARK: - Tall-receipt tiling
 
     /// Height/width ratio above which a receipt is "very tall" and gets
@@ -76,7 +96,13 @@ enum ImagePreprocessing {
     /// visible in at least one band (a line sliced by one band's edge is
     /// whole in its neighbour). Returns `nil` when the image isn't tall
     /// enough to need tiling — callers then take the single-image path.
-    static func tallReceiptBands(_ image: UIImage, overlapFraction: CGFloat = 0.16) -> [UIImage]? {
+    /// `upscaleFactor` > 1 enlarges each finished band (bilinear) so a
+    /// tile-based vision model allocates MORE tiles to it — recovering
+    /// effective resolution on a small-text screenshot whose native pixels
+    /// are the ceiling. Used only by the reconciliation retry; pair it with
+    /// `upscaledBandUploadDimension` on the upload side so the enlarged band
+    /// isn't immediately shrunk back.
+    static func tallReceiptBands(_ image: UIImage, overlapFraction: CGFloat = 0.16, upscaleFactor: CGFloat = 1.0) -> [UIImage]? {
         let normalized = orientationNormalized(image)
         guard let cg = normalized.cgImage else { return nil }
         let pxW = CGFloat(cg.width)
@@ -97,7 +123,8 @@ enum ImagePreprocessing {
             let rect = CGRect(x: 0, y: top, width: pxW, height: bottom - top)
             guard let cropped = cg.cropping(to: rect) else { continue }
             let band = downscaled(UIImage(cgImage: cropped), maxDimension: bandMaxDimension)
-            bands.append(sharpenedForOCR(band))
+            let scaled = upscaleFactor > 1 ? upscaled(band, factor: upscaleFactor) : band
+            bands.append(sharpenedForOCR(scaled))
         }
         return bands.count > 1 ? bands : nil
     }

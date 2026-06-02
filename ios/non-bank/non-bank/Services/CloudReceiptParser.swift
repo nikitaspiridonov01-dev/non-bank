@@ -76,10 +76,15 @@ actor CloudReceiptParser {
         image: UIImage,
         backendURL: URL,
         categories: [(name: String, emoji: String?)],
-        localeIdentifier: String?
+        localeIdentifier: String?,
+        excludeProvider: String? = nil,
+        maxUploadDimension: CGFloat? = nil
     ) async throws -> Result {
         let endpoint = backendURL.appendingPathComponent("v1/parse-receipt")
-        let imageData = try Self.prepareImage(image)
+        let imageData = try Self.prepareImage(
+            image,
+            maxDimension: maxUploadDimension ?? ImagePreprocessing.receiptMaxDimension
+        )
         let boundary = "----nonbank-\(UUID().uuidString)"
 
         var req = URLRequest(url: endpoint)
@@ -91,7 +96,8 @@ actor CloudReceiptParser {
             imageData: imageData,
             deviceID: deviceID,
             categories: categories,
-            localeIdentifier: localeIdentifier
+            localeIdentifier: localeIdentifier,
+            excludeProvider: excludeProvider
         )
 
         // App Attest: attach the device-attestation assertion headers so
@@ -185,8 +191,11 @@ actor CloudReceiptParser {
     /// downscaled upstream, so the helper call here is idempotent
     /// (early-returns) — kept for safety in case a future caller
     /// invokes `prepareImage` directly with a raw 12 MP photo.
-    static func prepareImage(_ original: UIImage) throws -> Data {
-        let downscaled = ImagePreprocessing.downscaled(original)
+    static func prepareImage(
+        _ original: UIImage,
+        maxDimension: CGFloat = ImagePreprocessing.receiptMaxDimension
+    ) throws -> Data {
+        let downscaled = ImagePreprocessing.downscaled(original, maxDimension: maxDimension)
         // Re-rendering through UIGraphicsImageRenderer drops EXIF metadata —
         // the resulting `UIImage` has no `imageOrientation` baggage and no
         // GPS / device tags from the source.
@@ -219,7 +228,8 @@ actor CloudReceiptParser {
         imageData: Data,
         deviceID: String,
         categories: [(name: String, emoji: String?)],
-        localeIdentifier: String?
+        localeIdentifier: String?,
+        excludeProvider: String?
     ) -> Data {
         var body = Data()
         let crlf = "\r\n"
@@ -260,6 +270,15 @@ actor CloudReceiptParser {
             body.append(boundaryStart.data(using: .utf8)!)
             body.append("Content-Disposition: form-data; name=\"locale\"\(crlf)\(crlf)".data(using: .utf8)!)
             body.append(locale.data(using: .utf8)!)
+            body.append(crlf.data(using: .utf8)!)
+        }
+
+        // exclude_provider part — the "second opinion" retry asks the router
+        // to skip the model that answered the first (unreconciled) parse.
+        if let excludeProvider, !excludeProvider.isEmpty {
+            body.append(boundaryStart.data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"exclude_provider\"\(crlf)\(crlf)".data(using: .utf8)!)
+            body.append(excludeProvider.data(using: .utf8)!)
             body.append(crlf.data(using: .utf8)!)
         }
 

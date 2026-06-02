@@ -464,8 +464,17 @@ actor HybridReceiptParser {
     ///    "service charge", a misread tip). Loops until the sum fits the
     ///    tolerance window or we run out of items.
     static func postProcess(_ parsed: ParsedReceipt) -> ParsedReceipt {
+        // Normalise names BEFORE classification/merge: strip the fiscal
+        // code/unit/tax-category suffix some EU/Balkan printers append
+        // (see `normalizingFiscalSuffix`). Two failures this prevents:
+        //   1. the embedded code reads as a phone number to
+        //      `ReceiptLineFilter` and the real item is dropped;
+        //   2. one tiled band emits the verbose form while the next emits
+        //      the clean name, so the seam-dedup sees different strings
+        //      and keeps both → false duplicates.
+        let normalizedInput = parsed.items.map(Self.normalizingFiscalSuffix)
         var droppedByFilter: [String] = []
-        let filteredItems = parsed.items.compactMap { item -> ReceiptItem? in
+        let filteredItems = normalizedInput.compactMap { item -> ReceiptItem? in
             switch ReceiptLineFilter.classify(item.name) {
             case .keep, .fee, .tip:
                 // Fee / tip rows are kept (positive sign — they ADD to
@@ -529,6 +538,47 @@ actor HybridReceiptParser {
             totalAmount: parsed.totalAmount,
             currency: parsed.currency,
             suggestedCategory: parsed.suggestedCategory
+        )
+    }
+
+    /// Matches a trailing fiscal code/unit/tax-category suffix that some
+    /// EU/Balkan fiscal printers append to product names, e.g. the
+    /// "/KOM/9004375 (Б)" in "Nutella sladoled/KOM/9004375 (Б)" or the
+    /// "/0082531 (E)" in "Paprika Mix, süß/0082531 (E)". Anchored to the
+    /// END and requires the FULL shape — a slash-delimited 4+ digit code
+    /// immediately followed by a single-letter tax marker in parens — so
+    /// ordinary names that merely contain a slash ("5/8 bolt") or a
+    /// trailing "(X)" ("Vitamin C (E)") are never touched.
+    private static let fiscalSuffixRegex = try? NSRegularExpression(
+        pattern: #"\s*/(?:\p{L}{1,5}/)?\d{4,}\s*\(\s*\p{L}\s*\)\s*$"#,
+        options: []
+    )
+
+    /// Strip the fiscal suffix matched by `fiscalSuffixRegex`, preserving
+    /// every other field. Returns the item unchanged when there's no such
+    /// suffix or when stripping would blank the name. Runs first in
+    /// `postProcess` so the cleaned name is what gets classified, merged,
+    /// and shown to the user.
+    static func normalizingFiscalSuffix(_ item: ReceiptItem) -> ReceiptItem {
+        guard let regex = fiscalSuffixRegex else { return item }
+        let name = item.name
+        let full = NSRange(name.startIndex..., in: name)
+        guard let match = regex.firstMatch(in: name, options: [], range: full),
+              let matchRange = Range(match.range, in: name) else { return item }
+        let cleaned = String(name[..<matchRange.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return item }
+        return ReceiptItem(
+            name: cleaned,
+            quantity: item.quantity,
+            price: item.price,
+            total: item.total,
+            assignedParticipantIDs: item.assignedParticipantIDs,
+            persistedID: item.persistedID,
+            transactionID: item.transactionID,
+            syncID: item.syncID,
+            position: item.position,
+            lastModified: item.lastModified
         )
     }
 

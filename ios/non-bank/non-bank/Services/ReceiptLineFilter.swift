@@ -344,10 +344,15 @@ struct ReceiptLineFilter {
             #"\*{2,}\s?\d{2,4}"#,
             #"\bx{2,}\s?\d{2,4}\b"#,
             #"ending\s+in\s+\d{2,4}"#,
-            // International phone numbers — 9+ chars made of digits, spaces,
-            // hyphens or parens, optionally preceded by `+`. Catches both
-            // `+1 (555) 123-4567` and `+7 916 123 45 67`.
-            #"\+?[\d\s\-\(\)]{9,}"#,
+            // International phone numbers — ≥9 actual DIGITS, optionally
+            // grouped by spaces / hyphens / parens and preceded by `+`.
+            // Counting digits (not characters) is deliberate: the old
+            // `[\d\s\-\(\)]{9,}` matched a 7-digit fiscal product code glued
+            // to a tax marker — "…/KOM/9004375 (Б)" contains the 9-char run
+            // "9004375 (" — and dropped the real grocery item as a "phone".
+            // `+1 (555) 123-4567` and `+7 916 123 45 67` (11 digits) still
+            // match; a 7-digit code does not.
+            #"\+?\d(?:[\s\-\(\)]*\d){8,}"#,
             // Pure date-time lines (no letters except am/pm)
             #"^\s*\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}(\s+\d{1,2}:\d{2}(\s*[ap]m)?)?\s*$"#,
             // Numeric date anywhere on the line: 27.04.2026 / 11/04/26 /

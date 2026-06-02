@@ -63,4 +63,44 @@ final class HybridReceiptParserTilingTests: XCTestCase {
         let single = [item("A", 1), item("B", 2)]
         XCTAssertEqual(HybridReceiptParser.mergeBandItems([single]).map(\.name), ["A", "B"])
     }
+
+    // MARK: - Fiscal-suffix name normalisation
+
+    /// "Name/UNIT/code (taxLetter)" → "Name". The embedded 7-digit code
+    /// otherwise reads as a phone number and the real item is dropped.
+    func testNormalizingFiscalSuffix_stripsCodeUnitAndTaxMarker() {
+        let cleaned = HybridReceiptParser.normalizingFiscalSuffix(item("Nutella sladoled/KOM/9004375 (Б)", 549))
+        XCTAssertEqual(cleaned.name, "Nutella sladoled")
+        XCTAssertEqual(cleaned.total, 549)   // other fields preserved
+    }
+
+    func testNormalizingFiscalSuffix_stripsUnitlessCode() {
+        let cleaned = HybridReceiptParser.normalizingFiscalSuffix(item("Paprika Mix, süß/0082531 (E)", 120))
+        XCTAssertEqual(cleaned.name, "Paprika Mix, süß")
+    }
+
+    /// Conservative: ordinary names that merely contain a slash or a
+    /// trailing "(X)" must be left exactly as-is.
+    func testNormalizingFiscalSuffix_leavesOrdinaryNamesUntouched() {
+        XCTAssertEqual(HybridReceiptParser.normalizingFiscalSuffix(item("5/8 inch bolt", 3)).name, "5/8 inch bolt")
+        XCTAssertEqual(HybridReceiptParser.normalizingFiscalSuffix(item("Vitamin C (E)", 8)).name, "Vitamin C (E)")
+        XCTAssertEqual(HybridReceiptParser.normalizingFiscalSuffix(item("Milk 1L", 2)).name, "Milk 1L")
+    }
+
+    /// Integration through the real pipeline: fiscal-coded items must
+    /// survive `postProcess` (not be dropped as "phone numbers") AND come
+    /// out with clean names — exactly the band-1 failure from the logs.
+    func testPostProcessKeepsAndCleansFiscalItems() {
+        let raw = ParsedReceipt(
+            storeName: nil, date: nil,
+            items: [
+                item("Nutella sladoled/KOM/9004375 (Б)", 549),
+                item("Rib eye steak/KG/9004639 (E)", 1200)
+            ],
+            totalAmount: nil, currency: nil
+        )
+        let cleaned = HybridReceiptParser.postProcess(raw)
+        XCTAssertEqual(cleaned.items.count, 2)
+        XCTAssertEqual(cleaned.items.map(\.name), ["Nutella sladoled", "Rib eye steak"])
+    }
 }

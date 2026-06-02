@@ -182,6 +182,16 @@ final class ReceiptLineFilterTests: XCTestCase {
         XCTAssertEqual(ReceiptLineFilter.classify("+7 916 123 45 67"), .skipNonProduct)
     }
 
+    /// Regression: EU/Balkan fiscal printers embed a 7-digit code + a
+    /// single-letter tax marker in the item name. The phone-number pattern
+    /// used to match the "9004375 (" run and drop these REAL grocery items
+    /// as non-products. They must classify as `.keep`.
+    func testClassify_fiscalProductCode_isKept() {
+        XCTAssertEqual(ReceiptLineFilter.classify("Nutella sladoled/KOM/9004375 (Б)"), .keep)
+        XCTAssertEqual(ReceiptLineFilter.classify("Rib eye steak/KG/9004639 (E)"), .keep)
+        XCTAssertEqual(ReceiptLineFilter.classify("Paprika Mix, süß/0082531 (E)"), .keep)
+    }
+
     func testClassify_pureDateTime() {
         XCTAssertEqual(ReceiptLineFilter.classify("12.05.2024 14:30"), .skipNonProduct)
         XCTAssertEqual(ReceiptLineFilter.classify("01/02/24"), .skipNonProduct)

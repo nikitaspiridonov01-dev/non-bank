@@ -107,7 +107,21 @@ enum AnalyticsEvent {
         /// Coarse store-category tag derived from the parsed receipt
         /// (groceries / restaurant / services / …). NEVER the raw
         /// store name — keeps the event PII-free.
-        storeCategory: StoreCategory
+        storeCategory: StoreCategory,
+        /// AI-capacity headroom at scan time: the router's combined free
+        /// daily quota across all providers, bucketed (`nil` on the OCR
+        /// path). `poolLow` mirrors the backend's `<20 left` flag.
+        poolRemainingBucket: String?,
+        poolLow: Bool,
+        /// Tiled-receipt reconciliation passes that ran: 1 = clean first
+        /// parse, 2-3 = items didn't sum to the printed total so we
+        /// re-parsed (upscale, then a second provider) — each pass is N
+        /// extra AI calls, so this is the cascade's real cost multiplier.
+        reconciliationPasses: Int,
+        /// Set ONLY when `parser == .ocrFallback`: why the cloud path was
+        /// not used. Lets us separate capacity-driven fallbacks from user
+        /// choice / connectivity.
+        cloudFallbackReason: CloudFallbackReason?
     )
     case receiptScanFailed(errorType: ScanErrorType, source: ReceiptScanSource)
     case receiptItemsEditedInReview(
@@ -441,8 +455,8 @@ extension AnalyticsEvent {
 
         case let .receiptScanStarted(source, num):
             return ["source": source.rawValue, "num_photos": String(num)]
-        case let .receiptScanSucceeded(itemsBucket, confidence, parser, durationBucket, discounts, fees, taxes, provider, attemptedProviders, imageBucket, language, storeCategory):
-            return [
+        case let .receiptScanSucceeded(itemsBucket, confidence, parser, durationBucket, discounts, fees, taxes, provider, attemptedProviders, imageBucket, language, storeCategory, poolRemainingBucket, poolLow, reconciliationPasses, cloudFallbackReason):
+            var p: [String: String] = [
                 "items_count_bucket": itemsBucket,
                 "confidence": confidence.rawValue,
                 "parser": parser.rawValue,
@@ -456,6 +470,18 @@ extension AnalyticsEvent {
                 "language": language.rawValue,
                 "store_category": storeCategory.rawValue
             ]
+            // Capacity params are path-specific: pool headroom + cascade
+            // cost on the cloud path, fallback reason on the OCR path.
+            // Keeping them off the irrelevant path stops the dashboard
+            // from filling with N/A rows.
+            if parser == .cloud {
+                if let poolRemainingBucket { p["pool_remaining_bucket"] = poolRemainingBucket }
+                p["pool_low"] = String(poolLow)
+                p["reconciliation_passes"] = String(reconciliationPasses)
+            } else if parser == .ocrFallback, let reason = cloudFallbackReason {
+                p["fallback_reason"] = reason.rawValue
+            }
+            return p
         case let .receiptScanFailed(errorType, source):
             return ["error_type": errorType.rawValue, "source": source.rawValue]
         case let .receiptItemsEditedInReview(added, deleted, nameEdits, priceEdits, quantityEdits, totalChanged):
@@ -652,6 +678,24 @@ enum ScanConfidence: String { case high, medium, low }
 enum ScanParser: String { case cloud, ocrFallback = "ocr_fallback" }
 enum ScanErrorType: String {
     case network, noItems = "no_items", parseError = "parse_error", timeout
+    /// AI-capacity failures, previously collapsed into `parse_error`.
+    /// `rate_limited` = this device / network hit its daily cap;
+    /// `providers_unavailable` = the router exhausted every provider.
+    case rateLimited = "rate_limited"
+    case providersUnavailable = "providers_unavailable"
+}
+
+/// Why the receipt parser fell back from the cloud (AI) path to local OCR.
+/// Surfaced on `receipt_scan_succeeded` (parser=ocr_fallback) so a
+/// capacity-driven fallback (`rate_limited` / `providers_unavailable`) is
+/// distinguishable from a user choice (`cloud_off`) or connectivity
+/// (`network`) — the core "is AI capacity enough" signal.
+enum CloudFallbackReason: String {
+    case cloudOff = "cloud_off"
+    case rateLimited = "rate_limited"
+    case providersUnavailable = "providers_unavailable"
+    case network
+    case cloudError = "cloud_error"
 }
 enum ShareLinkSource: String { case detail, postSplitPrompt = "post_split_prompt" }
 enum ShareLinkType: String { case split, singleTx = "single_tx" }
@@ -987,6 +1031,21 @@ enum AnalyticsBuckets {
         case 500..<1000: return "500-1000"
         case 1000..<2500: return "1000-2500"
         default:         return "2500+"
+        }
+    }
+
+    /// Combined free-quota headroom across ALL AI providers at scan time,
+    /// bucketed. The backend flags `pool_low` at `<20` remaining, so the
+    /// `1-20` bucket lines up with "low" — a rising share of `0` / `1-20`
+    /// is the direct "AI capacity running out" signal.
+    static func poolRemaining(_ value: Int) -> String {
+        switch value {
+        case ..<1:       return "0"
+        case 1..<20:     return "1-20"
+        case 20..<50:    return "20-50"
+        case 50..<200:   return "50-200"
+        case 200..<1000: return "200-1000"
+        default:         return "1000+"
         }
     }
 

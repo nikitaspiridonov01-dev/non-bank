@@ -757,7 +757,7 @@ struct CreateTransactionModal: View {
                 await MainActor.run {
                     isParsingReceipt = false
                     if result.parsedReceipt.items.isEmpty {
-                        analytics.track(.receiptScanFailed(errorType: .noItems, source: .camera))
+                        analytics.track(.receiptScanFailed(errorType: result.emptyScanErrorType, source: .camera))
                         analytics.recordActivationFirstReceiptScannedIfNeeded(outcome: .fail)
                         receiptParseError = "No items detected. Try a clearer photo or enter the amount manually."
                         showReceiptParseError = true

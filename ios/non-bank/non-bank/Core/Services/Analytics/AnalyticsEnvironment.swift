@@ -292,8 +292,28 @@ extension AnalyticsServiceProtocol {
             attemptedProvidersCount: result.attemptedProvidersCount,
             imageSizeKbBucket: AnalyticsBuckets.imageSizeKb(imageBytes),
             language: ReceiptLanguage(rawValue: result.parsedReceipt.language ?? "") ?? .other,
-            storeCategory: StoreCategory.from(suggestedCategory: result.parsedReceipt.suggestedCategory)
+            storeCategory: StoreCategory.from(suggestedCategory: result.parsedReceipt.suggestedCategory),
+            poolRemainingBucket: result.poolRemaining.map(AnalyticsBuckets.poolRemaining),
+            poolLow: result.poolLow,
+            reconciliationPasses: result.reconciliationPasses,
+            cloudFallbackReason: result.cloudFallbackReason
         ))
+    }
+}
+
+extension HybridReceiptParser.Result {
+    /// When a scan returns no usable items, prefer a capacity-specific
+    /// failure reason over the generic `no_items`: if the cloud path fell
+    /// back because it was rate-limited or the provider pool was exhausted,
+    /// THAT is why the scan failed (local OCR just couldn't save it).
+    /// Surfacing it keeps capacity-driven total failures visible in
+    /// analytics instead of masked as ordinary parse failures.
+    var emptyScanErrorType: ScanErrorType {
+        switch cloudFallbackReason {
+        case .rateLimited:          return .rateLimited
+        case .providersUnavailable: return .providersUnavailable
+        default:                    return .noItems
+        }
     }
 }
 

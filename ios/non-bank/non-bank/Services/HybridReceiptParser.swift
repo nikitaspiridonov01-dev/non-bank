@@ -54,6 +54,22 @@ actor HybridReceiptParser {
         /// `1` for the OCR-fallback path (no router involved); `1+`
         /// from the cloud router. Surfaced to analytics only.
         let attemptedProvidersCount: Int
+
+        // MARK: AI-capacity telemetry (analytics only; default so existing
+        // constructors stay one-liners and only set what they know).
+
+        /// Router's combined free daily quota across all providers at parse
+        /// time (`nil` on the OCR path). For tiled parses, the MIN seen
+        /// across bands — the most conservative headroom reading.
+        var poolRemaining: Int? = nil
+        /// Backend's "pool nearly empty" flag (<20 left). OR-ed across bands.
+        var poolLow: Bool = false
+        /// Tiled reconciliation passes that ran: 1 = clean first parse,
+        /// 2-3 = escalated (upscale, then second provider). Each pass is N
+        /// extra AI calls.
+        var reconciliationPasses: Int = 1
+        /// Set only on the OCR-fallback path: why cloud wasn't used.
+        var cloudFallbackReason: CloudFallbackReason? = nil
     }
 
     /// Built on the main actor by the caller (where `AISettings` and
@@ -121,10 +137,15 @@ actor HybridReceiptParser {
         // re-encodes to JPEG inside `CloudReceiptParser.prepareImage`
         // but skips its own downscale step because of this hoist.
         let prepared = ImagePreprocessing.downscaled(image)
+        // `.cloudOff` is the default reason — it's correct when the cloud
+        // path is skipped entirely (no config). A thrown cloud error below
+        // overwrites it with the specific (capacity / network / …) reason.
+        var fallbackReason: CloudFallbackReason = .cloudOff
         if let config = cloudConfig {
             do {
                 return try await cloudParse(image: prepared, config: config, started: started)
             } catch {
+                fallbackReason = Self.fallbackReason(for: error)
                 #if DEBUG
                 print("[HybridReceiptParser] cloud failed (\(error.localizedDescription)) — falling back to local OCR")
                 #endif
@@ -133,7 +154,7 @@ actor HybridReceiptParser {
                 // hint surfaces the cloud-side error to the user separately.
             }
         }
-        return try await fallbackParse(image: prepared, started: started)
+        return try await fallbackParse(image: prepared, started: started, cloudFallbackReason: fallbackReason)
     }
 
     // MARK: - Cloud (Tier 0)
@@ -169,7 +190,9 @@ actor HybridReceiptParser {
             confidence: match ? .high : .medium,
             totalsMatch: match,
             source: .cloud(provider: cloudResult.provider),
-            attemptedProvidersCount: cloudResult.attemptedProvidersCount
+            attemptedProvidersCount: cloudResult.attemptedProvidersCount,
+            poolRemaining: cloudResult.poolRemaining,
+            poolLow: cloudResult.poolLow
         )
     }
 
@@ -206,10 +229,11 @@ actor HybridReceiptParser {
 
         // Pass 2 — upscaled bands, same provider pool.
         if let upBands = ImagePreprocessing.tallReceiptBands(image, upscaleFactor: 1.6),
-           let pass2 = await parseTiled(
+           var pass2 = await parseTiled(
                bands: upBands, config: config, started: started,
                maxUploadDimension: ImagePreprocessing.upscaledBandUploadDimension),
            !Self.hasTotalMismatch(pass2) {
+            pass2.reconciliationPasses = 2
             #if DEBUG
             print("[HybridReceiptParser] pass2 (upscaled) reconciled")
             #endif
@@ -221,10 +245,11 @@ actor HybridReceiptParser {
             if case .cloud(let p) = pass1.source { return p }
             return nil
         }()
-        if let pass3 = await parseTiled(
+        if var pass3 = await parseTiled(
                bands: bands, config: config, started: started,
                excludeProvider: firstProvider),
            !Self.hasTotalMismatch(pass3) {
+            pass3.reconciliationPasses = 3
             #if DEBUG
             print("[HybridReceiptParser] pass3 (second opinion, excluded=\(firstProvider ?? "—")) reconciled")
             #endif
@@ -234,7 +259,9 @@ actor HybridReceiptParser {
         #if DEBUG
         print("[HybridReceiptParser] no pass reconciled — keeping pass1, mismatch banner will show")
         #endif
-        return pass1
+        var unreconciled = pass1
+        unreconciled.reconciliationPasses = 3  // all three passes ran
+        return unreconciled
     }
 
     /// True when the receipt carries a positive printed grand total that
@@ -245,6 +272,22 @@ actor HybridReceiptParser {
         guard let total = result.parsedReceipt.totalAmount, total > 0 else { return false }
         let sum = result.parsedReceipt.items.reduce(0.0) { $0 + $1.lineTotal }
         return abs(sum - total) > 0.05
+    }
+
+    /// Map a thrown cloud-parse error to the analytics fallback reason so
+    /// the dashboard can separate capacity failures (rate limit / providers
+    /// exhausted) from connectivity / config — the "is AI capacity enough"
+    /// question.
+    static func fallbackReason(for error: Error) -> CloudFallbackReason {
+        guard let e = error as? CloudReceiptParser.Error else { return .cloudError }
+        switch e {
+        case .deviceRateLimited:        return .rateLimited
+        case .allProvidersUnavailable:  return .providersUnavailable
+        case .network:                  return .network
+        case .notConfigured:            return .cloudOff
+        case .imageEncodingFailed, .badStatus, .decodingFailed:
+            return .cloudError
+        }
     }
 
     /// Parse a tall receipt that was split into overlapping bands. Bands are
@@ -274,6 +317,8 @@ actor HybridReceiptParser {
         var receipts: [ParsedReceipt] = []
         var providers: [String] = []
         var attemptsMax = 1
+        var minPoolRemaining: Int? = nil
+        var anyPoolLow = false
         for (i, band) in bands.enumerated() {
             var parsed = try? await cloud.parse(
                 image: band, backendURL: backendURL, categories: cats, localeIdentifier: locale,
@@ -296,6 +341,8 @@ actor HybridReceiptParser {
             receipts.append(cleaned)
             providers.append(parsed.provider)
             attemptsMax = max(attemptsMax, parsed.attemptedProvidersCount)
+            minPoolRemaining = Swift.min(minPoolRemaining ?? parsed.poolRemaining, parsed.poolRemaining)
+            anyPoolLow = anyPoolLow || parsed.poolLow
             #if DEBUG
             let totalStr = cleaned.totalAmount.map { String(format: "%.2f", $0) } ?? "nil"
             print("[HybridReceiptParser.parseTiled] band \(i + 1)/\(bands.count): \(cleaned.items.count) items, total=\(totalStr) (provider=\(parsed.provider))")
@@ -335,7 +382,9 @@ actor HybridReceiptParser {
             confidence: match ? .high : .medium,
             totalsMatch: match,
             source: .cloud(provider: provider),
-            attemptedProvidersCount: attemptsMax
+            attemptedProvidersCount: attemptsMax,
+            poolRemaining: minPoolRemaining,
+            poolLow: anyPoolLow
         )
     }
 
@@ -441,7 +490,11 @@ actor HybridReceiptParser {
 
     // MARK: - Fallback (Tier 1: OCR + regex)
 
-    private func fallbackParse(image: UIImage, started: Date) async throws -> Result {
+    private func fallbackParse(
+        image: UIImage,
+        started: Date,
+        cloudFallbackReason: CloudFallbackReason = .cloudOff
+    ) async throws -> Result {
         // Discard Vision lines below 0.3 confidence — they're typically
         // hallucinations on dirty receipts (smudges, low-contrast paper)
         // and just feed false positives to the parser downstream.
@@ -488,7 +541,8 @@ actor HybridReceiptParser {
             source: .ocrFallback,
             // OCR fallback never goes through the router — 1 is a
             // honest "this single local path attempted once" value.
-            attemptedProvidersCount: 1
+            attemptedProvidersCount: 1,
+            cloudFallbackReason: cloudFallbackReason
         )
     }
 

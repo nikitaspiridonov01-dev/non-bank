@@ -28,11 +28,11 @@
         Launch screen is auto-generated via `INFOPLIST_KEY_UILaunchScreen_Generation`.
     -->
     <key>NSDocumentsFolderUsageDescription</key>
-    <string>Для импорта и экспорта файлов с транзакциями приложению требуется доступ к файлам на устройстве.</string>
+    <string>Used to import and export your transaction files on this device.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>Для выбора файлов для импорта приложению требуется доступ к фото и файлам.</string>
+    <string>Used to choose a receipt photo from your library so its items can be scanned.</string>
     <key>NSCameraUsageDescription</key>
-    <string>Камера используется для сканирования чеков и автоматического распознавания позиций.</string>
+    <string>Used to scan receipts with the camera so their items can be recognized automatically.</string>
     <key>UIBackgroundModes</key>
     <array>
         <string>remote-notification</string>

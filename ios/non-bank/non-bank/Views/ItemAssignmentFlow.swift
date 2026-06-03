@@ -295,7 +295,7 @@ struct ItemAssignmentStep: View {
             )
             .clipShape(Circle())
 
-            Text("Which items did \(participant.isMe ? "you" : participant.name) buy?")
+            Text("Which items did \(participant.isMe ? "you" : participant.name) take?")
                 .font(AppFonts.heading)
                 .foregroundColor(AppColors.textPrimary)
                 .multilineTextAlignment(.center)

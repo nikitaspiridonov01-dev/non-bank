@@ -21,6 +21,14 @@
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <!--
+        Export-compliance: the app uses only exempt encryption — HTTPS/TLS
+        to the backend and Apple's App Attest (Secure Enclave) — no
+        proprietary crypto ships in the binary. Declaring NO here skips the
+        encryption question on every TestFlight / App Store upload.
+    -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+    <!--
         UIMainStoryboardFile / UILaunchStoryboardName were leftovers from
         the old UIKit project template. This is a SwiftUI `@main` app —
         no storyboards exist. Keeping these keys made UIKit search for a

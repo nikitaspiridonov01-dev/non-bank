@@ -5,6 +5,7 @@ import "reflect-metadata";
 import { route, RouterExhaustedError } from "./router.ts";
 import { bumpDeviceQuota, bumpIpParseQuota } from "./quota.ts";
 import { handleSharePage } from "./share.ts";
+import { handlePrivacyPage } from "./privacy.ts";
 import {
   handleUploadShareItems,
   handleFetchShareItems,
@@ -158,6 +159,11 @@ export default {
       // (shorter / more shareable) and the route is HTML, not API.
       if (url.pathname === "/share" && req.method === "GET") {
         return handleSharePage(req, env);
+      }
+      // Privacy policy — static page. Required for the App Store "Privacy
+      // Policy URL" field and TestFlight external (public) testing.
+      if (url.pathname === "/privacy" && req.method === "GET") {
+        return handlePrivacyPage();
       }
       // Server-side receipt-items storage (E2E encrypted).
       //   POST /v1/share-items/{share_id} — sender uploads items

@@ -12,6 +12,14 @@
     <string>6.0</string>
     <key>CFBundleName</key>
     <string>$(PRODUCT_NAME)</string>
+    <!--
+        Home-screen / user-facing app name. Kept separate from CFBundleName
+        ($(PRODUCT_NAME) = "non-bank", the internal target/bundle identity)
+        so the displayed name reads "Non Bank" without renaming the target,
+        bundle id, scheme, or product — none of which need to change.
+    -->
+    <key>CFBundleDisplayName</key>
+    <string>Non Bank</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

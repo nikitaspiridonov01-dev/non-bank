@@ -196,7 +196,7 @@ struct ShareDistributionView: View {
                         .lineLimit(1)
 
                     if showsItemsButton {
-                        itemsButton(for: sharer, count: participantItems.count)
+                        itemsChip(count: participantItems.count)
                     }
                 }
 
@@ -231,28 +231,35 @@ struct ShareDistributionView: View {
         // rows in the debt summary so all Split list rows read as
         // one frosted family.
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous))
-    }
-
-    /// "N items >" tap-affordance sitting under the participant's
-    /// name. Only renders when this transaction was split byItems
-    /// AND we have the receipt locally — both fail on the recipient
-    /// side of a shared transaction, which is what suppresses the
-    /// button there as the user expects (we never ship the items
-    /// list across the link).
-    private func itemsButton(for sharer: ShareRow, count: Int) -> some View {
-        Button {
+        // The WHOLE card is the tap target (not just the small "N items"
+        // chip) when there's an item breakdown to open. Rows without one
+        // (recipient side of a shared tx) stay inert — the guard no-ops and
+        // the button a11y trait is omitted so VoiceOver doesn't promise a
+        // tap that does nothing.
+        .contentShape(RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous))
+        .onTapGesture {
+            guard showsItemsButton else { return }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             itemsSheetTarget = sharer
-        } label: {
-            HStack(spacing: 3) {
-                Text("\(count) \(count == 1 ? "item" : "items")")
-                    .font(AppFonts.metaRegular)
-                Image(systemName: "chevron.right")
-                    .font(AppFonts.iconSmall)
-            }
-            .foregroundColor(AppColors.textTertiary)
         }
-        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(showsItemsButton ? .isButton : [])
+    }
+
+    /// "N items >" affordance sitting under the participant's name. Now a
+    /// plain (non-interactive) chip — the parent row owns the tap — kept as
+    /// a visual cue that the row opens the per-person item list. Only
+    /// renders when this transaction was split byItems AND we have the
+    /// receipt locally (both fail on the recipient side of a shared
+    /// transaction, which is what suppresses it there as the user expects).
+    private func itemsChip(count: Int) -> some View {
+        HStack(spacing: 3) {
+            Text("\(count) \(count == 1 ? "item" : "items")")
+                .font(AppFonts.metaRegular)
+            Image(systemName: "chevron.right")
+                .font(AppFonts.iconSmall)
+        }
+        .foregroundColor(AppColors.textTertiary)
     }
 
     /// Grayscale track + fill bar. Non-colored per spec — shape alone conveys

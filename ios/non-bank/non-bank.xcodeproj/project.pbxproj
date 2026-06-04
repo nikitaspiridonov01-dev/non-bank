@@ -6,6 +6,14 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		B75BDE7E2FCF7DF400667EA3 /* FirebaseAI in Frameworks */ = {isa = PBXBuildFile; productRef = B75BDE7D2FCF7DF400667EA3 /* FirebaseAI */; };
+		B75BDE802FCF7DF400667EA3 /* FirebaseAILogic in Frameworks */ = {isa = PBXBuildFile; productRef = B75BDE7F2FCF7DF400667EA3 /* FirebaseAILogic */; };
+		B75BDE822FCF7DF400667EA3 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = B75BDE812FCF7DF400667EA3 /* FirebaseAnalytics */; };
+		B75BDE842FCF7DF400667EA3 /* FirebaseAnalyticsCore in Frameworks */ = {isa = PBXBuildFile; productRef = B75BDE832FCF7DF400667EA3 /* FirebaseAnalyticsCore */; };
+		B75BDE862FCF7DF400667EA3 /* FirebaseAnalyticsIdentitySupport in Frameworks */ = {isa = PBXBuildFile; productRef = B75BDE852FCF7DF400667EA3 /* FirebaseAnalyticsIdentitySupport */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		B7E2F5BA2F8577F6001B99BB /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -65,6 +73,11 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B75BDE802FCF7DF400667EA3 /* FirebaseAILogic in Frameworks */,
+				B75BDE862FCF7DF400667EA3 /* FirebaseAnalyticsIdentitySupport in Frameworks */,
+				B75BDE7E2FCF7DF400667EA3 /* FirebaseAI in Frameworks */,
+				B75BDE822FCF7DF400667EA3 /* FirebaseAnalytics in Frameworks */,
+				B75BDE842FCF7DF400667EA3 /* FirebaseAnalyticsCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -117,6 +130,11 @@
 			);
 			name = "non-bank";
 			packageProductDependencies = (
+				B75BDE7D2FCF7DF400667EA3 /* FirebaseAI */,
+				B75BDE7F2FCF7DF400667EA3 /* FirebaseAILogic */,
+				B75BDE812FCF7DF400667EA3 /* FirebaseAnalytics */,
+				B75BDE832FCF7DF400667EA3 /* FirebaseAnalyticsCore */,
+				B75BDE852FCF7DF400667EA3 /* FirebaseAnalyticsIdentitySupport */,
 			);
 			productName = "non-bank";
 			productReference = B7C69B782F786CC5008A6FA5 /* non-bank.app */;
@@ -174,6 +192,7 @@
 			mainGroup = B7C69B6F2F786CC5008A6FA5;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				B75BDE7C2FCF7DF400667EA3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B7C69B792F786CC5008A6FA5 /* Products */;
@@ -491,6 +510,45 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B75BDE7C2FCF7DF400667EA3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.14.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B75BDE7D2FCF7DF400667EA3 /* FirebaseAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B75BDE7C2FCF7DF400667EA3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAI;
+		};
+		B75BDE7F2FCF7DF400667EA3 /* FirebaseAILogic */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B75BDE7C2FCF7DF400667EA3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAILogic;
+		};
+		B75BDE812FCF7DF400667EA3 /* FirebaseAnalytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B75BDE7C2FCF7DF400667EA3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalytics;
+		};
+		B75BDE832FCF7DF400667EA3 /* FirebaseAnalyticsCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B75BDE7C2FCF7DF400667EA3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalyticsCore;
+		};
+		B75BDE852FCF7DF400667EA3 /* FirebaseAnalyticsIdentitySupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B75BDE7C2FCF7DF400667EA3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalyticsIdentitySupport;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = B7C69B702F786CC5008A6FA5 /* Project object */;
 }

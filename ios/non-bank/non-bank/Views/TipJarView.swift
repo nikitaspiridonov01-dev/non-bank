@@ -220,12 +220,18 @@ private struct TipRowView: View {
                     )
 
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(tier.title)
-                            .font(AppFonts.bodyEmphasized)
-                            .foregroundColor(AppColors.textPrimary)
-                        if let badge = tier.badge {
-                            badgeChip(for: badge)
+                    // Title + badge sit inline when they fit; otherwise the
+                    // badge drops to its own line *whole*. `ViewThatFits`
+                    // (instead of letting the HStack compress) is what stops
+                    // the chip from wrapping mid-word ("Recommende / d").
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 6) {
+                            titleText
+                            badgeView
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            titleText
+                            badgeView
                         }
                     }
                     Text(tier.blurb)
@@ -235,14 +241,19 @@ private struct TipRowView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Spacer()
+                Spacer(minLength: AppSpacing.sm)
 
-                if isPurchasing {
-                    ProgressView()
-                } else {
+                // The spinner replaces the price *in place*: the price keeps
+                // occupying its slot (hidden, not removed) so the row's text
+                // and badges don't reflow when a purchase starts.
+                ZStack(alignment: .trailing) {
                     Text(priceText)
                         .font(AppFonts.bodyEmphasized)
                         .foregroundColor(isRecommended ? AppColors.accent : AppColors.textPrimary)
+                        .opacity(isPurchasing ? 0 : 1)
+                    if isPurchasing {
+                        ProgressView()
+                    }
                 }
             }
             .padding(AppSpacing.md)
@@ -263,6 +274,20 @@ private struct TipRowView: View {
         .disabled(disabled || product == nil)
     }
 
+    private var titleText: some View {
+        Text(tier.title)
+            .font(AppFonts.bodyEmphasized)
+            .foregroundColor(AppColors.textPrimary)
+            .lineLimit(1)
+    }
+
+    @ViewBuilder
+    private var badgeView: some View {
+        if let badge = tier.badge {
+            badgeChip(for: badge)
+        }
+    }
+
     @ViewBuilder
     private func badgeChip(for badge: TipJarService.Tier.Badge) -> some View {
         switch badge {
@@ -270,6 +295,8 @@ private struct TipRowView: View {
             Text("Recommended")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.white)
+                .lineLimit(1)
+                .fixedSize()
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 // White text on `Color.accentColor` (`#F18A4D`) only
@@ -281,6 +308,8 @@ private struct TipRowView: View {
             Text("Most generous")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(AppColors.accent)
+                .lineLimit(1)
+                .fixedSize()
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(Capsule().fill(AppColors.accent.opacity(0.15)))

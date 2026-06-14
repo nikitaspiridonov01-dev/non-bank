@@ -209,24 +209,22 @@ struct ReceiptItemsReadOnlySheet: View {
                 .foregroundColor(AppColors.textPrimary)
                 .lineLimit(2)
             Spacer(minLength: 8)
-            // "Who shares this" pile — only on assignable item rows of a
-            // byItems split that have ≥1 active assignee. Tapping the row
-            // opens the per-item distribution sheet. Unassigned / non-item
-            // rows show nothing here and stay inert.
-            if !sharers.isEmpty {
-                OverlappingAvatarStack(
-                    participants: sharers,
-                    avatarSize: 20,
-                    strokeColor: AppColors.backgroundElevated,
-                    maxVisible: 3,
-                    overflowCount: max(0, sharers.count - 3)
-                )
-            }
-            // Trailing column: line total on top, qty × unit price
-            // beneath. Mirrors the `ReceiptReviewView` row so a user
-            // who saw "2 × 850 RSD" under the amount during the post-
-            // scan review keeps that exact reading position open later.
+            // Trailing column: the "who shares this" avatar pile sits ABOVE
+            // the price (matching the item-assignment screen), then the line
+            // total, then qty × unit price. The pile only appears on
+            // assignable item rows of a byItems split with ≥1 active
+            // assignee; tapping such a row opens the per-item distribution
+            // sheet. Unassigned / non-item rows show no pile and stay inert.
             VStack(alignment: .trailing, spacing: AppSpacing.xxs) {
+                if !sharers.isEmpty {
+                    OverlappingAvatarStack(
+                        participants: sharers,
+                        avatarSize: 20,
+                        strokeColor: AppColors.backgroundElevated,
+                        maxVisible: 3,
+                        overflowCount: max(0, sharers.count - 3)
+                    )
+                }
                 ReceiptItemAmountText(
                     amount: item.lineTotal,
                     currency: currency,

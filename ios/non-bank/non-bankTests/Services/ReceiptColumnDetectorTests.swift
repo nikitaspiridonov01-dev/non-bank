@@ -123,14 +123,30 @@ final class ReceiptColumnDetectorTests: XCTestCase {
         XCTAssertEqual(items[1].name, "Discount")
     }
 
-    func testExtractItems_discountWithPositivePrice_isStillNegative() {
-        // OCR sometimes loses the leading minus sign. The detector must
-        // force the line total negative regardless of the parsed sign,
-        // because the keyword tells us what the row means.
-        let row = makeRow(text: "Скидка 5,00", y: 0.5)
+    func testExtractItems_negativeDiscountRow_staysNegative() {
+        // A discount-named row whose printed amount is already NEGATIVE is a
+        // genuine deduction and stays negative.
+        let row = makeRow(text: "Скидка -5,00", y: 0.5)
         let items = ReceiptColumnDetector.extractItems(from: [row]).map(\.item)
         XCTAssertEqual(items.count, 1)
         XCTAssertEqual(items[0].lineTotal, -5.0, accuracy: 0.01)
+    }
+
+    func testExtractItems_positivePromoLine_staysPositiveItem() {
+        // SIGN BEATS NAME. A positively-priced line whose name merely
+        // contains a marketing word ("Super Deal", "Combo Menu") is a
+        // regular product, NOT a discount — its printed positive amount must
+        // be preserved. Regression guard for the bug where a combo/meal
+        // "deal" priced at 380 was emitted as a -380 discount and broke the
+        // receipt totals.
+        let rows = [
+            makeRow(text: "Super Deal 380,00", y: 0.7),
+            makeRow(text: "Combo Menu 250,00", y: 0.6)
+        ]
+        let items = ReceiptColumnDetector.extractItems(from: rows).map(\.item)
+        XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(items[0].lineTotal, 380.0, accuracy: 0.01)
+        XCTAssertEqual(items[1].lineTotal, 250.0, accuracy: 0.01)
     }
 
     // MARK: - Integer / 1-decimal / currency-suffix prices (Round C-1)

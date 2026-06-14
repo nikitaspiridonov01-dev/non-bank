@@ -116,6 +116,7 @@ When a line is NOT a discount:
 - Single-line receipt → that line is the full charge, total MUST be positive regardless of merchant name. Subscription / recurring / service receipts (OPENAI *CHATGPT SUBSCR, NETFLIX.COM, SPOTIFY USA) ALWAYS positive.
 - A line is a discount ONLY when there are OTHER positive items above it that it could plausibly be reducing. If you can't point to which item the discount applies to, it isn't a discount.
 - Fees, taxes, tips, and service charges are NOT discounts.
+- TRUST THE PRINTED SIGN over the name. A discount is a line that REDUCES the total — printed with a negative amount, or sitting under an explicit savings / discount section. A line with a clearly POSITIVE printed price is a regular item EVEN IF its name contains a marketing word: \`deal\`, \`super\`, \`combo\`, \`meal\`, \`menu\`, \`set\`, \`offer\`, \`bundle\`, \`promo\`, \`special\` (and equivalents in any language). Example: a combo/meal "deal" whose components (nuggets, drink, dip) print at \`0.00\` while the combo line itself carries the price (\`Super Deal  380,00\`) is ONE positive item at \`380\`, never a \`-380\` discount. NEVER emit a negative total for a line solely because its name reads like a promotion — only the printed minus sign or a genuine discount/savings context makes a line negative.
 
 # Per-item discounts — COLLAPSE into the item, do NOT emit a separate row
 

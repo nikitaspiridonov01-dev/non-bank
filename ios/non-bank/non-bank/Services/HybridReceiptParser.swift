@@ -644,10 +644,17 @@ actor HybridReceiptParser {
     ///    etc.). LLMs still hallucinate these on long receipts; regex parser
     ///    also picks them up because they look item-shaped.
     ///
-    /// 2. **Normalize discounts** — items whose name matches a discount
-    ///    keyword are forced negative (`-|lineTotal|`) regardless of which
-    ///    sign the model emitted. So when a model outputs `Discount: 5.00`
-    ///    we still subtract from the sum.
+    /// 2. **Normalize discounts** — a line is treated as a discount only
+    ///    when it actually REDUCES the total. A name keyword alone is a
+    ///    WEAK signal: a positively-priced line whose name merely contains
+    ///    a marketing word ("Super Deal", "Combo Menu", "Promo Box") is a
+    ///    regular product the customer paid for, never a deduction. So we
+    ///    only force a discount-named line negative when its printed amount
+    ///    is already non-positive (the model emitted `Discount -5,00`, or
+    ///    `Discount 5,00` with no sign — there the keyword resolves the
+    ///    ambiguous sign). A discount-named line with a clearly POSITIVE
+    ///    amount is left as a positive `.item`; we trust the printed sign
+    ///    over the name.
     ///
     /// 3. **Prune** items that push `Σitems` above `grandTotal`. We greedily
     ///    drop the item whose price is closest to the overshoot — this is
@@ -678,6 +685,16 @@ actor HybridReceiptParser {
                 // (store-side metadata, never a buyer-tracked expense).
                 return item
             case .discount:
+                // Sign beats name. If the line is already printed with a
+                // POSITIVE amount it's a real product the customer paid for
+                // — even when its name carries a marketing word like "deal"
+                // / "combo" / "promo" (e.g. a meal-deal whose components
+                // print at 0.00 while the combo line carries the price).
+                // Keep it as a positive item; do NOT subtract it from the
+                // total. Only a non-positive amount (an explicit negative
+                // discount, or a sign-less keyword line where the name is
+                // the only available signal) gets forced negative.
+                if item.lineTotal > 0 { return item }
                 return Self.normalizeDiscount(item)
             case .skipNonProduct, .anchorTotal:
                 droppedByFilter.append(item.name)
@@ -813,9 +830,16 @@ actor HybridReceiptParser {
     }
 
     /// Returns the item with its `total` and `price` forced negative so the
-    /// downstream prune/sum maths treats it as a deduction. LLM models often
-    /// emit discounts with a positive sign and a `-` prefix in the name —
-    /// we don't trust the sign, only the keyword.
+    /// downstream prune/sum maths treats it as a deduction.
+    ///
+    /// IMPORTANT: callers must only invoke this for lines whose amount is
+    /// NOT positive (see the `.discount` branch in `postProcess`). A
+    /// positively-priced line that merely contains a discount keyword in its
+    /// name ("Super Deal", "Combo Menu") is a regular product, NOT a
+    /// deduction — negating it here would break the receipt's totals. This
+    /// helper exists for the genuinely sign-less case ("Discount 5,00" with
+    /// no minus) and the already-negative case, where forcing the sign is
+    /// safe and correct.
     private static func normalizeDiscount(_ item: ReceiptItem) -> ReceiptItem {
         let absTotal = abs(item.total ?? 0)
         let absPrice = abs(item.price ?? 0)

@@ -295,16 +295,27 @@ struct ReceiptLineFilter {
     /// the receipt's grand total still balances when prices on individual
     /// items are quoted at full retail and the discount is on its own row.
     ///
-    /// We also include the lowercase `tip` synonyms here when... actually
-    /// we don't — tips legitimately add to the total and are still routed
-    /// to `nonProductWords` (a tip is conceptually a payment, not a price
-    /// reduction).
+    /// ## Sign beats name
+    /// A discount is fundamentally a line that REDUCES the total. The name
+    /// is only a WEAK, ambiguous signal — the strong signal is a negative
+    /// printed amount. Both `ReceiptItem.Kind.classify` and
+    /// `HybridReceiptParser.postProcess` therefore only honour a name-based
+    /// `.discount` verdict when the line's amount is NOT positive; a
+    /// positively-priced line stays a regular item even if it lands here.
+    /// Because of that guard, marketing words that double as PRODUCT names
+    /// must be kept OUT of this list — otherwise a sign-less or zero-amount
+    /// line could still be wrongly deducted, and the on-device icon would
+    /// be wrong. Removed for that reason: `deal` (meal/combo deals are
+    /// positively-priced products), bare `off` / `save` / `saved` (far too
+    /// generic — they appear in ordinary item names; the explicit `% off`
+    /// markers below are kept). Keep only unambiguous discount/rebate/
+    /// markdown markers.
     private static let discountWords: [String] = [
         // English
-        "discount", "promo", "promotion", "rebate", "off",
+        "discount", "promo", "promotion", "rebate",
         "voucher", "coupon", "loyalty discount",
-        "savings", "saved", "save", "markdown", "marked down",
-        "clearance", "deal", "% off", "%off",
+        "savings", "markdown", "marked down",
+        "clearance", "% off", "%off",
         // Russian
         "скидка", "скидки", "скидку", "акция", "промо",
         "скидочка", "распродажа",

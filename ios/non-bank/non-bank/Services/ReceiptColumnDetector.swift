@@ -125,12 +125,23 @@ struct ReceiptColumnDetector {
         case .skipNonProduct:
             return .noise
         case .discount:
-            // Discount row: parse like an item but force the line total
-            // negative so it subtracts from the running sum. If parsing
-            // fails (no price token at all — e.g., a bare "Discount applied"
-            // line), we still emit a zero-value item so the user sees the
-            // discount existed and can fill it in manually.
+            // Discount row: the name matched a discount keyword. But SIGN
+            // BEATS NAME — a name keyword is a WEAK signal and must not flip
+            // a POSITIVELY-printed line. A positively-priced line whose name
+            // merely contains a marketing word ("Super Deal", "Combo Menu")
+            // is a regular product the customer paid for, not a deduction;
+            // we keep its printed positive amount. Only force the line
+            // negative when its printed amount is non-positive (an explicit
+            // negative discount, or a sign-less keyword line where the name
+            // is the only available signal). If parsing fails (no price
+            // token at all — e.g., a bare "Discount applied" line), we still
+            // emit a zero-value item so the user sees the discount existed
+            // and can fill it in manually.
             if let parsed = ReceiptLineParser.parseItemLine(row.text) {
+                // Positive printed amount → trust the sign, keep as item.
+                if parsed.lineTotal > 0 {
+                    return .item(parsed)
+                }
                 let negated = abs(parsed.lineTotal) > 0 ? -abs(parsed.lineTotal) : 0
                 let item = ParsedLineItem(
                     name: parsed.name,

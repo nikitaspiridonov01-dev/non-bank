@@ -86,6 +86,29 @@ final class ReceiptLineFilterTests: XCTestCase {
         XCTAssertEqual(ReceiptLineFilter.classify("Promo code -3,00"), .discount)
     }
 
+    func testClassify_marketingWords_areNotDiscounts() {
+        // Sign beats name. Marketing words that double as PRODUCT names were
+        // removed from the discount list so a positively-priced combo/deal
+        // line is never deducted. A line named "Super Deal" is a normal item
+        // (a meal deal whose components print at 0.00 while the combo line
+        // carries the price). It must classify as `.keep`, NOT `.discount`.
+        XCTAssertEqual(ReceiptLineFilter.classify("Super Deal 380,00"), .keep)
+        XCTAssertEqual(ReceiptLineFilter.classify("Combo Meal 12.99"), .keep)
+        XCTAssertEqual(ReceiptLineFilter.classify("Lunch Deal 8,50"), .keep)
+        XCTAssertEqual(ReceiptLineFilter.classify("Family Bundle 24,00"), .keep)
+        // Bare "off" / "save" / "saved" were too generic and are gone; they
+        // must not trip the discount verdict inside ordinary item names.
+        XCTAssertEqual(ReceiptLineFilter.classify("Off-road tyre 99,00"), .keep)
+        XCTAssertEqual(ReceiptLineFilter.classify("Save-A-Lot Soap 3,20"), .keep)
+    }
+
+    func testClassify_explicitPercentOff_isStillDiscount() {
+        // The explicit "% off" markers stay — they're unambiguous discount
+        // labels, unlike the bare "off" token we removed.
+        XCTAssertEqual(ReceiptLineFilter.classify("20% off -5,00"), .discount)
+        XCTAssertEqual(ReceiptLineFilter.classify("10%off -2,00"), .discount)
+    }
+
     func testClassify_discountTakesPrecedenceOverAnchor() {
         // A line containing both "discount" and "total" must NOT become an
         // anchorTotal — discount routing has to win to keep the line as an

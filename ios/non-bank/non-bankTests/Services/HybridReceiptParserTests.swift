@@ -92,8 +92,11 @@ final class HybridReceiptParserTests: XCTestCase {
     // MARK: - postProcess (filter + pruning)
 
     func testPostProcess_dropsFalsePositiveByKeyword() {
-        // Foundation Models occasionally returns "Total" / "Service charge"
-        // / a card line as items. The filter strips them out.
+        // Foundation Models occasionally returns "Total" / a card line as
+        // items. The filter strips those non-product lines out. A
+        // "Service charge" is a FEE, not noise: fees/tips are kept (they
+        // add to the total and the split-by-items calculator distributes
+        // them proportionally), so it stays in the list.
         let raw = ParsedReceipt(
             storeName: nil, date: nil,
             items: [
@@ -107,7 +110,7 @@ final class HybridReceiptParserTests: XCTestCase {
             currency: nil
         )
         let result = HybridReceiptParser.postProcess(raw)
-        XCTAssertEqual(result.items.map(\.name), ["Burger", "Fries"])
+        XCTAssertEqual(result.items.map(\.name), ["Burger", "Service charge", "Fries"])
     }
 
     func testPostProcess_pruningDropsOverstuffedItem() {
@@ -224,28 +227,51 @@ final class HybridReceiptParserTests: XCTestCase {
 
     // MARK: - Discount handling (Round C-1)
 
-    func testPostProcess_discountItem_keptAsNegative() throws {
-        // Round C-1: discount items used to be silently dropped via the
-        // keyword filter. Now they survive postProcess as negative line
-        // totals so Σitems balances against the grand total.
+    func testPostProcess_positiveDiscountWordLine_staysPositiveItem() throws {
+        // THE regression guard. A positively-priced line whose name contains
+        // a marketing word ("Super Deal") — a combo/meal deal whose
+        // components print at 0.00 while the combo carries the price — must
+        // be kept as a POSITIVE item, never negated. This is the exact bug:
+        // "Super Deal 380,00" was shown as "−380" and broke the totals
+        // (items 770 + 200 + 380 should sum to 1350, not 590).
         let raw = ParsedReceipt(
             storeName: nil, date: nil,
             items: [
-                makeItem(name: "Burger", total: 10),
-                makeItem(name: "Fries", total: 5),
-                makeItem(name: "Discount", total: 3)  // FM emitted as positive
+                makeItem(name: "Chicken Bucket", total: 770),
+                makeItem(name: "Drinks", total: 200),
+                makeItem(name: "Super Deal", total: 380)
             ],
-            totalAmount: 12,
+            totalAmount: 1350,
             currency: nil
         )
         let result = HybridReceiptParser.postProcess(raw)
         XCTAssertEqual(result.items.count, 3)
-        // Discount must end up negative regardless of the input sign.
-        let discount = try XCTUnwrap(result.items.first { $0.name == "Discount" })
-        XCTAssertEqual(discount.lineTotal, -3.0, accuracy: 0.01)
-        // Σ should match the grand total.
+        let deal = try XCTUnwrap(result.items.first { $0.name == "Super Deal" })
+        // Stays POSITIVE — sign beats name.
+        XCTAssertEqual(deal.lineTotal, 380, accuracy: 0.01)
+        // And the receipt now balances.
         let sum = result.items.reduce(0) { $0 + $1.lineTotal }
-        XCTAssertEqual(sum, 12, accuracy: 0.01)
+        XCTAssertEqual(sum, 1350, accuracy: 0.01)
+    }
+
+    func testPostProcess_positiveExplicitDiscountWord_staysPositive() throws {
+        // Even an unambiguous discount WORD does not flip a POSITIVELY-priced
+        // line. A positive amount is the strong signal — the customer paid
+        // it. (e.g. a "Discount bundle" product priced at 50.)
+        let raw = ParsedReceipt(
+            storeName: nil, date: nil,
+            items: [
+                makeItem(name: "Pasta", total: 100),
+                makeItem(name: "Discount bundle", total: 50)
+            ],
+            totalAmount: 150,
+            currency: nil
+        )
+        let result = HybridReceiptParser.postProcess(raw)
+        let bundle = try XCTUnwrap(result.items.first { $0.name == "Discount bundle" })
+        XCTAssertEqual(bundle.lineTotal, 50, accuracy: 0.01)
+        let sum = result.items.reduce(0) { $0 + $1.lineTotal }
+        XCTAssertEqual(sum, 150, accuracy: 0.01)
     }
 
     func testPostProcess_discountItem_negativeInput_staysNegative() throws {

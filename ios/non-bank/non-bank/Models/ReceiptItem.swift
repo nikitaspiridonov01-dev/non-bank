@@ -62,9 +62,22 @@ struct ReceiptItem: Codable, Sendable, Identifiable, Equatable {
         /// switch as plain `.item` on read; they're harmless because
         /// no split logic depends on the `.tax` case anymore.
         static func classify(name: String, lineTotal: Double) -> Kind {
+            // A negative line ALWAYS reads as a discount — the sign is the
+            // strong, language-independent signal that the line reduces the
+            // total. We never need the name for this case.
             if lineTotal < 0 { return .discount }
             switch ReceiptLineFilter.classify(name) {
-            case .discount: return .discount
+            case .discount:
+                // Name matched a discount/refund word. But a name keyword is
+                // a WEAK signal and must never override a POSITIVE printed
+                // amount: a positively-priced line that happens to contain a
+                // marketing word ("Super Deal", "Combo Menu", "Promo Box") is
+                // a regular product the customer paid for, not a deduction.
+                // Only a non-positive amount (negative handled above, or a
+                // zero-amount line that is genuinely a refund/voucher row)
+                // may be classified `.discount` from the name. With a
+                // positive amount we fall back to `.item`.
+                return lineTotal > 0 ? .item : .discount
             case .fee:      return .fee
             case .tip:      return .tip
             case .keep, .skipNonProduct, .anchorTotal:

@@ -145,7 +145,8 @@ struct MainTabView: View {
                 autoOpenSplitFlow: router.autoOpenSplitFlow,
                 autoOpenScanFlow: router.autoOpenScanFlow,
                 autoSplitByItems: router.autoSplitByItems,
-                prefilledFriendIDs: router.prefilledFriendIDs
+                prefilledFriendIDs: router.prefilledFriendIDs,
+                pendingScanImages: router.pendingScanImages
             )
             .environmentObject(categoryStore)
             .environmentObject(transactionStore)

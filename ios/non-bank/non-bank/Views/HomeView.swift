@@ -1,5 +1,7 @@
 import SwiftUI
 import Combine
+import PhotosUI
+import UIKit
 
 struct HomeView: View {
     @StateObject private var vm = HomeViewModel()
@@ -15,6 +17,12 @@ struct HomeView: View {
     
     @State private var selectedTransaction: Transaction? = nil
     @State private var showTransactionDetail: Bool = false
+    // Gallery-first receipt scan (top-right scan icon): tap → photo
+    // library, long-press → camera. Picked/captured images are routed
+    // into the create modal, which parses them before showing the form.
+    @State private var showScanPhotosPicker: Bool = false
+    @State private var scanPhotosItems: [PhotosPickerItem] = []
+    @State private var showScanCamera: Bool = false
     @State private var scrollToDate: Date? = nil
     
     @EnvironmentObject var transactionStore: TransactionStore
@@ -298,6 +306,32 @@ struct HomeView: View {
             if transactionStore.homeTransactions.isEmpty {
                 scanReceiptButton
             }
+        }
+        // Gallery-first receipt scan, attached once at the body level
+        // (the scan icon renders in two mutually-exclusive overlays).
+        // Tap opens this picker; long-press opens the camera.
+        .photosPicker(
+            isPresented: $showScanPhotosPicker,
+            selection: $scanPhotosItems,
+            maxSelectionCount: CreateTransactionModal.maxReceiptPhotos,
+            selectionBehavior: .ordered,
+            matching: .images,
+            photoLibrary: .shared()
+        )
+        .onChange(of: scanPhotosItems) { newItems in
+            guard !newItems.isEmpty else { return }
+            Task { await loadScanImagesAndRoute(newItems) }
+        }
+        .fullScreenCover(isPresented: $showScanCamera) {
+            PlainCameraView(
+                onScan: { image in
+                    showScanCamera = false
+                    routeToCreateWithScan([image])
+                },
+                onCancel: { showScanCamera = false },
+                onError: { _ in showScanCamera = false }
+            )
+            .ignoresSafeArea()
         }
         .sheet(isPresented: $showReminders) {
             RemindersView()
@@ -614,21 +648,65 @@ struct HomeView: View {
 
     @ViewBuilder
     private var scanReceiptButton: some View {
-        Button(action: {
-            router.showCreateTransaction(autoOpenScanFlow: true)
-        }) {
-            Image(systemName: "viewfinder")
-                .font(AppFonts.bodyEmphasized)
-                .foregroundColor(AppColors.textSecondary)
-                .frame(width: Self.headerChipSize, height: Self.headerChipSize)
-                .glassEffect(.regular, in: .circle)
-                .contentShape(Circle())
+        // Tap → system photo library directly (gallery-first). Long-press
+        // → camera for an in-the-moment shot. iOS's PHPicker can't host a
+        // camera button, so the camera lives on a separate gesture of the
+        // same control (with a VoiceOver action for accessibility).
+        Image(systemName: "viewfinder")
+            .font(AppFonts.bodyEmphasized)
+            .foregroundColor(AppColors.textSecondary)
+            .frame(width: Self.headerChipSize, height: Self.headerChipSize)
+            .glassEffect(.regular, in: .circle)
+            .contentShape(Circle())
+            .onTapGesture {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showScanPhotosPicker = true
+            }
+            .onLongPressGesture(minimumDuration: 0.35) { openScanCamera() }
+            .accessibilityElement()
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel("Scan receipt")
+            .accessibilityHint("Opens your photo library. Use the Take photo action for the camera.")
+            .accessibilityAction(named: "Take photo") { openScanCamera() }
+            .padding(.top, 6)
+            .padding(.trailing, AppSpacing.md)
+    }
+
+    /// Open the camera for an in-the-moment receipt shot. Falls back to
+    /// the photo library when no camera is available (e.g. Simulator).
+    private func openScanCamera() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            showScanPhotosPicker = true
+            return
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Scan receipt")
-        .accessibilityHint("Opens the camera to capture a receipt")
-        .padding(.top, 6)
-        .padding(.trailing, AppSpacing.md)
+        showScanCamera = true
+    }
+
+    /// Load the picked library assets (in order) and route into the
+    /// create modal. Mirrors the loader in `ReceiptScanFlowModifier` so
+    /// the single- vs multi-image pipeline downstream is unchanged.
+    @MainActor
+    private func loadScanImagesAndRoute(_ items: [PhotosPickerItem]) async {
+        var images: [UIImage] = []
+        for item in items {
+            if let data = try? await item.loadTransferable(type: Data.self),
+               let image = UIImage(data: data) {
+                images.append(image)
+            }
+        }
+        scanPhotosItems = []
+        guard !images.isEmpty else { return }
+        routeToCreateWithScan(images)
+    }
+
+    /// Present the create modal pre-loaded with the scanned images. The
+    /// short delay lets the picker / camera finish dismissing first —
+    /// iOS silently drops a sheet presented mid-dismissal.
+    private func routeToCreateWithScan(_ images: [UIImage]) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            router.showCreateTransaction(pendingScanImages: images)
+        }
     }
 
     // MARK: - Helper Methods (moved to HomeViewModel + TransactionFilterService)

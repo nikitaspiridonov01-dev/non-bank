@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import UIKit
 
 /// Centralized navigation state for the app.
 ///
@@ -37,18 +38,26 @@ final class NavigationRouter: ObservableObject {
     /// the CTA isn't friend-scoped (e.g. a generic "+ Add split"
     /// empty-state, or the Debts toolbar scan).
     @Published private(set) var prefilledFriendIDs: [String] = []
+    /// Receipt image(s) the user already picked or captured BEFORE the
+    /// create modal opened (Home scan icon → gallery-first flow). When
+    /// non-empty, the modal skips the source picker and parses these
+    /// immediately, so the gallery shows first and the create screen
+    /// appears only after parsing. Transient: cleared on dismiss.
+    @Published private(set) var pendingScanImages: [UIImage] = []
 
     func showCreateTransaction(
         autoOpenSplitFlow: Bool = false,
         autoOpenScanFlow: Bool = false,
         autoSplitByItems: Bool = false,
-        prefilledFriendIDs: [String] = []
+        prefilledFriendIDs: [String] = [],
+        pendingScanImages: [UIImage] = []
     ) {
         editingTransaction = nil
         self.autoOpenSplitFlow = autoOpenSplitFlow
         self.autoOpenScanFlow = autoOpenScanFlow
         self.autoSplitByItems = autoSplitByItems
         self.prefilledFriendIDs = prefilledFriendIDs
+        self.pendingScanImages = pendingScanImages
         showTransactionEditor = true
     }
 
@@ -58,6 +67,7 @@ final class NavigationRouter: ObservableObject {
         autoOpenScanFlow = false
         autoSplitByItems = false
         prefilledFriendIDs = []
+        pendingScanImages = []
         showTransactionEditor = true
     }
 
@@ -68,6 +78,7 @@ final class NavigationRouter: ObservableObject {
         autoOpenScanFlow = false
         autoSplitByItems = false
         prefilledFriendIDs = []
+        pendingScanImages = []
     }
 
     // MARK: - Import Success

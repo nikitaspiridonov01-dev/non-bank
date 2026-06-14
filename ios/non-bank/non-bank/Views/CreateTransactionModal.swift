@@ -274,6 +274,11 @@ struct CreateTransactionModal: View {
     /// friend-screen CTA so "you + this friend"
     /// is wired up before the modal renders.
     var prefilledFriendIDs: [String] = []
+    /// Receipt images the user already picked/captured before the modal
+    /// opened (Home gallery-first scan). When non-empty, the modal skips
+    /// the source picker and parses them immediately on appear — the
+    /// "Reading receipt…" overlay covers the form so it never flashes.
+    var pendingScanImages: [UIImage] = []
     /// Pre-configure the modal as a settle-up transaction (one payer
     /// fully covers the other side's share). Used by the Friend
     /// detail's "Settle up" CTA so the user lands on a transaction
@@ -403,6 +408,9 @@ struct CreateTransactionModal: View {
     /// Identifiable wrapper used to drive the review sheet (sheet(item:)
     /// requires Identifiable).
     @State private var reviewPayload: ReceiptReviewPayload? = nil
+    /// One-shot guard so the gallery-first pending-scan parse fires at
+    /// most once even if `onAppear` runs again.
+    @State private var didStartPendingScan: Bool = false
 
     // (Items pill no longer opens the editor directly. It now drives the
     // same `reviewPayload` flow as a fresh scan, so the user always lands
@@ -1535,13 +1543,31 @@ struct CreateTransactionModal: View {
                         }
                         vm.splitMode = .byItems
                     }
+                    // Gallery-first scan (Home icon): the images were
+                    // already picked/captured before the modal opened, so
+                    // skip the source picker entirely. Raise the parsing
+                    // overlay immediately (the empty form never flashes)
+                    // and run the existing parse pipeline straight away.
+                    if !pendingScanImages.isEmpty {
+                        if !didStartPendingScan {
+                            didStartPendingScan = true
+                            isParsingReceipt = true
+                            let images = pendingScanImages
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                if images.count == 1 {
+                                    handleScannedImage(images[0])
+                                } else {
+                                    handleScannedImages(images)
+                                }
+                            }
+                        }
+                    }
                     // Auto-open the receipt source picker. Used by the
-                    // Home / Debts / Friend toolbar scan buttons. Same
-                    // 0.5 s defer as `autoOpenSplitFlow` so the modal's
-                    // own present animation finishes before the
-                    // confirmation dialog stacks on top — without the
-                    // delay iOS silently drops the second sheet.
-                    if autoOpenScanFlow {
+                    // Debts / Friend scan CTAs (which open the modal first,
+                    // then scan). Same 0.5 s defer as `autoOpenSplitFlow`
+                    // so the modal's present animation finishes before the
+                    // picker stacks on top — iOS drops it otherwise.
+                    else if autoOpenScanFlow {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                             showReceiptSourceDialog = true
                         }

@@ -42,6 +42,7 @@ struct TransactionModeFlowSheet: View {
     @EnvironmentObject var friendStore: FriendStore
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var categoryStore: CategoryStore
+    @EnvironmentObject var recentSplitOptionsStore: RecentSplitOptionsStore
 
     @State private var path: [Step]
 
@@ -520,7 +521,9 @@ struct TransactionModeFlowSheet: View {
             hasUsableReceipt: vm.pendingReceiptItems.count > 1,
             amount: vm.parsedAmount,
             currency: currency,
-            onSelect: handleModeSelection
+            onSelect: handleModeSelection,
+            recentOptions: recentSplitOptionsStore.options,
+            onSelectRecent: handleRecentSelection
         )
         .navigationTitle("How to track")
         .toolbarTitleDisplayMode(.inline)
@@ -1572,6 +1575,118 @@ struct TransactionModeFlowSheet: View {
         }
     }
 
+    /// Replay a "Recently used" shortcut tapped on the mode picker.
+    ///
+    /// The orchestrator is already open (the picker is its root), and
+    /// the VM snapshot was captured on `.onAppear`, so a back-out from
+    /// the seeded step still rolls the VM back to its pre-open state.
+    ///
+    /// This deliberately does NOT go through `handleModeSelection`
+    /// (that pushes a single next step and would show an empty friend
+    /// picker). Instead it mirrors `friendPickerStep.onConfirm`'s VM
+    /// writes — `splitMode` / `isSplitMode` / `selectedFriends` /
+    /// `youIncludedInSplit` / `setDefaultPayer()` — so the recorded
+    /// mode is preserved verbatim (NOT re-resolved via
+    /// `selectFriendsAndResolveSplitMode`, which would override an
+    /// explicit `.byAmount`), then seeds `path` so the user LANDS past
+    /// the friend picker while `.friendPicker` stays in the back stack
+    /// (the canonical `computeInitialPath` pattern, reused via
+    /// `Self.pathForRecentSkip`).
+    ///
+    /// Deleted-friend safety: the picker already omits any option whose
+    /// ids don't resolve, so by the time we're here every id resolves.
+    /// We re-resolve defensively and bail if anything is missing.
+    private func handleRecentSelection(_ option: RecentSplitOption) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        multiPayerCalcInFlight = false
+
+        // Settle-up takes the full-skip path: it never enters the
+        // orchestrator's step flow. Write the VM exactly the way
+        // `commitSettleUp` does, then `completeFlow()` to dismiss back
+        // to the (now pre-filled) create modal where the user taps Save.
+        if option.mode == .settleUp {
+            guard let payerID = option.settleUpPayerID,
+                  let recipientID = option.settleUpRecipientID else { return }
+            // Validate both parties still resolve (a friend id on
+            // either side may have been deleted).
+            if payerID != "me", friendStore.friend(byID: payerID) == nil { return }
+            if recipientID != "me", friendStore.friend(byID: recipientID) == nil { return }
+            commitSettleUp(payerID: payerID, recipientID: recipientID)
+            completeFlow()
+            return
+        }
+
+        // Resolve selected friends; bail if any id no longer resolves.
+        var resolvedFriends: [Friend] = []
+        for id in option.friendIDs {
+            guard let friend = friendStore.friend(byID: id) else { return }
+            resolvedFriends.append(friend)
+        }
+
+        // Mirror friendPickerStep.onConfirm's writes.
+        vm.splitMode = option.mode
+        vm.isSplitMode = true
+        vm.selectedFriends = resolvedFriends
+        vm.youIncludedInSplit = option.youIncluded
+        if vm.payers.isEmpty {
+            vm.setDefaultPayer()
+        }
+
+        // byItems with no receipt: scan FIRST, then skip the friend
+        // picker on the way back (see `applyParsedReceiptAndContinue`,
+        // which already lands on `.itemAssignment(0)` when friends are
+        // present — exactly the post-scan shape we want). Push only
+        // `.scanSource`; the friend picker is NOT in the back stack
+        // during the scan (the scan step hides the back arrow and
+        // Cancel closes the whole orchestrator), and once items apply,
+        // `applyParsedReceiptAndContinue` seeds
+        // `[.friendPicker, .itemAssignment(0)]` because friends are
+        // already set — so the friend picker re-enters the back stack
+        // and the user lands on item assignment.
+        if option.mode == .byItems && vm.pendingReceiptItems.isEmpty {
+            // Don't seed `byItemsSelections` yet — there are no items.
+            // `applyParsedReceiptAndContinue` seeds it post-scan (when
+            // items exist) and, because friends are already set, lands
+            // on `[.friendPicker, .itemAssignment(0)]` — exactly the
+            // scan-then-skip shape the locked decision calls for.
+            path = [.scanSource]
+            return
+        }
+
+        // Seed forward-skip path; friend picker stays at index 0.
+        if option.mode == .byItems {
+            seedByItemsSelections()
+        }
+        path = Self.pathForRecentSkip(mode: option.mode)
+    }
+
+    /// Forward-skip seed for a recent-shortcut tap. Mirrors the
+    /// `computeInitialPath` seeds so the user lands past the friend
+    /// picker while it stays at index 0 in the back stack:
+    ///   - evenly   → `[.friendPicker, .whoPay]`
+    ///   - byAmount → `[.friendPicker, .calculations]`
+    ///   - byItems  → `[.friendPicker, .itemAssignment(0)]`
+    ///     (receipt-present case; the no-receipt case scans first and
+    ///     is handled in `handleRecentSelection`)
+    ///   - settleUp → unreachable here (full-skip, handled separately)
+    ///
+    /// NOTE: this does NOT splice `.friendPicker` out after the fact —
+    /// it's seeded once, in place, which avoids the documented
+    /// NavigationStack remount / double-animation bug.
+    static func pathForRecentSkip(mode: SplitMode) -> [Step] {
+        switch mode {
+        case .evenly:
+            return [.friendPicker, .whoPay]
+        case .byAmount:
+            return [.friendPicker, .calculations]
+        case .byItems:
+            return [.friendPicker, .itemAssignment(0)]
+        case .settleUp:
+            // Full-skip — never seeded into the step flow.
+            return [.friendPicker]
+        }
+    }
+
     /// Number of distinct active payers — drives whether re-entry
     /// lands on the compact who-pay (single payer) or the multi
     /// numpad (more than one payer chipped in).
@@ -1756,6 +1871,16 @@ struct ModePickerStep: View {
     let amount: Double
     let currency: String
     let onSelect: (Choice) -> Void
+    /// Recently-used split shortcuts (max 2, newest-first). Resolved
+    /// LIVE against `friendStore` at render — any option referencing a
+    /// deleted friend (id no longer resolving) is dropped entirely.
+    var recentOptions: [RecentSplitOption] = []
+    /// Replays a recent shortcut. Wiring differs per phase (P1 routes
+    /// through the normal flow with the mode preselected; P2/P3 add the
+    /// forward-skip).
+    var onSelectRecent: (RecentSplitOption) -> Void = { _ in }
+
+    @EnvironmentObject private var friendStore: FriendStore
 
     /// Tap result. `payForYourself` is a sentinel because the option
     /// isn't a `SplitMode` case (split is OFF when picked); using a
@@ -1771,6 +1896,7 @@ struct ModePickerStep: View {
             VStack(alignment: .leading, spacing: 0) {
                 header
                     .padding(.bottom, AppSpacing.xxl)
+                recentlyUsedSection
                 VStack(spacing: AppSpacing.xs) {
                     payForYourselfRow
                     ForEach(SplitMode.allCases) { mode in
@@ -1816,23 +1942,183 @@ struct ModePickerStep: View {
         return "How to track this \(amountBlock) expense?"
     }
 
+    // MARK: - Recently used
+
+    /// A recent option with every participant id resolved LIVE against
+    /// `friendStore`. `nil` for any option whose stored friend ids no
+    /// longer all resolve (deleted-friend rule — see `resolvedRecents`).
+    private struct ResolvedRecent: Identifiable {
+        let option: RecentSplitOption
+        /// Avatar-stack participants, "you-first" when included.
+        let stackParticipants: [OverlappingAvatarStack.Participant]
+        let title: String
+        let subtitle: String
+        var id: String { option.id }
+    }
+
+    /// Resolve each recent option's participants against the current
+    /// `friendStore`. Any option that references a friend id which no
+    /// longer resolves is DROPPED (omitted from the result) so it can
+    /// neither render nor be tapped — the locked deleted-friend rule.
+    /// Order is preserved (store is already newest-first); the section
+    /// renders up to the store's 2-entry cap.
+    private var resolvedRecents: [ResolvedRecent] {
+        recentOptions.compactMap { option in
+            // Resolve every selected friend. A single failure drops the
+            // whole option.
+            var resolvedFriends: [Friend] = []
+            for id in option.friendIDs {
+                guard let friend = friendStore.friend(byID: id) else { return nil }
+                resolvedFriends.append(friend)
+            }
+
+            // For settle-up, the payer/recipient ids must also resolve
+            // (a friend id on either side could be deleted even if it's
+            // not in `friendIDs`).
+            var settleUpPayerPerson: RecentSplitSubtitleBuilder.Person? = nil
+            var settleUpRecipientPerson: RecentSplitSubtitleBuilder.Person? = nil
+            if option.mode == .settleUp {
+                guard let payer = resolvePerson(option.settleUpPayerID),
+                      let recipient = resolvePerson(option.settleUpRecipientID) else {
+                    return nil
+                }
+                settleUpPayerPerson = payer
+                settleUpRecipientPerson = recipient
+            }
+
+            // Avatar stack.
+            //  - Settle-up: exactly the two parties — payer then
+            //    recipient (either may be "you"). Built from the
+            //    directional pair so me→friend correctly shows YOU + the
+            //    friend (it records `youIncluded == false`, so a
+            //    youIncluded-driven stack would have dropped you).
+            //  - Other modes: you-first when included, then friends in
+            //    recorded order.
+            // Connected-state drives colour vs B&W.
+            var stack: [OverlappingAvatarStack.Participant] = []
+            if option.mode == .settleUp,
+               let payer = settleUpPayerPerson,
+               let recipient = settleUpRecipientPerson {
+                stack = [payer, recipient].map { person in
+                    OverlappingAvatarStack.Participant(
+                        id: person.id == "me" ? UserIDService.currentID() : person.id,
+                        isConnected: person.id == "me"
+                            ? true
+                            : (friendStore.friend(byID: person.id)?.isConnected ?? false)
+                    )
+                }
+            } else {
+                if option.youIncluded {
+                    stack.append(OverlappingAvatarStack.Participant(
+                        id: UserIDService.currentID(),
+                        isConnected: true
+                    ))
+                }
+                stack += resolvedFriends.map {
+                    OverlappingAvatarStack.Participant(id: $0.id, isConnected: $0.isConnected)
+                }
+            }
+
+            let friendPersons = resolvedFriends.map {
+                RecentSplitSubtitleBuilder.Person(id: $0.id, name: $0.name)
+            }
+            let subtitle = RecentSplitSubtitleBuilder.subtitle(
+                mode: option.mode,
+                friends: friendPersons,
+                youIncluded: option.youIncluded,
+                settleUpPayer: settleUpPayerPerson,
+                settleUpRecipient: settleUpRecipientPerson
+            )
+
+            return ResolvedRecent(
+                option: option,
+                stackParticipants: stack,
+                title: displayLabel(for: option.mode),
+                subtitle: subtitle
+            )
+        }
+    }
+
+    /// Resolve a settle-up party id ("me" or a Friend.id) to a display
+    /// `Person`, or nil if a friend id no longer resolves.
+    private func resolvePerson(_ id: String?) -> RecentSplitSubtitleBuilder.Person? {
+        guard let id else { return nil }
+        if id == "me" {
+            return RecentSplitSubtitleBuilder.Person(id: "me", name: "You")
+        }
+        guard let friend = friendStore.friend(byID: id) else { return nil }
+        return RecentSplitSubtitleBuilder.Person(id: friend.id, name: friend.name)
+    }
+
+    @ViewBuilder
+    private var recentlyUsedSection: some View {
+        let recents = resolvedRecents
+        if !recents.isEmpty {
+            VStack(alignment: .leading, spacing: AppSpacing.xs) {
+                Text("Recently used")
+                    .font(AppFonts.rowDescription)
+                    .foregroundColor(AppColors.textTertiary)
+                    .padding(.horizontal, 4)
+                ForEach(recents) { recent in
+                    recentRow(recent)
+                }
+            }
+            .padding(.bottom, AppSpacing.xxl)
+        }
+    }
+
+    private func recentRow(_ recent: ResolvedRecent) -> some View {
+        Button {
+            onSelectRecent(recent.option)
+        } label: {
+            HStack(spacing: 14) {
+                OverlappingAvatarStack(
+                    participants: recent.stackParticipants,
+                    avatarSize: 36,
+                    strokeColor: AppColors.backgroundPrimary,
+                    strokeWidth: 1.5,
+                    maxVisible: 4,
+                    overflowCount: max(0, recent.stackParticipants.count - 4)
+                )
+                // Fixed leading width so titles line up with the
+                // single-icon mode rows below regardless of how many
+                // avatars are in the stack.
+                .frame(minWidth: 36, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: AppSpacing.xxs) {
+                    Text(recent.title)
+                        .font(AppFonts.labelPrimary)
+                        .foregroundColor(AppColors.textPrimary)
+                    Text(recent.subtitle)
+                        .font(AppFonts.rowDescription)
+                        .foregroundColor(AppColors.textTertiary)
+                        .lineLimit(1)
+                }
+                Spacer()
+            }
+            .padding(.vertical, AppSpacing.rowVertical)
+            .padding(.horizontal, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var payForYourselfRow: some View {
         Button {
             onSelect(.payForYourself)
         } label: {
             HStack(spacing: 14) {
-                // Muted "no-split" affordance — sits on the subtle
-                // `backgroundElevated` surface with a tertiary-tinted
-                // glyph instead of the bright white-on-gray of the
-                // four `SplitMode` icons. Pay-for-yourself is the
-                // dormant default option, so it shouldn't read as
-                // colourful as the active modes below.
-                Image(systemName: "person.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(AppColors.textTertiary)
-                    .frame(width: 36, height: 36)
-                    .background(AppColors.backgroundElevated)
-                    .clipShape(Circle())
+                // The user's own pixel-cat avatar — "pay for yourself"
+                // is literally about you, so showing your avatar (the
+                // same one the chip / debt badges use) reads more
+                // personally than the old muted person glyph.
+                PixelCatView(
+                    id: UserIDService.currentID(),
+                    size: 36,
+                    blackAndWhite: false
+                )
+                .frame(width: 36, height: 36)
+                .clipShape(Circle())
 
                 VStack(alignment: .leading, spacing: AppSpacing.xxs) {
                     Text("Pay for yourself")

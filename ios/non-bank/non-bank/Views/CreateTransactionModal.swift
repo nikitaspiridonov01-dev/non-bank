@@ -316,6 +316,10 @@ struct CreateTransactionModal: View {
     @EnvironmentObject var currencyStore: CurrencyStore
     @EnvironmentObject var friendStore: FriendStore
     @EnvironmentObject var receiptItemStore: ReceiptItemStore
+    /// Recently-used split shortcuts. Recorded on create-save, read by
+    /// the mode picker. Resolved from the app-root environment (same
+    /// propagation path as `router`).
+    @EnvironmentObject var recentSplitOptionsStore: RecentSplitOptionsStore
     /// Used to raise the post-save share prompt for newly-created
     /// split transactions. Injected by the parent (always available
     /// from the app root).
@@ -622,6 +626,12 @@ struct CreateTransactionModal: View {
             return
         }
 
+        // Record a "Recently used" split shortcut — create-only (we're
+        // past the isEdit guard) and only for real split modes
+        // (pay-for-yourself leaves `vm.splitMode == nil`, so it's
+        // skipped). The store dedups by `dedupKey` and caps at 2.
+        recordRecentSplitOptionIfAny()
+
         let source: TransactionCreationSource = {
             if settleUpPrefill != nil { return .settleUp }
             if !vm.pendingReceiptItems.isEmpty || autoOpenScanFlow { return .scan }
@@ -666,6 +676,61 @@ struct CreateTransactionModal: View {
         if tx.repeatInterval != nil {
             analytics.recordFeatureUseIfFirst(.recurring)
         }
+    }
+
+    /// Build a `RecentSplitOption` from the just-saved VM state and
+    /// hand it to the store. No-op when no real split mode is set
+    /// (pay-for-yourself / plain self-paid expense — `vm.splitMode`
+    /// is nil there). Caller (`trackTransactionSaved`) has already
+    /// guaranteed this is a CREATE, not an edit.
+    ///
+    /// For settle-up we derive payer/recipient from `vm.payers` +
+    /// `vm.youIncludedInSplit`, mirroring `settleUpSubtitle`'s
+    /// direction logic so the recorded direction matches what the
+    /// user saw:
+    ///   - active payer is "me"            → me → first friend
+    ///   - payer is a friend, you in split → friend → me
+    ///   - payer is a friend, you not in   → payer friend → other friend
+    private func recordRecentSplitOptionIfAny() {
+        guard let mode = vm.splitMode else { return }
+
+        let friendIDs = vm.selectedFriends.map(\.id)
+
+        var settleUpPayerID: String? = nil
+        var settleUpRecipientID: String? = nil
+        if mode == .settleUp {
+            let activePayer = vm.payers.first(where: { $0.amount > 0.001 })
+                ?? vm.payers.first
+            guard let payer = activePayer else { return }
+            if payer.id == "me" {
+                // Me pays first friend.
+                guard let firstFriend = vm.selectedFriends.first else { return }
+                settleUpPayerID = "me"
+                settleUpRecipientID = firstFriend.id
+            } else if vm.youIncludedInSplit {
+                // Friend pays me.
+                settleUpPayerID = payer.id
+                settleUpRecipientID = "me"
+            } else {
+                // Friend → friend: payer is the active payer, recipient
+                // is the other selected friend.
+                guard let other = vm.selectedFriends.first(where: { $0.id != payer.id }) else {
+                    return
+                }
+                settleUpPayerID = payer.id
+                settleUpRecipientID = other.id
+            }
+        }
+
+        let option = RecentSplitOption(
+            mode: mode,
+            friendIDs: friendIDs,
+            youIncluded: vm.youIncludedInSplit,
+            settleUpPayerID: settleUpPayerID,
+            settleUpRecipientID: settleUpRecipientID,
+            createdAt: Date()
+        )
+        recentSplitOptionsStore.record(option)
     }
 
     /// Post-create hook: if the saved transaction is a split, raise

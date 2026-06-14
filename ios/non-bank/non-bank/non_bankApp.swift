@@ -34,6 +34,11 @@ struct non_bankApp: App {
     @StateObject var categoryStore = CategoryStore(defaults: CategoryStore.defaultCategories)
     @StateObject var friendStore = FriendStore()
     @StateObject var receiptItemStore = ReceiptItemStore()
+    /// Most-recent split configurations surfaced as one-tap shortcuts
+    /// on the mode picker. Lives at the app root like the other stores
+    /// so every `CreateTransactionModal` presentation sees the same
+    /// instance via `@EnvironmentObject`.
+    @StateObject var recentSplitOptionsStore = RecentSplitOptionsStore()
 
     init() {
         // Firebase must boot before DIContainer registers the analytics
@@ -85,6 +90,7 @@ struct non_bankApp: App {
                 .environmentObject(categoryStore)
                 .environmentObject(friendStore)
                 .environmentObject(receiptItemStore)
+                .environmentObject(recentSplitOptionsStore)
                 // Both deep-link channels — current and dormant:
                 //  - `onOpenURL` fires for the active path
                 //    (`nonbank://share?p=…` — the in-page JS on the

@@ -11,7 +11,23 @@ import {
   handleFetchShareItems,
   sweepExpiredShareItems,
 } from "./share_items.ts";
-import { isValidPairHmac, upsertPairing, bindKeyUser } from "./sync.ts";
+import {
+  isValidPairHmac,
+  upsertPairing,
+  bindKeyUser,
+  isValidUserId,
+  isValidSyncId,
+  isValidVersion,
+  isValidOp,
+  getKeyUserId,
+  isPairingActive,
+  recordDelivery,
+  fetchInbox,
+  ackDeliveries,
+  revokePairing,
+  sweepExpiredDeliveries,
+  MAX_DELIVERY_PAYLOAD_BYTES,
+} from "./sync.ts";
 import { handleTestProviders } from "./test_providers.ts";
 import {
   issueChallenge,
@@ -172,6 +188,23 @@ export default {
       if (url.pathname === "/v1/sync/pair" && req.method === "POST") {
         return withCors(await handleSyncPair(req, env), cors);
       }
+      // Phase 1 — addressed deliveries between paired friends.
+      //   POST /v1/sync/upload — sender pushes an (encrypted) tx delivery
+      //   GET  /v1/sync/inbox  — recipient pulls its un-acked deliveries
+      //   POST /v1/sync/ack    — recipient confirms local apply
+      //   POST /v1/sync/revoke — flip a pairing to 'revoked' (friend removed)
+      if (url.pathname === "/v1/sync/upload" && req.method === "POST") {
+        return withCors(await handleSyncUpload(req, env), cors);
+      }
+      if (url.pathname === "/v1/sync/inbox" && req.method === "GET") {
+        return withCors(await handleSyncInbox(req, env, url), cors);
+      }
+      if (url.pathname === "/v1/sync/ack" && req.method === "POST") {
+        return withCors(await handleSyncAck(req, env), cors);
+      }
+      if (url.pathname === "/v1/sync/revoke" && req.method === "POST") {
+        return withCors(await handleSyncRevoke(req, env), cors);
+      }
       // Server-side receipt-items storage (E2E encrypted).
       //   POST /v1/share-items/{share_id} — sender uploads items
       //   GET  /v1/share-items/{share_id} — recipient fetches them
@@ -240,6 +273,24 @@ export default {
         logEvent(env, "error", {
           route: "cron",
           task: "sweepExpiredShareItems",
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    })());
+    ctx.waitUntil((async () => {
+      try {
+        const { deleted } = await sweepExpiredDeliveries(env.DB, nowSec);
+        if (deleted > 0) {
+          logEvent(env, "info", {
+            route: "cron",
+            task: "sweepExpiredDeliveries",
+            deleted,
+          });
+        }
+      } catch (e) {
+        logEvent(env, "error", {
+          route: "cron",
+          task: "sweepExpiredDeliveries",
           error: e instanceof Error ? e.message : String(e),
         });
       }
@@ -365,6 +416,141 @@ async function handleSyncPair(req: Request, env: Env): Promise<Response> {
   }
   await upsertPairing(env.DB, body.pair_hmac, nowSec);
   logEvent(env, "info", { route: "/v1/sync/pair", msg: "paired" });
+  return jsonResponse({ ok: true }, 200);
+}
+
+/// Authorize a recipient-scoped read/ack: the user_id bound (TOFU) to the
+/// caller's attested key must equal the recipient they're acting as, so a
+/// device can only touch ITS OWN inbox. Lenient (simulator dev, no
+/// attestation / unbound key) trusts the claimed id so local dev works;
+/// strict (prod) refuses.
+async function authorizeRecipient(
+  req: Request, env: Env, claimedRecipientId: string,
+): Promise<{ ok: true } | { ok: false; status: number; reason: string }> {
+  const required = env.APP_ATTEST_REQUIRED === "1";
+  const keyId = req.headers.get("X-Attest-Key-Id");
+  if (!keyId) {
+    return required ? { ok: false, status: 403, reason: "attestation_required" } : { ok: true };
+  }
+  const boundUser = await getKeyUserId(env.DB, keyId);
+  if (boundUser == null) {
+    return required ? { ok: false, status: 403, reason: "key_not_bound" } : { ok: true };
+  }
+  if (boundUser !== claimedRecipientId) {
+    return { ok: false, status: 403, reason: "recipient_mismatch" };
+  }
+  return { ok: true };
+}
+
+/// POST /v1/sync/upload — sender pushes one addressed, E2E-encrypted tx
+/// delivery to a paired recipient. Version-guarded (older edits no-op) and
+/// only accepted inside an ACTIVE pairing, so a removed friend gets nothing.
+async function handleSyncUpload(req: Request, env: Env): Promise<Response> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const blocked = await attestIpGate(req, env, nowSec);
+  if (blocked) return blocked;
+  const attGate = await gateAttestation(req, env, nowSec);
+  if (!attGate.ok) return jsonResponse({ error: "attestation_failed", detail: attGate.reason }, attGate.status);
+
+  let body: {
+    pair_hmac?: unknown; recipient_id?: unknown; tx_sync_id?: unknown;
+    version?: unknown; op?: unknown; payload?: unknown; checksum?: unknown;
+  };
+  try { body = await req.json(); } catch {
+    return jsonResponse({ error: "bad_request", detail: "invalid JSON" }, 400);
+  }
+  if (!isValidPairHmac(body.pair_hmac)) return jsonResponse({ error: "bad_request", detail: "pair_hmac must be 64 hex chars" }, 400);
+  if (!isValidUserId(body.recipient_id)) return jsonResponse({ error: "bad_request", detail: "recipient_id required" }, 400);
+  if (!isValidSyncId(body.tx_sync_id)) return jsonResponse({ error: "bad_request", detail: "tx_sync_id required" }, 400);
+  if (!isValidVersion(body.version)) return jsonResponse({ error: "bad_request", detail: "version must be a non-negative integer" }, 400);
+  if (!isValidOp(body.op)) return jsonResponse({ error: "bad_request", detail: "op must be 'upsert' or 'delete'" }, 400);
+  const payload = typeof body.payload === "string" ? body.payload : "";
+  if (body.op === "upsert" && payload.length === 0) return jsonResponse({ error: "bad_request", detail: "payload required for upsert" }, 400);
+  if (payload.length > MAX_DELIVERY_PAYLOAD_BYTES * 2) return jsonResponse({ error: "payload_too_large", detail: `max ${MAX_DELIVERY_PAYLOAD_BYTES} bytes` }, 413);
+  const checksum = typeof body.checksum === "string" ? body.checksum : null;
+
+  if (!(await isPairingActive(env.DB, body.pair_hmac))) {
+    return jsonResponse({ error: "pairing_inactive", detail: "no active pairing" }, 409);
+  }
+
+  const { applied } = await recordDelivery(env.DB, {
+    recipientId: body.recipient_id, txSyncId: body.tx_sync_id,
+    version: body.version, op: body.op, payload, checksum,
+  }, nowSec);
+
+  logEvent(env, "info", { route: "/v1/sync/upload", applied, op: body.op });
+  return jsonResponse({ ok: true, applied }, 200);
+}
+
+/// GET /v1/sync/inbox?recipient_id=… — recipient pulls its un-acked,
+/// non-expired deliveries. No TTL bump / no delete-on-read (idempotent).
+async function handleSyncInbox(req: Request, env: Env, url: URL): Promise<Response> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const blocked = await attestIpGate(req, env, nowSec);
+  if (blocked) return blocked;
+  const attGate = await gateAttestation(req, env, nowSec);
+  if (!attGate.ok) return jsonResponse({ error: "attestation_failed", detail: attGate.reason }, attGate.status);
+
+  const recipientId = url.searchParams.get("recipient_id") ?? "";
+  if (!isValidUserId(recipientId)) return jsonResponse({ error: "bad_request", detail: "recipient_id required" }, 400);
+  const auth = await authorizeRecipient(req, env, recipientId);
+  if (!auth.ok) return jsonResponse({ error: "forbidden", detail: auth.reason }, auth.status);
+
+  const deliveries = await fetchInbox(env.DB, recipientId, nowSec);
+  logEvent(env, "info", { route: "/v1/sync/inbox", count: deliveries.length });
+  return jsonResponse({ deliveries }, 200);
+}
+
+/// POST /v1/sync/ack — recipient confirms it applied the listed
+/// (tx_sync_id, version) deliveries locally. Only acks rows whose stored
+/// version <= the acked version, so a fresher edit that landed after the
+/// pull is preserved for re-delivery.
+async function handleSyncAck(req: Request, env: Env): Promise<Response> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const blocked = await attestIpGate(req, env, nowSec);
+  if (blocked) return blocked;
+  const attGate = await gateAttestation(req, env, nowSec);
+  if (!attGate.ok) return jsonResponse({ error: "attestation_failed", detail: attGate.reason }, attGate.status);
+
+  let body: { recipient_id?: unknown; acks?: unknown };
+  try { body = await req.json(); } catch {
+    return jsonResponse({ error: "bad_request", detail: "invalid JSON" }, 400);
+  }
+  if (!isValidUserId(body.recipient_id)) return jsonResponse({ error: "bad_request", detail: "recipient_id required" }, 400);
+  if (!Array.isArray(body.acks)) return jsonResponse({ error: "bad_request", detail: "acks array required" }, 400);
+  if (body.acks.length > 500) return jsonResponse({ error: "bad_request", detail: "too many acks" }, 400);
+  const auth = await authorizeRecipient(req, env, body.recipient_id);
+  if (!auth.ok) return jsonResponse({ error: "forbidden", detail: auth.reason }, auth.status);
+
+  const acks: { txSyncId: string; version: number }[] = [];
+  for (const a of body.acks) {
+    const item = a as { tx_sync_id?: unknown; version?: unknown };
+    if (item && typeof item === "object" && isValidSyncId(item.tx_sync_id) && isValidVersion(item.version)) {
+      acks.push({ txSyncId: item.tx_sync_id, version: item.version });
+    }
+  }
+  const { acked } = await ackDeliveries(env.DB, body.recipient_id, acks, nowSec);
+  logEvent(env, "info", { route: "/v1/sync/ack", acked });
+  return jsonResponse({ ok: true, acked }, 200);
+}
+
+/// POST /v1/sync/revoke — flip a pairing to 'revoked' when a user removes
+/// a friend. After this the upload route refuses new deliveries for the
+/// pair (server-side half of "removing a friend stops sync").
+async function handleSyncRevoke(req: Request, env: Env): Promise<Response> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const blocked = await attestIpGate(req, env, nowSec);
+  if (blocked) return blocked;
+  const attGate = await gateAttestation(req, env, nowSec);
+  if (!attGate.ok) return jsonResponse({ error: "attestation_failed", detail: attGate.reason }, attGate.status);
+
+  let body: { pair_hmac?: unknown };
+  try { body = await req.json(); } catch {
+    return jsonResponse({ error: "bad_request", detail: "invalid JSON" }, 400);
+  }
+  if (!isValidPairHmac(body.pair_hmac)) return jsonResponse({ error: "bad_request", detail: "pair_hmac must be 64 hex chars" }, 400);
+  await revokePairing(env.DB, body.pair_hmac);
+  logEvent(env, "info", { route: "/v1/sync/revoke", msg: "revoked" });
   return jsonResponse({ ok: true }, 200);
 }
 

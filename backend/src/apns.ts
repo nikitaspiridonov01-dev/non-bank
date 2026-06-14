@@ -92,12 +92,16 @@ export async function sendPush(
   apnsEnv: string,
   alert: { title: string; body: string },
   nowSec: number,
+  data?: Record<string, unknown>,
 ): Promise<boolean> {
   try {
     const jwt = await providerJWT(config, nowSec);
     const host = apnsEnv === "sandbox"
       ? "api.sandbox.push.apple.com"
       : "api.push.apple.com";
+    // Custom top-level keys (alongside `aps`) carry the opaque tx_sync_id so
+    // a notification TAP can deep-link straight to that transaction once the
+    // pull applies it. No financial content — just the routing token.
     const res = await fetch(`https://${host}/3/device/${deviceToken}`, {
       method: "POST",
       headers: {
@@ -106,7 +110,7 @@ export async function sendPush(
         "apns-push-type": "alert",
         "apns-priority": "10",
       },
-      body: JSON.stringify({ aps: { alert, sound: "default" } }),
+      body: JSON.stringify({ aps: { alert, sound: "default" }, ...(data ?? {}) }),
     });
     return res.status === 200;
   } catch {

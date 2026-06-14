@@ -496,7 +496,12 @@ async function handleSyncUpload(req: Request, env: Env, ctx: ExecutionContext): 
   // still gets it on next pull).
   if (applied && body.op === "upsert") {
     const recipientId = body.recipient_id;
-    ctx.waitUntil(sendDeliveryPush(env, recipientId, nowSec));
+    const txSyncId = body.tx_sync_id;
+    // version is the transaction's editVersion: 0 = first share (a new
+    // expense), >= 1 = a subsequent edit. Lets the push say "shared" vs
+    // "updated" without the server ever reading the (encrypted) content.
+    const isEdit = body.version >= 1;
+    ctx.waitUntil(sendDeliveryPush(env, recipientId, txSyncId, isEdit, nowSec));
   }
 
   logEvent(env, "info", { route: "/v1/sync/upload", applied, op: body.op });
@@ -506,14 +511,26 @@ async function handleSyncUpload(req: Request, env: Env, ctx: ExecutionContext): 
 /// Fan a "new shared expense" alert out to all of a recipient's registered
 /// devices. Generic copy only — the server can't (and shouldn't) read who
 /// sent it or the amount. Prunes tokens APNs reports as gone (410).
-async function sendDeliveryPush(env: Env, recipientId: string, nowSec: number): Promise<void> {
+async function sendDeliveryPush(
+  env: Env,
+  recipientId: string,
+  txSyncId: string,
+  isEdit: boolean,
+  nowSec: number,
+): Promise<void> {
   const config = apnsConfigFromEnv(env);
   if (!config) return; // push not configured — pull still delivers
   const tokens = await getDeviceTokens(env.DB, recipientId);
   if (tokens.length === 0) return;
-  const alert = { title: "New shared expense", body: "A friend shared an expense with you." };
+  const alert = isEdit
+    ? { title: "Shared expense updated", body: "A friend updated a shared expense." }
+    : { title: "New shared expense", body: "A friend shared an expense with you." };
+  // Carry the opaque syncID under the SAME key local reminder notifications
+  // use (NotificationCoordinator reads `transactionSyncID`), so tapping the
+  // push deep-links to the transaction once the pull applies it.
+  const data = { transactionSyncID: txSyncId };
   for (const t of tokens) {
-    const ok = await sendPush(config, t.token, t.env, alert, nowSec);
+    const ok = await sendPush(config, t.token, t.env, alert, nowSec, data);
     if (!ok) {
       // Best-effort cleanup of obviously-dead tokens. We don't have the
       // APNs status code here (sendPush returns bool), so only prune on a

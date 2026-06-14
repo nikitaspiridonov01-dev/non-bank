@@ -198,37 +198,42 @@ final class SyncEngine {
             // server-side. (Don't ack what we didn't apply.)
             guard let payload else { continue }
 
-            let intent = ShareIntentClassifier.classify(
-                payload: payload,
-                receiverID: myID,
-                existingTransactions: transactionStore.transactions,
-                checksumOf: { $0.payloadChecksum }
-            )
+            // Sync context: WE are the recipient (this inbox is ours), so we
+            // resolve our own participant index directly rather than via the
+            // picker-oriented `ShareIntentClassifier`. The classifier returns
+            // `.createWithPicker` (which a headless pull can only SKIP)
+            // whenever the sharer addressed us by a phantom id instead of our
+            // real userID — and that silent skip is exactly why pushed
+            // deliveries never applied (they only landed via the manual web
+            // link, which has the picker). Here we instead match ourselves by
+            // real id, or — in an unambiguous 2-person split — as the single
+            // non-sharer participant. Update-vs-create is decided by whether we
+            // already hold this syncID, so an edit UPDATES instead of creating
+            // a duplicate.
+            let existing = transactionStore.transactions.first { $0.syncID == delivery.tx_sync_id }
 
-            switch intent {
-            case .identical:
-                // Already have this (or an equal/newer version via the
-                // version guard) — nothing to apply, just ack.
+            // Idempotent re-pull / stale-edit guard: we already hold this
+            // version (or newer — e.g. we edited locally) → just ack so the
+            // server stops re-delivering. delivery.version == payload.ev.
+            if let existing, delivery.version <= existing.editVersion {
                 acks.append((delivery.tx_sync_id, delivery.version))
-            case .createAuto(let index):
-                if await applyHeadless(payload: payload, index: index, existingID: nil, isUpdate: false,
-                                       transactionStore: transactionStore, friendStore: friendStore,
-                                       categoryStore: categoryStore, receiptItemStore: receiptItemStore) {
-                    acks.append((delivery.tx_sync_id, delivery.version))
-                }
-            case .updatePrompt(let existingID, let knownIndex):
-                // Synced deliveries always identify the receiver by userID,
-                // so knownIndex is set; apply directly. If it's somehow nil
-                // (ambiguous), skip + leave un-acked rather than guess.
-                if let index = knownIndex,
-                   await applyHeadless(payload: payload, index: index, existingID: existingID, isUpdate: true,
-                                       transactionStore: transactionStore, friendStore: friendStore,
-                                       categoryStore: categoryStore, receiptItemStore: receiptItemStore) {
-                    acks.append((delivery.tx_sync_id, delivery.version))
-                }
-            case .createWithPicker, .malformed:
-                // Can't resolve headlessly; leave un-acked.
-                break
+                continue
+            }
+
+            let myIndex = payload.f.firstIndex(where: { $0.id == myID })
+            let nonSharerIndices = payload.f.indices.filter { payload.f[$0].id != payload.s }
+            guard let index = myIndex ?? (nonSharerIndices.count == 1 ? nonSharerIndices.first : nil) else {
+                // Genuinely ambiguous (3+ participants and we aren't id-matched)
+                // — can't pick "us" headlessly. Leave un-acked for the manual
+                // link flow (which has the picker); it TTLs out server-side.
+                continue
+            }
+
+            if await applyHeadless(payload: payload, index: index,
+                                   existingID: existing?.id, isUpdate: existing != nil,
+                                   transactionStore: transactionStore, friendStore: friendStore,
+                                   categoryStore: categoryStore, receiptItemStore: receiptItemStore) {
+                acks.append((delivery.tx_sync_id, delivery.version))
             }
         }
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The app's first reusable transient toast — a single icon + line that
 /// slides in from the top, auto-dismisses, and never blocks touches
@@ -40,9 +41,14 @@ struct ToastView: View {
 
 extension View {
     /// Present a transient toast bound to an optional message. When the
-    /// binding becomes non-nil the toast slides in from the top and
-    /// auto-clears the binding after `duration` seconds. Mount once high in
-    /// the hierarchy (e.g. MainTabView) so it survives sheet/tab changes.
+    /// binding becomes non-nil the toast slides in from the top, fires a
+    /// success haptic, and auto-clears the binding after `duration` seconds.
+    ///
+    /// The toast is rendered in a dedicated overlay `UIWindow` ABOVE every
+    /// sheet/fullScreenCover — an in-view `.overlay` is covered by any
+    /// presented sheet (sheets live in a higher presentation layer than the
+    /// presenter's own overlay), which is why a pairing toast fired while the
+    /// share/transaction sheet was up appeared "under" the screen.
     func toast(message: Binding<String?>, duration: TimeInterval = 4) -> some View {
         modifier(ToastPresenter(message: message, duration: duration))
     }
@@ -51,28 +57,90 @@ extension View {
 private struct ToastPresenter: ViewModifier {
     @Binding var message: String?
     let duration: TimeInterval
-    @State private var dismissTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         content
-            .overlay(alignment: .top) {
-                if let message {
-                    ToastView(message: message)
-                        .padding(.top, AppSpacing.sm)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .allowsHitTesting(false)
-                        .onAppear { scheduleDismiss() }
+            .onChange(of: message) { newValue in
+                guard let newValue, !newValue.isEmpty else { return }
+                ToastWindowPresenter.shared.show(newValue, duration: duration) {
+                    // Clear the binding once the window dismisses so an
+                    // identical follow-up message re-triggers onChange.
+                    if message == newValue { message = nil }
                 }
             }
-            .animation(AppMotion.normal, value: message)
     }
+}
 
-    private func scheduleDismiss() {
+/// Hosts the toast in a transient, non-interactive `UIWindow` at
+/// `.alert + 1` level so it floats above tab content AND any presented
+/// sheet. The window is torn down on dismiss so it never intercepts touches
+/// or lingers. `@MainActor` — all UIKit window work is main-thread only.
+@MainActor
+final class ToastWindowPresenter {
+    static let shared = ToastWindowPresenter()
+    private init() {}
+
+    private var window: UIWindow?
+    private var dismissTask: Task<Void, Never>?
+
+    func show(_ message: String,
+              icon: String = "person.2.fill",
+              duration: TimeInterval = 4,
+              onDismiss: @escaping () -> Void) {
+        guard let scene = Self.activeScene() else { onDismiss(); return }
+
+        // Tactile confirmation that a friend connected / a sync landed.
+        let haptic = UINotificationFeedbackGenerator()
+        haptic.prepare()
+        haptic.notificationOccurred(.success)
+
         dismissTask?.cancel()
-        dismissTask = Task { @MainActor in
+
+        let window = self.window ?? UIWindow(windowScene: scene)
+        window.windowLevel = .alert + 1
+        window.backgroundColor = .clear
+        // Never steal taps — the toast is purely informational and the
+        // content/sheet underneath must stay fully interactive.
+        window.isUserInteractionEnabled = false
+        let host = UIHostingController(rootView: ToastWindowContainer(message: message, icon: icon))
+        host.view.backgroundColor = .clear
+        window.rootViewController = host
+        window.isHidden = false
+        self.window = window
+
+        dismissTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            withAnimation(AppMotion.normal) { message = nil }
+            self?.window?.isHidden = true
+            self?.window = nil
+            onDismiss()
         }
+    }
+
+    private static func activeScene() -> UIWindowScene? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        return scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+    }
+}
+
+/// Top-anchored container that drives the slide-in/out so the windowed toast
+/// keeps the same motion as the old in-view overlay.
+private struct ToastWindowContainer: View {
+    let message: String
+    let icon: String
+    @State private var shown = false
+
+    var body: some View {
+        VStack {
+            if shown {
+                ToastView(message: message, systemIcon: icon)
+                    .padding(.top, AppSpacing.sm)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
+        .onAppear { withAnimation(AppMotion.normal) { shown = true } }
     }
 }

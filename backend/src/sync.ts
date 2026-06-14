@@ -241,6 +241,67 @@ export async function revokePairing(
     .run();
 }
 
+// ─── Phase 3: APNs device tokens ──────────────────────────────────────
+
+/// APNs device tokens are hex. Bound the length so a malformed body can't
+/// store junk (real tokens are 64 hex for classic, longer for some).
+export function isValidDeviceToken(s: unknown): s is string {
+  return typeof s === "string" && /^[0-9a-fA-F]{32,200}$/.test(s);
+}
+
+export function isValidApnsEnv(s: unknown): s is "production" | "sandbox" {
+  return s === "production" || s === "sandbox";
+}
+
+/// Register (or refresh) one device's APNs token for a user. Idempotent
+/// per (user, token); updates env + timestamp on conflict.
+export async function registerDeviceToken(
+  db: D1Database,
+  userId: string,
+  token: string,
+  env: string,
+  nowSec: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO device_tokens (user_id, token, env, updated_at)
+       VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(user_id, token) DO UPDATE SET env = ?3, updated_at = ?4`,
+    )
+    .bind(userId, token, env, nowSec)
+    .run();
+}
+
+export interface DeviceToken {
+  token: string;
+  env: string;
+}
+
+/// All registered device tokens for a user (push fan-out target).
+export async function getDeviceTokens(
+  db: D1Database,
+  userId: string,
+): Promise<DeviceToken[]> {
+  const res = await db
+    .prepare(`SELECT token, env FROM device_tokens WHERE user_id = ?1`)
+    .bind(userId)
+    .all<DeviceToken>();
+  return res.results ?? [];
+}
+
+/// Drop a stale device token (e.g. APNs returned 410 Unregistered). Keeps
+/// the table from fanning out to dead devices.
+export async function deleteDeviceToken(
+  db: D1Database,
+  userId: string,
+  token: string,
+): Promise<void> {
+  await db
+    .prepare(`DELETE FROM device_tokens WHERE user_id = ?1 AND token = ?2`)
+    .bind(userId, token)
+    .run();
+}
+
 /// Cron sweep: drop acked rows past their delete_after grace window and
 /// any hard-TTL-expired rows. Mirrors `sweepExpiredShareItems`; the pull
 /// path already filters expired rows so correctness doesn't depend on it —

@@ -6,7 +6,10 @@ import {
   isValidVersion,
   isValidOp,
   nextUtcDayStart,
+  isValidDeviceToken,
+  isValidApnsEnv,
 } from "../src/sync.ts";
+import { apnsConfigFromEnv } from "../src/apns.ts";
 
 describe("isValidPairHmac", () => {
   it("accepts 64-char lowercase hex", () => {
@@ -88,5 +91,47 @@ describe("nextUtcDayStart", () => {
   it("is always strictly in the future", () => {
     const now = Date.UTC(2026, 5, 14, 8, 30, 0) / 1000;
     expect(nextUtcDayStart(now)).toBeGreaterThan(now);
+  });
+});
+
+describe("isValidDeviceToken", () => {
+  it("accepts 32..200 char hex", () => {
+    expect(isValidDeviceToken("a".repeat(64))).toBe(true);
+    expect(isValidDeviceToken("0123456789ABCDEF".repeat(2))).toBe(true);
+    expect(isValidDeviceToken("f".repeat(200))).toBe(true);
+  });
+  it("rejects too short / too long / non-hex / non-string", () => {
+    expect(isValidDeviceToken("a".repeat(31))).toBe(false);
+    expect(isValidDeviceToken("a".repeat(201))).toBe(false);
+    expect(isValidDeviceToken("z".repeat(64))).toBe(false);
+    expect(isValidDeviceToken(12345)).toBe(false);
+  });
+});
+
+describe("isValidApnsEnv", () => {
+  it("accepts only production / sandbox", () => {
+    expect(isValidApnsEnv("production")).toBe(true);
+    expect(isValidApnsEnv("sandbox")).toBe(true);
+    expect(isValidApnsEnv("prod")).toBe(false);
+    expect(isValidApnsEnv("")).toBe(false);
+    expect(isValidApnsEnv(null)).toBe(false);
+  });
+});
+
+describe("apnsConfigFromEnv", () => {
+  it("returns null when key material is absent", () => {
+    expect(apnsConfigFromEnv({})).toBeNull();
+    expect(apnsConfigFromEnv({ APNS_KEY_ID: "ABC123", APP_ATTEST_APP_ID: "T.b" })).toBeNull();
+  });
+  it("splits APP_ATTEST_APP_ID into team + bundle", () => {
+    const cfg = apnsConfigFromEnv({
+      APNS_KEY_P8: "-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----",
+      APNS_KEY_ID: "ABCDE12345",
+      APP_ATTEST_APP_ID: "28PGV25T47.nikitaspiridonov.non-bank",
+    });
+    expect(cfg).not.toBeNull();
+    expect(cfg!.teamId).toBe("28PGV25T47");
+    expect(cfg!.bundleId).toBe("nikitaspiridonov.non-bank");
+    expect(cfg!.keyId).toBe("ABCDE12345");
   });
 });

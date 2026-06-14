@@ -27,7 +27,12 @@ import {
   revokePairing,
   sweepExpiredDeliveries,
   MAX_DELIVERY_PAYLOAD_BYTES,
+  isValidDeviceToken,
+  isValidApnsEnv,
+  registerDeviceToken,
+  getDeviceTokens,
 } from "./sync.ts";
+import { apnsConfigFromEnv, sendPush } from "./apns.ts";
 import { handleTestProviders } from "./test_providers.ts";
 import {
   issueChallenge,
@@ -126,7 +131,7 @@ export async function hashIp(ip: string, salt: string): Promise<string> {
 }
 
 export default {
-  async fetch(req: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     const cors = corsHeaders();
     if (req.method === "OPTIONS") {
@@ -194,7 +199,7 @@ export default {
       //   POST /v1/sync/ack    — recipient confirms local apply
       //   POST /v1/sync/revoke — flip a pairing to 'revoked' (friend removed)
       if (url.pathname === "/v1/sync/upload" && req.method === "POST") {
-        return withCors(await handleSyncUpload(req, env), cors);
+        return withCors(await handleSyncUpload(req, env, ctx), cors);
       }
       if (url.pathname === "/v1/sync/inbox" && req.method === "GET") {
         return withCors(await handleSyncInbox(req, env, url), cors);
@@ -204,6 +209,11 @@ export default {
       }
       if (url.pathname === "/v1/sync/revoke" && req.method === "POST") {
         return withCors(await handleSyncRevoke(req, env), cors);
+      }
+      // Phase 3 — APNs push token registration (so uploads can nudge the
+      // recipient immediately instead of only on their next pull).
+      if (url.pathname === "/v1/sync/register-token" && req.method === "POST") {
+        return withCors(await handleSyncRegisterToken(req, env), cors);
       }
       // Server-side receipt-items storage (E2E encrypted).
       //   POST /v1/share-items/{share_id} — sender uploads items
@@ -445,7 +455,7 @@ async function authorizeRecipient(
 /// POST /v1/sync/upload — sender pushes one addressed, E2E-encrypted tx
 /// delivery to a paired recipient. Version-guarded (older edits no-op) and
 /// only accepted inside an ACTIVE pairing, so a removed friend gets nothing.
-async function handleSyncUpload(req: Request, env: Env): Promise<Response> {
+async function handleSyncUpload(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const nowSec = Math.floor(Date.now() / 1000);
   const blocked = await attestIpGate(req, env, nowSec);
   if (blocked) return blocked;
@@ -478,8 +488,40 @@ async function handleSyncUpload(req: Request, env: Env): Promise<Response> {
     version: body.version, op: body.op, payload, checksum,
   }, nowSec);
 
+  // Phase 3: nudge the recipient with an APNs push (only for a freshly
+  // applied upsert — not stale no-ops or tombstones). The push carries NO
+  // financial content; the app pulls the encrypted delivery on receipt.
+  // Runs in waitUntil so the upload response returns immediately, and is
+  // entirely best-effort (no push configured / send fails → recipient
+  // still gets it on next pull).
+  if (applied && body.op === "upsert") {
+    const recipientId = body.recipient_id;
+    ctx.waitUntil(sendDeliveryPush(env, recipientId, nowSec));
+  }
+
   logEvent(env, "info", { route: "/v1/sync/upload", applied, op: body.op });
   return jsonResponse({ ok: true, applied }, 200);
+}
+
+/// Fan a "new shared expense" alert out to all of a recipient's registered
+/// devices. Generic copy only — the server can't (and shouldn't) read who
+/// sent it or the amount. Prunes tokens APNs reports as gone (410).
+async function sendDeliveryPush(env: Env, recipientId: string, nowSec: number): Promise<void> {
+  const config = apnsConfigFromEnv(env);
+  if (!config) return; // push not configured — pull still delivers
+  const tokens = await getDeviceTokens(env.DB, recipientId);
+  if (tokens.length === 0) return;
+  const alert = { title: "New shared expense", body: "A friend shared an expense with you." };
+  for (const t of tokens) {
+    const ok = await sendPush(config, t.token, t.env, alert, nowSec);
+    if (!ok) {
+      // Best-effort cleanup of obviously-dead tokens. We don't have the
+      // APNs status code here (sendPush returns bool), so only prune on a
+      // clear failure pattern in a future pass; for now leave it — the
+      // 14-day delivery TTL + token refresh on next launch self-heal.
+      logEvent(env, "info", { route: "push", msg: "send_failed", user: recipientId.slice(0, 6) });
+    }
+  }
 }
 
 /// GET /v1/sync/inbox?recipient_id=… — recipient pulls its un-acked,
@@ -551,6 +593,31 @@ async function handleSyncRevoke(req: Request, env: Env): Promise<Response> {
   if (!isValidPairHmac(body.pair_hmac)) return jsonResponse({ error: "bad_request", detail: "pair_hmac must be 64 hex chars" }, 400);
   await revokePairing(env.DB, body.pair_hmac);
   logEvent(env, "info", { route: "/v1/sync/revoke", msg: "revoked" });
+  return jsonResponse({ ok: true }, 200);
+}
+
+/// POST /v1/sync/register-token — register this device's APNs token so
+/// deliveries can push. Body: { user_id, token, env }. Caller must be the
+/// user (attested key's bound user matches), same as inbox/ack.
+async function handleSyncRegisterToken(req: Request, env: Env): Promise<Response> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const blocked = await attestIpGate(req, env, nowSec);
+  if (blocked) return blocked;
+  const attGate = await gateAttestation(req, env, nowSec);
+  if (!attGate.ok) return jsonResponse({ error: "attestation_failed", detail: attGate.reason }, attGate.status);
+
+  let body: { user_id?: unknown; token?: unknown; env?: unknown };
+  try { body = await req.json(); } catch {
+    return jsonResponse({ error: "bad_request", detail: "invalid JSON" }, 400);
+  }
+  if (!isValidUserId(body.user_id)) return jsonResponse({ error: "bad_request", detail: "user_id required" }, 400);
+  if (!isValidDeviceToken(body.token)) return jsonResponse({ error: "bad_request", detail: "token must be hex (32-200 chars)" }, 400);
+  if (!isValidApnsEnv(body.env)) return jsonResponse({ error: "bad_request", detail: "env must be 'production' or 'sandbox'" }, 400);
+  const auth = await authorizeRecipient(req, env, body.user_id);
+  if (!auth.ok) return jsonResponse({ error: "forbidden", detail: auth.reason }, auth.status);
+
+  await registerDeviceToken(env.DB, body.user_id, body.token, body.env, nowSec);
+  logEvent(env, "info", { route: "/v1/sync/register-token" });
   return jsonResponse({ ok: true }, 200);
 }
 

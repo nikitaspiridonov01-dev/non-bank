@@ -154,14 +154,28 @@ struct SplitBreakdownView: View {
     /// "Debts to settle up" has no dot since that color doesn't appear
     /// on the chart.
     private var formulaLegend: some View {
-        let operatorColor = AppColors.textSecondary
-        return (Text("● ").foregroundColor(purchaseSectionColor)
-            + Text("Purchase amount").foregroundColor(AppColors.textPrimary)
-            + Text("  ÷  ").foregroundColor(operatorColor)
-            + Text("● ").foregroundColor(peopleSectionColor)
-            + Text("\(sharerCount) \(sharerCount == 1 ? "person" : "people")").foregroundColor(AppColors.textPrimary)
-            + Text("  =  ").foregroundColor(operatorColor)
-            + Text("Debts to settle up").foregroundColor(AppColors.textPrimary))
+        let operatorColor: Color = AppColors.textSecondary
+        let primaryColor: Color = AppColors.textPrimary
+
+        let peopleLabel: String = "\(sharerCount) \(sharerCount == 1 ? "person" : "people")"
+
+        let purchaseDot: Text = Text("● ").foregroundColor(purchaseSectionColor)
+        let purchaseTerm: Text = Text("Purchase amount").foregroundColor(primaryColor)
+        let divideOperator: Text = Text("  ÷  ").foregroundColor(operatorColor)
+        let peopleDot: Text = Text("● ").foregroundColor(peopleSectionColor)
+        let peopleTerm: Text = Text(peopleLabel).foregroundColor(primaryColor)
+        let equalsOperator: Text = Text("  =  ").foregroundColor(operatorColor)
+        let resultTerm: Text = Text("Debts to settle up").foregroundColor(primaryColor)
+
+        let legendText: Text = purchaseDot
+            + purchaseTerm
+            + divideOperator
+            + peopleDot
+            + peopleTerm
+            + equalsOperator
+            + resultTerm
+
+        return legendText
             .font(AppFonts.captionSmall)
             .lineLimit(1)
             .minimumScaleFactor(0.8)

@@ -190,30 +190,43 @@ struct BigPurchaseCard: View {
         let mult = formatMultiplier(p.multiplier)
         let date = p.transaction.date.formattedMonthDay()
 
-        return (
-            Text("This purchase, on ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text(date)
-                .foregroundColor(AppColors.accentBold)
-            + Text(", was ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text(amount)
-                .foregroundColor(AppColors.accentBold)
-            + Text(" — it's ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text("\(mult)× more")
-                .foregroundColor(AppColors.accentBold)
-            + Text(" than your usual ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text(p.categoryTitle)
-                .foregroundColor(AppColors.accentBold)
-            + Text(" purchase.")
-                .foregroundColor(AppColors.textPrimary)
-        )
-        .font(AppFonts.titleSmall)
-        .multilineTextAlignment(.leading)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // Build the narrative as named `Text` intermediates and glue
+        // them with a single fold. The previous inline 11-term `+`
+        // chain (each carrying its own `.foregroundColor`) overflowed
+        // the Swift type-checker budget in Release builds — the `+`
+        // operator on `Text` is heavily overloaded, so a long chain
+        // is exponentially expensive to type-check. Splitting into
+        // pre-typed segments keeps the rendered output byte-identical.
+        let segments: [Text] = [
+            prose("This purchase, on "),
+            emphasis(date),
+            prose(", was "),
+            emphasis(amount),
+            prose(" — it's "),
+            emphasis("\(mult)× more"),
+            prose(" than your usual "),
+            emphasis(p.categoryTitle),
+            prose(" purchase.")
+        ]
+
+        return segments
+            .dropFirst()
+            .reduce(segments[0], +)
+            .font(AppFonts.titleSmall)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Non-emphasis narrative prose in the primary text colour.
+    private func prose(_ string: String) -> Text {
+        Text(string).foregroundColor(AppColors.textPrimary)
+    }
+
+    /// Emphasised narrative fragment (date, amount, multiplier,
+    /// category) in the deep warm sienna `accentBold`.
+    private func emphasis(_ string: String) -> Text {
+        Text(string).foregroundColor(AppColors.accentBold)
     }
 
     // MARK: - Formatting

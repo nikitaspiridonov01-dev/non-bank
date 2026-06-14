@@ -53,27 +53,24 @@ struct BigCategoryMonthCard: View {
         let mult = formatMultiplier(e.multiplier)
         let monthName = e.date.formattedMonth()
 
-        return (
-            Text("In ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text(monthName)
-                .foregroundColor(AppColors.accentBold)
-            + Text(", you spent ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text(amount)
-                .foregroundColor(AppColors.accentBold)
-            + Text(" on ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text(e.categoryTitle)
-                .foregroundColor(AppColors.accentBold)
-            + Text(" — it's ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text("\(mult)× higher")
-                .foregroundColor(AppColors.accentBold)
-            + Text(" than your typical expenses.")
-                .foregroundColor(AppColors.textPrimary)
-        )
-        .font(AppFonts.titleSmall)
+        let plain: Color = AppColors.textPrimary
+        let bold: Color = AppColors.accentBold
+
+        let part1: Text = Text("In ").foregroundColor(plain)
+        let part2: Text = Text(monthName).foregroundColor(bold)
+        let part3: Text = Text(", you spent ").foregroundColor(plain)
+        let part4: Text = Text(amount).foregroundColor(bold)
+        let part5: Text = Text(" on ").foregroundColor(plain)
+        let part6: Text = Text(e.categoryTitle).foregroundColor(bold)
+        let part7: Text = Text(" — it's ").foregroundColor(plain)
+        let part8: Text = Text("\(mult)× higher").foregroundColor(bold)
+        let part9: Text = Text(" than your typical expenses.").foregroundColor(plain)
+
+        let sentence: Text =
+            part1 + part2 + part3 + part4 + part5 + part6 + part7 + part8 + part9
+
+        return sentence
+            .font(AppFonts.titleSmall)
         .multilineTextAlignment(.leading)
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)

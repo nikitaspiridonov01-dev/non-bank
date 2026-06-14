@@ -64,26 +64,28 @@ struct MonthlyTrendCard: View {
         case .income:     subjectVerb = "your income is"
         }
 
-        return (
-            Text("On average, ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text(subjectVerb)
-                .foregroundColor(AppColors.textPrimary)
-            + Text(" ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text(direction)
-                .foregroundColor(AppColors.accentBold)
-            + Text(" by ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text("\(percent)%")
-                .foregroundColor(AppColors.accentBold)
-            + Text(" per month.")
-                .foregroundColor(AppColors.textPrimary)
-        )
-        .font(AppFonts.titleSmall)
-        .multilineTextAlignment(.leading)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        let prefix: Text = Text("On average, ")
+            .foregroundColor(AppColors.textPrimary)
+        let subject: Text = Text(subjectVerb)
+            .foregroundColor(AppColors.textPrimary)
+        let gap: Text = Text(" ")
+            .foregroundColor(AppColors.textPrimary)
+        let directionText: Text = Text(direction)
+            .foregroundColor(AppColors.accentBold)
+        let by: Text = Text(" by ")
+            .foregroundColor(AppColors.textPrimary)
+        let percentText: Text = Text("\(percent)%")
+            .foregroundColor(AppColors.accentBold)
+        let suffix: Text = Text(" per month.")
+            .foregroundColor(AppColors.textPrimary)
+
+        let sentence: Text = prefix + subject + gap + directionText + by + percentText + suffix
+
+        return sentence
+            .font(AppFonts.titleSmall)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Subtitle

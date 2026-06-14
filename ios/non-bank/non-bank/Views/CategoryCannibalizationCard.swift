@@ -61,34 +61,40 @@ struct CategoryCannibalizationCard: View {
         let upAmount = formatAmount(e.deltaUp)
         let downAmount = formatAmount(e.deltaDown)
 
-        return (
-            Text("In ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text(monthName)
-                .foregroundColor(AppColors.accentBold)
-            + Text(", you spent ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text(upAmount)
-                .foregroundColor(AppColors.accentBold)
-            + Text(" more on ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text(e.categoryUp)
-                .foregroundColor(AppColors.accentBold)
-            + Text(" — meanwhile ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text(e.categoryDown)
-                .foregroundColor(AppColors.accentBold)
-            + Text(" dropped by ")
-                .foregroundColor(AppColors.textPrimary)
-            + Text(downAmount)
-                .foregroundColor(AppColors.accentBold)
-            + Text(".")
-                .foregroundColor(AppColors.textPrimary)
-        )
-        .font(AppFonts.titleSmall)
-        .multilineTextAlignment(.leading)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // Build the run as typed `Text` intermediates so each
+        // sub-expression type-checks trivially — the long inline
+        // `Text + Text` chain (with interleaved `.foregroundColor`)
+        // overflowed the type-checker budget on Release builds.
+        let intro: Text = plainSegment("In ") + emphasisSegment(monthName)
+        let spent: Text = plainSegment(", you spent ") + emphasisSegment(upAmount)
+        let onCategory: Text = plainSegment(" more on ") + emphasisSegment(e.categoryUp)
+        let meanwhile: Text = plainSegment(" — meanwhile ") + emphasisSegment(e.categoryDown)
+        let dropped: Text = plainSegment(" dropped by ") + emphasisSegment(downAmount)
+        let end: Text = plainSegment(".")
+
+        let firstHalf: Text = intro + spent + onCategory
+        let secondHalf: Text = meanwhile + dropped + end
+        let paragraph: Text = firstHalf + secondHalf
+
+        return paragraph
+            .font(AppFonts.titleSmall)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Non-emphasised run — primary text colour.
+    private func plainSegment(_ string: String) -> Text {
+        Text(string)
+            .foregroundColor(AppColors.textPrimary)
+    }
+
+    /// Emphasised run — deep warm sienna `accentBold` (see the
+    /// `narrative` doc-comment for why emphasis isn't the clickable
+    /// orange `accent`).
+    private func emphasisSegment(_ string: String) -> Text {
+        Text(string)
+            .foregroundColor(AppColors.accentBold)
     }
 
     // MARK: - Subtitle

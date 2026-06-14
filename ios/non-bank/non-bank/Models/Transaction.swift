@@ -153,6 +153,35 @@ struct Transaction: Identifiable, Codable, Equatable {
         )
     }
 
+    /// Returns a copy with the local autoincrement `id` replaced. Used
+    /// by `TransactionStore`'s idempotency guard: when a logical save is
+    /// committed twice (re-entrancy / retry) the rebuilt transaction
+    /// carries `id == 0`, so before updating the already-inserted row in
+    /// place we re-stamp it with that row's real autoincrement id. Every
+    /// other field — including `lastModified` and `syncID` — is preserved
+    /// verbatim, since this is a pure id re-target, not a content edit.
+    func withID(_ newID: Int) -> Transaction {
+        Transaction(
+            id: newID,
+            syncID: syncID,
+            emoji: emoji,
+            category: category,
+            title: title,
+            description: description,
+            amount: amount,
+            currency: currency,
+            date: date,
+            type: type,
+            tags: tags,
+            lastModified: lastModified,
+            repeatInterval: repeatInterval,
+            parentReminderID: parentReminderID,
+            splitInfo: splitInfo,
+            payloadChecksum: payloadChecksum,
+            excludedFromInsights: excludedFromInsights
+        )
+    }
+
     /// The amount to render as the primary number in transaction rows
     /// and cards on home / reminders / category lists. For split
     /// transactions in include-potential mode, this is `myShare` —

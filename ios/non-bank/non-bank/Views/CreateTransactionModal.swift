@@ -384,6 +384,27 @@ struct CreateTransactionModal: View {
     @State private var pendingRecurringReplacement: Transaction? = nil
     @State private var showRecurringReplaceAlert: Bool = false
 
+    /// Re-entry guard for the Save (✓) control. The save action awaits a
+    /// local DB write before dismissing; on a slow/unreachable network an
+    /// earlier version also awaited a CloudKit push (now fire-and-forget),
+    /// which made the ✓ appear frozen and let the user tap it repeatedly —
+    /// each tap minting a fresh transaction → duplicates. This flips `true`
+    /// the moment a save begins and disables / no-ops every Save affordance
+    /// (toolbar ✓, keypad ✔︎) until the commit finishes, so one tap can only
+    /// ever produce one transaction even before the store-level syncID
+    /// idempotency catches anything that slips through.
+    @State private var isSaving: Bool = false
+
+    /// Stable `syncID` for the in-flight save. Minted once when the user
+    /// first triggers Save and reused for any subsequent commit of the
+    /// SAME logical save (re-entrancy / recurring-replace), so a double
+    /// commit resolves to one row via the store's syncID dedup instead of
+    /// diverging into two transactions with different ids. Reset whenever
+    /// a save fully completes (so the next, genuinely-new transaction gets
+    /// its own id) and on the recurring-replace path (which supplies the
+    /// existing transaction's syncID instead).
+    @State private var inFlightSyncID: String? = nil
+
     // MARK: - Receipt Scan Flow
     private static let scanFeatureEnabled = true
     @State private var showReceiptSourceDialog: Bool = false
@@ -451,6 +472,15 @@ struct CreateTransactionModal: View {
 
     /// Attempts to save.
     private func trySave() {
+        // Re-entry guard — the single most important defence against the
+        // duplicate-transaction bug. Once a save is in flight, every
+        // further Save tap (toolbar ✓, keypad ✔︎) is a no-op until the
+        // commit finishes. Set `isSaving` immediately; the commit paths
+        // below reset it (the synchronous create paths reset it right
+        // after `dismiss()`; the recurring-replace path resets it when the
+        // alert resolves or is cancelled).
+        guard !isSaving else { return }
+
         guard vm.isAmountValid else { return }
 
         // If split has only "You" and no outside payers — no real split, save as regular expense
@@ -491,12 +521,27 @@ struct CreateTransactionModal: View {
             if existing.excludedFromInsights {
                 replacement = replacement.settingExcludedFromInsights(true)
             }
+            // The actual write is deferred to `confirmRecurringReplacement`
+            // (after the user confirms the alert). Mark the save in flight
+            // now so a second ✓ tap can't stack a second alert; the alert's
+            // Confirm / Cancel buttons reset `isSaving`.
+            isSaving = true
             pendingRecurringReplacement = replacement
             showRecurringReplaceAlert = true
             return
         }
 
-        guard var tx = vm.buildTransaction(editingId: editingTransaction?.id) else { return }
+        // Reuse a stable `syncID` across any re-commit of this same logical
+        // save so the store's syncID dedup collapses a double-commit to one
+        // row instead of two diverging ids. Editing keeps the existing
+        // transaction's identity untouched (build resolves it from the row).
+        let saveSyncID: String? = editingTransaction == nil
+            ? { let id = inFlightSyncID ?? UUID().uuidString; inFlightSyncID = id; return id }()
+            : nil
+        guard var tx = vm.buildTransaction(
+            editingId: editingTransaction?.id,
+            syncID: saveSyncID
+        ) else { return }
         // Editing an existing transaction must preserve the user's
         // include/exclude-from-insights choice — the build step starts
         // from `vm` state, which doesn't carry that flag, so the row
@@ -505,6 +550,14 @@ struct CreateTransactionModal: View {
             tx = tx.settingExcludedFromInsights(true)
         }
         let pendingItems = vm.pendingReceiptItems
+
+        // We have a valid transaction to commit — lock out further taps.
+        isSaving = true
+
+        // From here every branch commits and dismisses. `isSaving` stays
+        // `true` for the rest of the modal's (brief) lifetime — the sheet
+        // is on its way out, and keeping the lock set covers the dismiss
+        // animation window where the toolbar ✓ is still hit-testable.
 
         if editingTransaction != nil {
             transactionStore.update(tx)
@@ -521,8 +574,9 @@ struct CreateTransactionModal: View {
         }
 
         if pendingItems.isEmpty {
-            // Fast path — no scan, keep the original fire-and-forget add to
-            // preserve existing behavior on devices without camera/AI.
+            // Fast path — no scan. `transactionStore.add` already runs its
+            // DB write + network push on an internal Task, so this never
+            // blocks; dismiss immediately.
             transactionStore.add(tx)
             trackTransactionSaved(tx, isEdit: false)
             dismiss()
@@ -530,18 +584,23 @@ struct CreateTransactionModal: View {
             return
         }
 
-        // New transaction WITH a receipt scan: we need the autoincrement ID
-        // before we can link the items. Run async, dismiss after both rows
-        // are written so the create modal doesn't close before the data
-        // settles.
+        // New transaction WITH a receipt scan: linking items needs the
+        // autoincrement ID, which only exists after the row is written.
+        // Previously this whole chain was awaited BEFORE `dismiss()`, and
+        // `addAndReturnID` awaits a CloudKit push — so on a slow/offline
+        // network the modal stayed open and the ✓ looked frozen, inviting
+        // the repeated taps that produced duplicates. Now we dismiss
+        // immediately and run the persist (+ item link) in the background;
+        // the transaction still saves locally even with no internet, the
+        // network push inside the store is already fire-and-forget, and
+        // the stable `syncID` + store dedup keep a stray re-commit from
+        // forking a second row.
+        trackTransactionSaved(tx, isEdit: false)
+        dismiss()
+        promptShareIfSplit(tx)
         Task {
             if let newID = await transactionStore.addAndReturnID(tx) {
                 await receiptItemStore.saveItems(pendingItems, for: newID)
-            }
-            await MainActor.run {
-                trackTransactionSaved(tx, isEdit: false)
-                dismiss()
-                promptShareIfSplit(tx)
             }
         }
     }
@@ -625,7 +684,12 @@ struct CreateTransactionModal: View {
 
     private func confirmRecurringReplacement() {
         guard let replacement = pendingRecurringReplacement,
-              let existing = editingTransaction else { return }
+              let existing = editingTransaction else {
+            // No pending replacement to commit — release the save lock so
+            // the user isn't stuck if they somehow re-enter this path.
+            isSaving = false
+            return
+        }
         transactionStore.delete(id: existing.id)
         transactionStore.add(replacement)
         // Replace-reminder is a recurring-edit special case: the user
@@ -951,6 +1015,10 @@ struct CreateTransactionModal: View {
             .accessibilityLabel("Scan receipt")
         } else {
             Button(action: {
+                // Re-entry guard — ignore taps while a save is committing
+                // so a frozen-looking ✓ on a bad network can't be tapped
+                // into duplicate transactions.
+                guard !isSaving else { return }
                 if payerConflict || splitHasUnresolvedConflict {
                     shakeSubtitleWithHaptic()
                 } else if vm.isAmountValid {
@@ -962,7 +1030,7 @@ struct CreateTransactionModal: View {
                 Image(systemName: "checkmark")
                     .font(AppFonts.bodyEmphasized)
             }
-            .disabled(!vm.isAmountValid && !payerConflict && !splitHasUnresolvedConflict)
+            .disabled(isSaving || (!vm.isAmountValid && !payerConflict && !splitHasUnresolvedConflict))
         }
     }
 
@@ -1247,6 +1315,11 @@ struct CreateTransactionModal: View {
                             HStack(spacing: AppSpacing.md) {
                                 ForEach(row, id: \.self) { key in
                                     Button(action: {
+                                        // Re-entry guard on the keypad ✔︎ —
+                                        // mirrors the toolbar ✓ so a save in
+                                        // flight can't be re-triggered into a
+                                        // duplicate. Digit keys are unaffected.
+                                        if key == "✔︎" && isSaving { return }
                                         if key == "✔︎" && (payerConflict || splitHasUnresolvedConflict) {
                                             shakeSubtitleWithHaptic()
                                         } else {
@@ -1270,6 +1343,10 @@ struct CreateTransactionModal: View {
                                     }
                                     .disabled(
                                         (key == "✔︎" && !vm.isAmountValid && !payerConflict && !splitHasUnresolvedConflict)
+                                        // Lock the confirm key while a save
+                                        // is committing so it can't be tapped
+                                        // again into a duplicate transaction.
+                                        || (key == "✔︎" && isSaving)
                                         // Block all keys except the
                                         // confirm checkmark while the
                                         // amount is locked to receipt
@@ -1612,6 +1689,9 @@ struct CreateTransactionModal: View {
                 }
                 Button("Cancel", role: .cancel) {
                     pendingRecurringReplacement = nil
+                    // User backed out — release the save lock so they can
+                    // tweak the reminder and try saving again.
+                    isSaving = false
                 }
             } message: {
                 Text("The current reminder will be deleted. Transactions already created from it will remain. A new reminder will start from now with your changes.")

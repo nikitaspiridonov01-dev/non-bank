@@ -68,7 +68,15 @@ class TransactionStore: ObservableObject {
 
     func add(_ transaction: Transaction) {
         Task {
-            await repo.insert(transaction)
+            // Idempotency guard: a logical save can be committed more than
+            // once (UI re-entrancy, retry). The `transactions` table has
+            // no UNIQUE constraint on `sync_id`, so a blind `insert` would
+            // create a duplicate row every time. If a row with this
+            // `syncID` already exists, update it in place (carrying the
+            // existing autoincrement `id` so the UPDATE … WHERE id = ?
+            // resolves) instead of inserting a second copy — so one
+            // logical save can only ever yield one transaction.
+            await insertOrUpdateBySyncID(transaction)
             await load()
             NotificationService.schedule(for: transaction)
             // Trigger a spawn pass right away — covers recurring parents
@@ -79,12 +87,35 @@ class TransactionStore: ObservableObject {
         }
     }
 
+    /// Insert `transaction`, or — when a row already carries the same
+    /// stable `syncID` — update that existing row in place. Centralises
+    /// the idempotency rule shared by `add(_:)` and `addAndReturnID(_:)`:
+    /// a double-commit of one logical save (re-entrancy / retry) can
+    /// never fan out into duplicate rows. The incoming `transaction.id`
+    /// is `0` for a fresh create, so we re-stamp it with the existing
+    /// row's autoincrement id before updating; otherwise the
+    /// `UPDATE … WHERE id = ?` would target nothing.
+    private func insertOrUpdateBySyncID(_ transaction: Transaction) async {
+        if let existing = transactions.first(where: { $0.syncID == transaction.syncID }) {
+            let reconciled = transaction.id == existing.id
+                ? transaction
+                : transaction.withID(existing.id)
+            await repo.update(reconciled)
+        } else {
+            await repo.insert(transaction)
+        }
+    }
+
     /// Insert a transaction and return the autoincrement ID assigned by SQLite.
     /// Used by callers that need the new ID immediately — e.g. saving linked
     /// receipt items right after the transaction is created. Looks up the
     /// inserted record by its stable `syncID` after the load completes.
     func addAndReturnID(_ transaction: Transaction) async -> Int? {
-        await repo.insert(transaction)
+        // Same idempotency guard as `add(_:)` — a double-commit of the
+        // same logical save (same `syncID`) updates the existing row
+        // rather than inserting a duplicate, then resolves the existing
+        // autoincrement id below.
+        await insertOrUpdateBySyncID(transaction)
         await load()
         NotificationService.schedule(for: transaction)
         processRecurringSpawns()

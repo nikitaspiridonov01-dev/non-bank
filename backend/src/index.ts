@@ -11,6 +11,7 @@ import {
   handleFetchShareItems,
   sweepExpiredShareItems,
 } from "./share_items.ts";
+import { isValidPairHmac, upsertPairing, bindKeyUser } from "./sync.ts";
 import { handleTestProviders } from "./test_providers.ts";
 import {
   issueChallenge,
@@ -165,6 +166,12 @@ export default {
       if (url.pathname === "/privacy" && req.method === "GET") {
         return handlePrivacyPage();
       }
+      // Server-mediated sync — Phase 0: record a friend pairing after a
+      // real user opens a share link. App-Attest-gated + per-IP rate-
+      // limited; stores only an opaque HMAC (no social graph).
+      if (url.pathname === "/v1/sync/pair" && req.method === "POST") {
+        return withCors(await handleSyncPair(req, env), cors);
+      }
       // Server-side receipt-items storage (E2E encrypted).
       //   POST /v1/share-items/{share_id} — sender uploads items
       //   GET  /v1/share-items/{share_id} — recipient fetches them
@@ -310,6 +317,54 @@ async function handleAttestVerify(req: Request, env: Env): Promise<Response> {
   }
   await storeKey(env.DB, body.keyId, result.publicKeyB64!, env.ENV, nowSec);
   logEvent(env, "info", { route: "/v1/attest/verify", msg: "attested", key_prefix: body.keyId.slice(0, 8) });
+  return jsonResponse({ ok: true }, 200);
+}
+
+// ─── Server-mediated sync (Phase 0: pairing) ──────────────────────────
+
+/// Record a friend pairing. Called by the client right after a real user
+/// opens a share link (onOpenURL → ShareLinkCoordinator). Stores only the
+/// opaque client-computed pair HMAC, and binds the attested key → user id
+/// (trust-on-first-use) when an assertion is present so Phase 1 can
+/// address deliveries. Best-effort client-side — a failure here never
+/// breaks the existing manual-share import.
+async function handleSyncPair(req: Request, env: Env): Promise<Response> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  // Reuse the per-IP daily budget — pairing is rare (once per friend), so
+  // it doesn't meaningfully compete with parse-receipt; a dedicated sync
+  // counter lands with the Phase 4 quota tuning.
+  const blocked = await attestIpGate(req, env, nowSec);
+  if (blocked) return blocked;
+  // Same env-based strictness as parse-receipt: required in production
+  // (once APP_ATTEST_REQUIRED flips to "1"), lenient on staging/simulator.
+  const attGate = await gateAttestation(req, env, nowSec);
+  if (!attGate.ok) {
+    return jsonResponse(
+      { error: "attestation_failed", detail: attGate.reason },
+      attGate.status,
+    );
+  }
+  let body: { pair_hmac?: unknown; user_id?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: "bad_request", detail: "invalid JSON" }, 400);
+  }
+  if (!isValidPairHmac(body.pair_hmac)) {
+    return jsonResponse(
+      { error: "bad_request", detail: "pair_hmac must be 64 hex chars" },
+      400,
+    );
+  }
+  // Bind attested key → user id when both are present (TOFU). Absent on
+  // lenient simulator dev with no attestation — the pairing still records.
+  const keyId = req.headers.get("X-Attest-Key-Id");
+  const userId = typeof body.user_id === "string" ? body.user_id.trim() : "";
+  if (keyId && userId.length >= 3 && userId.length <= 64) {
+    await bindKeyUser(env.DB, keyId, userId, nowSec);
+  }
+  await upsertPairing(env.DB, body.pair_hmac, nowSec);
+  logEvent(env, "info", { route: "/v1/sync/pair", msg: "paired" });
   return jsonResponse({ ok: true }, 200);
 }
 

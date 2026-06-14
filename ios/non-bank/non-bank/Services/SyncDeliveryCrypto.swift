@@ -132,4 +132,46 @@ enum SyncDeliveryCrypto {
     ) -> SharedTransactionPayload? {
         try? decrypt(base64: base64, myID: myID, peerID: candidatePeerID)
     }
+
+    // MARK: - Pairing handshake
+
+    /// Reciprocal pairing handshake the recipient sends back to the sharer so
+    /// the sharer learns the recipient's REAL user id and can upgrade/connect
+    /// the (phantom) friend — without which the sharer never uploads to them.
+    /// `rid` = recipient's real user id, `n` = recipient's display name.
+    ///
+    /// The key is derived from the SHARER's id + the recipient's PHANTOM id
+    /// (the id the sharer assigned them, which the recipient reads from the
+    /// share payload). Both sides can derive it, and crucially it does NOT
+    /// need the recipient's real id — the very thing the sharer is missing.
+    /// The sharer recovers it by trying each of its friends' ids as the
+    /// phantom key (see `SyncEngine.applyPairHandshake`).
+    struct PairHandshake: Codable, Equatable {
+        let rid: String
+        let n: String?
+    }
+
+    static func encryptHandshake(_ h: PairHandshake, keyA: String, keyB: String) throws -> String {
+        guard let plaintext = try? JSONEncoder().encode(h) else { throw CryptoError.encodingFailed }
+        let key = deriveKey(keyA, keyB)
+        do {
+            let sealed = try AES.GCM.seal(plaintext, using: key)
+            guard let combined = sealed.combined else { throw CryptoError.sealFailed }
+            return combined.base64EncodedString()
+        } catch {
+            throw CryptoError.sealFailed
+        }
+    }
+
+    /// Attempt to open a handshake with the key for `(keyA, keyB)`; nil if it
+    /// doesn't authenticate (wrong friend). The sharer tries each friend id as
+    /// `keyB` until one opens — that friend is the phantom to upgrade.
+    static func tryDecryptHandshake(base64: String, keyA: String, keyB: String) -> PairHandshake? {
+        guard let combined = Data(base64Encoded: base64),
+              let box = try? AES.GCM.SealedBox(combined: combined) else { return nil }
+        let key = deriveKey(keyA, keyB)
+        guard let plaintext = try? AES.GCM.open(box, using: key),
+              let h = try? JSONDecoder().decode(PairHandshake.self, from: plaintext) else { return nil }
+        return h
+    }
 }

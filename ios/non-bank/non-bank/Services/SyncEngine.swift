@@ -166,6 +166,16 @@ final class SyncEngine {
         var acks: [(txSyncID: String, version: Int)] = []
 
         for delivery in deliveries {
+            if delivery.op == "pair" {
+                // Reciprocal pairing handshake from someone who opened OUR
+                // share link: it tells us their real user id so we can upgrade
+                // the phantom friend we created for them to a connected
+                // real-id friend — after which our uploads actually reach them.
+                if await applyPairHandshake(delivery, myID: myID, friendStore: friendStore, transactionStore: transactionStore) {
+                    acks.append((delivery.tx_sync_id, delivery.version))
+                }
+                continue
+            }
             if delivery.op == "delete" {
                 if let existing = transactionStore.transactions.first(where: { $0.syncID == delivery.tx_sync_id }) {
                     transactionStore.delete(id: existing.id)
@@ -188,41 +198,76 @@ final class SyncEngine {
             // server-side. (Don't ack what we didn't apply.)
             guard let payload else { continue }
 
-            let intent = ShareIntentClassifier.classify(
-                payload: payload,
-                receiverID: myID,
-                existingTransactions: transactionStore.transactions,
-                checksumOf: { $0.payloadChecksum }
-            )
+            // Sync context: WE are the recipient (this inbox is ours), so we
+            // resolve our own participant index directly rather than via the
+            // picker-oriented `ShareIntentClassifier`. The classifier returns
+            // `.createWithPicker` (which a headless pull can only SKIP)
+            // whenever the sharer addressed us by a phantom id instead of our
+            // real userID — and that silent skip is exactly why pushed
+            // deliveries never applied (they only landed via the manual web
+            // link, which has the picker). Here we instead match ourselves by
+            // real id, or — in an unambiguous 2-person split — as the single
+            // non-sharer participant. Update-vs-create is decided by whether we
+            // already hold this syncID, so an edit UPDATES instead of creating
+            // a duplicate.
+            let existing = transactionStore.transactions.first { $0.syncID == delivery.tx_sync_id }
 
-            switch intent {
-            case .identical:
-                // Already have this (or an equal/newer version via the
-                // version guard) — nothing to apply, just ack.
+            // Idempotent re-pull / stale-edit guard: we already hold this
+            // version (or newer — e.g. we edited locally) → just ack so the
+            // server stops re-delivering. delivery.version == payload.ev.
+            if let existing, delivery.version <= existing.editVersion {
                 acks.append((delivery.tx_sync_id, delivery.version))
-            case .createAuto(let index):
-                if await applyHeadless(payload: payload, index: index, existingID: nil, isUpdate: false,
-                                       transactionStore: transactionStore, friendStore: friendStore,
-                                       categoryStore: categoryStore, receiptItemStore: receiptItemStore) {
-                    acks.append((delivery.tx_sync_id, delivery.version))
-                }
-            case .updatePrompt(let existingID, let knownIndex):
-                // Synced deliveries always identify the receiver by userID,
-                // so knownIndex is set; apply directly. If it's somehow nil
-                // (ambiguous), skip + leave un-acked rather than guess.
-                if let index = knownIndex,
-                   await applyHeadless(payload: payload, index: index, existingID: existingID, isUpdate: true,
-                                       transactionStore: transactionStore, friendStore: friendStore,
-                                       categoryStore: categoryStore, receiptItemStore: receiptItemStore) {
-                    acks.append((delivery.tx_sync_id, delivery.version))
-                }
-            case .createWithPicker, .malformed:
-                // Can't resolve headlessly; leave un-acked.
-                break
+                continue
+            }
+
+            let myIndex = payload.f.firstIndex(where: { $0.id == myID })
+            let nonSharerIndices = payload.f.indices.filter { payload.f[$0].id != payload.s }
+            guard let index = myIndex ?? (nonSharerIndices.count == 1 ? nonSharerIndices.first : nil) else {
+                // Genuinely ambiguous (3+ participants and we aren't id-matched)
+                // — can't pick "us" headlessly. Leave un-acked for the manual
+                // link flow (which has the picker); it TTLs out server-side.
+                continue
+            }
+
+            if await applyHeadless(payload: payload, index: index,
+                                   existingID: existing?.id, isUpdate: existing != nil,
+                                   transactionStore: transactionStore, friendStore: friendStore,
+                                   categoryStore: categoryStore, receiptItemStore: receiptItemStore) {
+                acks.append((delivery.tx_sync_id, delivery.version))
             }
         }
 
         await SyncDeliveryService.ack(recipientID: myID, acks: acks)
+    }
+
+    /// Apply a reciprocal pairing handshake. We don't know the sender's real
+    /// id, so we try each of our friends' ids as the handshake key
+    /// (HKDF(sorted(myID, friend.id))) — the one that authenticates is the
+    /// phantom friend the sender opened our link as. Upgrade that phantom to
+    /// the sender's real id (carried in the handshake) and mark it connected,
+    /// so our future uploadSplit reaches them. Returns true if matched/applied.
+    private func applyPairHandshake(
+        _ delivery: SyncDeliveryService.InboxDelivery,
+        myID: String,
+        friendStore: FriendStore,
+        transactionStore: TransactionStore
+    ) async -> Bool {
+        for friend in friendStore.friends {
+            guard let handshake = SyncDeliveryCrypto.tryDecryptHandshake(
+                base64: delivery.payload, keyA: myID, keyB: friend.id
+            ) else { continue }
+            // Matched: `friend` is the phantom; `handshake.rid` is their real id.
+            if friend.id != handshake.rid {
+                await friendStore.upgradePhantom(phantomID: friend.id, realID: handshake.rid)
+                await transactionStore.upgradePhantomFriendID(from: friend.id, to: handshake.rid)
+            } else {
+                friendStore.markConnected(id: friend.id)
+            }
+            return true
+        }
+        // No matching friend (maybe they aren't in our list yet) — leave it
+        // un-acked so a later pull can retry once the friend exists.
+        return false
     }
 
     /// Headless apply — the non-UI sibling of

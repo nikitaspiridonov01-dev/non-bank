@@ -262,7 +262,11 @@ class TransactionStore: ObservableObject {
                 parentReminderID: tx.parentReminderID,
                 splitInfo: newSplit,
                 payloadChecksum: tx.payloadChecksum,
-                excludedFromInsights: tx.excludedFromInsights
+                excludedFromInsights: tx.excludedFromInsights,
+                // Preserve the sync edit version — an id rewrite is not a
+                // content edit, and resetting it to 0 would let a stale
+                // server delivery clobber this transaction on the next pull.
+                editVersion: tx.editVersion
             )
             await repo.update(updated)
         }

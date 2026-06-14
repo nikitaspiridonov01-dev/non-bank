@@ -26,11 +26,28 @@ enum SplitItemBreakdown {
     }
 
     /// One participant's proportional cut of a charge kind (fee/tip/
-    /// discount). `amount` is signed — discounts are negative.
+    /// discount). `amount` is signed — discounts are negative. `name` is
+    /// the source line's own receipt name (e.g. "Тариф за сервис") so the
+    /// per-person breakdown labels charges exactly like the general receipt
+    /// items list, instead of a generic "Service fee". Falls back to a
+    /// generic kind label only when several differently-named lines of the
+    /// same kind were summed into this one cut.
     struct ChargeCut: Identifiable, Equatable {
         let kind: ReceiptItem.Kind
+        let name: String
         let amount: Double
         var id: String { kind.rawValue }
+    }
+
+    /// Generic label for a charge kind — used only as the multi-source
+    /// fallback for `ChargeCut.name`.
+    static func genericChargeName(_ kind: ReceiptItem.Kind) -> String {
+        switch kind {
+        case .fee:      return "Service fee"
+        case .tip:      return "Tip"
+        case .discount: return "Discount"
+        case .item:     return ""
+        }
     }
 
     /// Full breakdown for one participant.
@@ -81,10 +98,12 @@ enum SplitItemBreakdown {
             directItemTotal += item.lineTotal
         }
 
-        // Charge sums per kind (signed; discount negative).
+        // Charge sums + source line names per kind (signed; discount negative).
         var chargeByKind: [ReceiptItem.Kind: Double] = [:]
+        var chargeNamesByKind: [ReceiptItem.Kind: [String]] = [:]
         for item in items where chargeOrder.contains(item.kind) {
             chargeByKind[item.kind, default: 0] += item.lineTotal
+            chargeNamesByKind[item.kind, default: []].append(item.name)
         }
         let chargeSum = chargeByKind.values.reduce(0, +)
         // Same gating as SplitShareCalculator: no item base or no charges
@@ -108,7 +127,15 @@ enum SplitItemBreakdown {
                     let cut = sum * proportion
                     // A zero-item participant gets a ~0 cut — omit the row.
                     guard abs(cut) > zeroEpsilon else { continue }
-                    charges.append(ChargeCut(kind: kind, amount: cut))
+                    // Use the source line's own name when this kind came from
+                    // a single distinctly-named line (the common case — one
+                    // "Тариф за сервис"); otherwise a generic kind label.
+                    let names = Set(
+                        (chargeNamesByKind[kind] ?? [])
+                            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                    )
+                    let label = names.count == 1 ? names.first! : Self.genericChargeName(kind)
+                    charges.append(ChargeCut(kind: kind, name: label, amount: cut))
                 }
             }
 
@@ -135,5 +162,35 @@ enum SplitItemBreakdown {
         let perAssignee = item.lineTotal / Double(assignees.count)
         // Preserve assignment order so avatar ordering is stable.
         return assignees.map { (participantID: $0, slice: perAssignee) }
+    }
+
+    /// Per-participant proportional cut of ONE charge line (fee/tip/discount),
+    /// using the SAME item-base proportion `compute` applies — so a
+    /// per-adjustment "who pays what" tap sheet reconciles to each person's
+    /// share. `amount` is signed (discounts negative). Returns `[]` for an
+    /// item row, an empty roster, or when there's no item base to proportion
+    /// against (a participant with zero assigned items gets no row).
+    static func chargeDistribution(
+        of charge: ReceiptItem,
+        items: [ReceiptItem],
+        participants: Set<String>
+    ) -> [(participantID: String, amount: Double)] {
+        guard charge.kind != .item, !participants.isEmpty else { return [] }
+        var directBase: [String: Double] = [:]
+        var directItemTotal: Double = 0
+        for item in items where item.kind == .item {
+            let assignees = item.assignedParticipantIDs.filter(participants.contains)
+            guard !assignees.isEmpty else { continue }
+            let perAssignee = item.lineTotal / Double(assignees.count)
+            for id in assignees { directBase[id, default: 0] += perAssignee }
+            directItemTotal += item.lineTotal
+        }
+        guard directItemTotal > zeroEpsilon else { return [] }
+        return participants.compactMap { id -> (participantID: String, amount: Double)? in
+            let proportion = (directBase[id] ?? 0) / directItemTotal
+            let amount = charge.lineTotal * proportion
+            guard abs(amount) > zeroEpsilon else { return nil }
+            return (participantID: id, amount: amount)
+        }
     }
 }

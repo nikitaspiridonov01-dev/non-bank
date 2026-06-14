@@ -624,11 +624,35 @@ struct ItemAssignmentReview: View {
                 .padding(.vertical, AppSpacing.md)
         }
         .sheet(isPresented: $showProportionalBreakdown) {
-            ProportionalChargesSheet(
-                items: itemsWithAssignments,
-                currency: currency
+            // The full breakdown reuses the Receipt-items sheet: every line
+            // with its avatars, items first then adjustments, each adjustment
+            // tappable to its proportional per-person distribution.
+            ReceiptItemsReadOnlySheet(
+                items: breakdownItems,
+                currency: currency,
+                participants: breakdownRoster,
+                headerTitle: "Breakdown",
+                headerSubtitle: "Additional adjustments are distributed proportionally to each person's items."
             )
         }
+    }
+
+    /// Roster keyed by participant id for the breakdown sheet's avatar +
+    /// per-person attribution (same id space the assignments use).
+    private var breakdownRoster: [String: ItemAssignmentParticipant] {
+        Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
+    }
+
+    /// All receipt lines for the breakdown: items in receipt order first,
+    /// then adjustments grouped fee → tip → discount at the end.
+    private var breakdownItems: [ReceiptItem] {
+        let assigned = itemsWithAssignments
+        let regular = assigned.filter { $0.kind == .item }
+        let chargeOrder: [ReceiptItem.Kind] = [.fee, .tip, .discount]
+        let charges = assigned
+            .filter { $0.kind != .item }
+            .sorted { (chargeOrder.firstIndex(of: $0.kind) ?? 99) < (chargeOrder.firstIndex(of: $1.kind) ?? 99) }
+        return regular + charges
     }
 
     // MARK: - Sub-views
@@ -739,89 +763,7 @@ struct ItemAssignmentReview: View {
     }
 }
 
-// MARK: - Proportional charges sheet
-
-/// Lightweight breakdown shown when the user taps "See breakdown" on
-/// the Review step. Lists every fee / tax / tip / discount as one
-/// row (kind icon + name + line total) so the user can see at a glance
-/// what's being auto-distributed alongside their direct item picks.
-/// The per-participant cut for each row used to live here too, but it
-/// felt heavy for a glance-tier sheet — the calculator's pass-2
-/// formula is simple enough that the user reads "proportional to my
-/// items share" off the subtitle and doesn't need to verify each
-/// person's exact split row-by-row.
-///
-/// Visually modelled on the other in-flow sheets (`ItemClaimantsSheet`):
-/// no NavigationBar / Done toolbar, drag-to-dismiss via the indicator,
-/// 48pt top breathing room, bold title + tertiary subtitle inside the
-/// content.
-private struct ProportionalChargesSheet: View {
-    let items: [ReceiptItem]
-    let currency: String
-
-    private var proportionalItems: [ReceiptItem] {
-        items.filter { $0.kind != .item }
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AppSpacing.lg) {
-                header
-                chargesList
-                Spacer().frame(height: 40)
-            }
-            .padding(.horizontal, AppSpacing.pageHorizontal)
-            // Same 48pt top breathing room used by the other
-            // orchestrator-style sheets (`ItemClaimantsSheet`,
-            // `FriendPickerContent`'s header, `ModePickerStep`).
-            .padding(.top, 48)
-            .padding(.bottom, AppSpacing.xxl)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .background(AppColors.backgroundPrimary)
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Additional adjustments")
-                .font(.system(size: 28, weight: .bold))
-                .foregroundColor(AppColors.textPrimary)
-            Text("Distributed proportionally to each person's items.")
-                .font(AppFonts.bodySmallRegular)
-                .foregroundColor(AppColors.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var chargesList: some View {
-        VStack(spacing: AppSpacing.xs) {
-            ForEach(proportionalItems) { item in
-                chargeRow(item)
-            }
-        }
-    }
-
-    private func chargeRow(_ item: ReceiptItem) -> some View {
-        HStack(spacing: AppSpacing.md) {
-            ReceiptItemKindIcon(kind: item.kind)
-            Text(item.name)
-                .font(AppFonts.body)
-                .foregroundColor(AppColors.textPrimary)
-                .lineLimit(2)
-            Spacer(minLength: 8)
-            ReceiptItemAmountText(
-                amount: item.lineTotal,
-                currency: currency,
-                isDiscount: item.lineTotal < 0
-            )
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, AppSpacing.rowVertical)
-        .background(
-            RoundedRectangle(cornerRadius: AppRadius.large)
-                .fill(AppColors.backgroundElevated)
-        )
-    }
-}
+// The former `ProportionalChargesSheet` was replaced by the reusable
+// `ReceiptItemsReadOnlySheet` Breakdown variant (every line with avatars +
+// tappable proportional adjustments) — see the Review step's
+// `showProportionalBreakdown` sheet above.

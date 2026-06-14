@@ -415,7 +415,7 @@ final class ShareLinkCoordinator: ObservableObject {
                     numParticipantsBucket: AnalyticsBuckets.friendCount(payload.f.count),
                     isUpdate: true
                 ))
-                recordPairingBestEffort(sharerID: payload.s, sharerName: payload.sn, announceNewFriend: !sharerWasConnected)
+                recordPairingBestEffort(sharerID: payload.s, sharerName: payload.sn, announceNewFriend: !sharerWasConnected, myPhantomID: payload.f.indices.contains(index) ? payload.f[index].id : nil)
                 routingState = .completed(syncID: resolved.transaction.syncID, kind: .updated)
             } else {
                 // `addAndReturnID` already awaits the load; we use
@@ -439,7 +439,7 @@ final class ShareLinkCoordinator: ObservableObject {
                         numParticipantsBucket: AnalyticsBuckets.friendCount(payload.f.count),
                         isUpdate: false
                     ))
-                    recordPairingBestEffort(sharerID: payload.s, sharerName: payload.sn, announceNewFriend: !sharerWasConnected)
+                    recordPairingBestEffort(sharerID: payload.s, sharerName: payload.sn, announceNewFriend: !sharerWasConnected, myPhantomID: payload.f.indices.contains(index) ? payload.f[index].id : nil)
                     routingState = .completed(syncID: resolved.transaction.syncID, kind: .createdNew)
                 } else {
                     // `addAndReturnID` looks up by syncID after the load
@@ -536,16 +536,42 @@ final class ShareLinkCoordinator: ObservableObject {
     private func recordPairingBestEffort(
         sharerID: String,
         sharerName: String?,
-        announceNewFriend: Bool
+        announceNewFriend: Bool,
+        myPhantomID: String?
     ) {
         guard !sharerID.isEmpty else { return }
-        Task { [weak self] in
+        // @MainActor so the post-await `pairingToast` assignment lands on the
+        // main thread (after `recordPairing`'s nonisolated network hop) — a
+        // background @Published write can fail to drive the SwiftUI toast.
+        Task { @MainActor [weak self] in
             let myID = UserIDService.currentID()
             let confirmed = await SyncPairing.recordPairing(myID: myID, sharerID: sharerID)
-            // Announce only on a genuine first connection AND a server-
-            // confirmed pairing (CC3) — future shared expenses will sync
-            // automatically once both sides are paired.
-            if confirmed, announceNewFriend {
+            guard confirmed else { return }
+
+            // Reciprocal pairing handshake — THIS is what makes sync work in
+            // the sharer→recipient direction. We send the sharer our REAL
+            // user id, encrypted with the key derived from (sharerID, the
+            // phantom id the sharer assigned us). The sharer can't derive a
+            // real-id key (it doesn't know our real id yet), but it CAN try
+            // each of its friends' ids as the phantom key on pull, recover
+            // this, and upgrade that phantom friend to our real id +
+            // isConnected — after which its uploads reach us. Without this the
+            // sharer never marks us connected and never uploads.
+            if let phantomID = myPhantomID, !phantomID.isEmpty,
+               let cipher = try? SyncDeliveryCrypto.encryptHandshake(
+                   SyncDeliveryCrypto.PairHandshake(rid: myID, n: UserProfileService.displayName()),
+                   keyA: sharerID, keyB: phantomID
+               ) {
+                let pairHMAC = SyncPairing.pairHMAC(myID, sharerID)
+                await SyncDeliveryService.upload(
+                    pairHMAC: pairHMAC, recipientID: sharerID,
+                    txSyncID: "pair:" + pairHMAC, version: 1, op: "pair",
+                    payloadCiphertext: cipher, checksum: nil
+                )
+            }
+
+            // Announce only on a genuine first connection (server-confirmed).
+            if announceNewFriend {
                 let trimmed = sharerName?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let name = (trimmed?.isEmpty == false) ? trimmed! : "Your friend"
                 self?.pairingToast = "\(name) is now a friend — your shared expenses will sync automatically."

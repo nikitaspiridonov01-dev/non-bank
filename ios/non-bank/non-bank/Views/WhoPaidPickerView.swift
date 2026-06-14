@@ -484,7 +484,7 @@ struct WhoPaidPickerView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(purpose == .settleUp ? "Who pays" : "Who pay")
+                        Text(purpose == .settleUp ? "Who pays" : "Who paid")
                             .font(.system(size: 32, weight: .bold))
                             .foregroundColor(AppColors.textPrimary)
 

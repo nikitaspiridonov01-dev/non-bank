@@ -146,7 +146,7 @@ struct ShareSplitPromptSheet: View {
                     .font(AppFonts.displayMedium)
                     .foregroundColor(AppColors.textPrimary)
 
-                Text("Send \u{201C}\(transaction.title)\u{201D} to friends so they always have the latest version on their side.")
+                Text("Send it so friends always have the latest version.")
                     .font(AppFonts.bodyRegular)
                     .foregroundColor(AppColors.textSecondary)
                     .multilineTextAlignment(.center)
@@ -161,7 +161,7 @@ struct ShareSplitPromptSheet: View {
                         Image(systemName: "arrow.triangle.2.circlepath")
                             .font(AppFonts.bodySmallEmphasized)
                             .foregroundColor(AppColors.splitAccent)
-                        Text("Ask them to open the link in non-bank — once they do, your future shared expenses sync automatically, with no re-sharing.")
+                        Text("When they open it in non-bank, future changes sync automatically.")
                             .font(AppFonts.bodySmallRegular)
                             .foregroundColor(AppColors.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)

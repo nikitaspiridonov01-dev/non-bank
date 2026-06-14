@@ -2062,6 +2062,14 @@ struct ModePickerStep: View {
                 ForEach(recents) { recent in
                     recentRow(recent)
                 }
+                // Subtle separator so the recent shortcuts read as a distinct
+                // group from the standard "Pay for yourself / Split …" options
+                // below. Warm border token (not a system separator).
+                Rectangle()
+                    .fill(AppColors.border)
+                    .frame(height: 1)
+                    .padding(.horizontal, 4)
+                    .padding(.top, AppSpacing.sm)
             }
             .padding(.bottom, AppSpacing.xxl)
         }
@@ -2092,9 +2100,12 @@ struct ModePickerStep: View {
                     Text(recent.subtitle)
                         .font(AppFonts.rowDescription)
                         .foregroundColor(AppColors.textTertiary)
-                        .lineLimit(1)
+                        // Wrap rather than clip — a recent shortcut names its
+                        // participants ("Between you, Alex and Sam") and must
+                        // stay legible at any name length / text size.
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer()
+                Spacer(minLength: 0)
             }
             .padding(.vertical, AppSpacing.rowVertical)
             .padding(.horizontal, 4)

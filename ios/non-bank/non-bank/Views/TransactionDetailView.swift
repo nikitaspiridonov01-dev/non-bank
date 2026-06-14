@@ -1232,14 +1232,12 @@ struct TransactionDetailView: View {
                     .foregroundColor(AppColors.textPrimary)
                 }
             }
-            // Apple-required grouping so the two preview rows' glass
-            // stays mutually consistent (each keeps its own `.glassEffect`
-            // over a uniform under-fill).
-            GlassEffectContainer {
-                VStack(spacing: AppSpacing.xs) {
-                    ForEach(Array(receiptItems.prefix(2))) { item in
-                        receiptItemRow(item)
-                    }
+            // Each row is its own standalone glass tile (like the category
+            // emoji tile) — no GlassEffectContainer, which was fusing the
+            // adjacent rows into one connected shape.
+            VStack(spacing: AppSpacing.xs) {
+                ForEach(Array(receiptItems.prefix(2))) { item in
+                    receiptItemRow(item)
                 }
             }
         }
@@ -1271,15 +1269,11 @@ struct TransactionDetailView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.rowVertical)
-        // Uniform sub-app card fill UNDER the glass (same rounded-rect
-        // shape) so each preview row samples a constant backdrop — a
-        // wrapped 2-line item name no longer reads lighter than a short
-        // one. `receiptSheetContext` maps `source` to the same sub-app
-        // palette as this view's page background.
-        .background(
-            receiptSheetContext.cardFill,
-            in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
-        )
+        // Plain Liquid Glass, matching the category emoji tile above — no
+        // under-fill. The previous uniform `cardFill` backdrop (added to
+        // steady the size-dependent tint) read as a murky, opaque panel and
+        // made adjacent rows look fused; transparent glass like the emoji
+        // tile is the intended look.
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
     }
 

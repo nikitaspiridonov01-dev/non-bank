@@ -344,8 +344,6 @@ private struct ParticipantBreakdownSheet: View {
 
     private var title: String { isMe ? "Your items" : "\(participantName)'s items" }
 
-    private var shareLabel: String { isMe ? "your share" : "\(participantName)'s share" }
-
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -399,7 +397,9 @@ private struct ParticipantBreakdownSheet: View {
     private func itemRow(_ slice: SplitItemBreakdown.ItemSlice) -> some View {
         let claimants = SplitClaimantBuilder.claimants(of: slice.item, roster: roster)
         let shared = claimants.count > 1
-        let avatars = shared ? SplitClaimantBuilder.avatars(claimants) : []
+        // No "who shares this" avatar pile here — this is a single person's
+        // breakdown, so the pile read as redundant. (The general Receipt
+        // items sheet still shows it.)
         return HStack(spacing: AppSpacing.md) {
             ReceiptItemKindIcon(kind: .item)
             Text(slice.item.name)
@@ -407,15 +407,6 @@ private struct ParticipantBreakdownSheet: View {
                 .foregroundColor(AppColors.textPrimary)
                 .lineLimit(2)
             Spacer(minLength: 8)
-            if !avatars.isEmpty {
-                OverlappingAvatarStack(
-                    participants: avatars,
-                    avatarSize: 20,
-                    strokeColor: AppColors.backgroundElevated,
-                    maxVisible: 3,
-                    overflowCount: max(0, avatars.count - 3)
-                )
-            }
             ReceiptItemAmountText(amount: slice.slice, currency: currency, isDiscount: false)
         }
         .padding(.horizontal, 14)
@@ -439,7 +430,10 @@ private struct ParticipantBreakdownSheet: View {
     private func chargeRow(_ cut: SplitItemBreakdown.ChargeCut) -> some View {
         HStack(spacing: AppSpacing.md) {
             ReceiptItemKindIcon(kind: cut.kind)
-            Text(chargeLabel(cut.kind))
+            // Use the source line's own receipt name (e.g. "Тариф за сервис")
+            // so adjustment rows read identically to the general Receipt
+            // items list.
+            Text(cut.name)
                 .font(AppFonts.body)
                 .foregroundColor(AppColors.textSecondary)
                 .lineLimit(2)
@@ -458,15 +452,6 @@ private struct ParticipantBreakdownSheet: View {
             in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
         )
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
-    }
-
-    private func chargeLabel(_ kind: ReceiptItem.Kind) -> String {
-        switch kind {
-        case .fee:      return "Service fee (\(shareLabel))"
-        case .tip:      return "Tip (\(shareLabel))"
-        case .discount: return "Discount (\(shareLabel))"
-        case .item:     return ""
-        }
     }
 
     private var totalRow: some View {

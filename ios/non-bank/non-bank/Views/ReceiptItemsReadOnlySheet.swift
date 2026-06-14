@@ -33,10 +33,20 @@ struct ReceiptItemsReadOnlySheet: View {
     /// keeps the original non-interactive list, so existing callers are
     /// unaffected.
     var participants: [String: ItemAssignmentParticipant] = [:]
+    /// When set, the sheet renders as a "Breakdown" view: a big in-content
+    /// title (instead of the inline "Receipt items" nav title) plus an
+    /// optional description line. Used by the split Review step's
+    /// "See breakdown" entry point, which shows every receipt line with its
+    /// avatars and tappable proportional adjustments.
+    var headerTitle: String? = nil
+    var headerSubtitle: String? = nil
 
     @Environment(\.dismiss) private var dismiss
     /// The item whose per-person distribution sheet is currently open.
     @State private var selectedItemForClaimants: ReceiptItem? = nil
+    /// The adjustment (fee/tip/discount) whose per-person proportional
+    /// distribution sheet is currently open.
+    @State private var selectedChargeForDistribution: ReceiptItem? = nil
 
     private var grandTotal: Double {
         items.reduce(0) { $0 + $1.lineTotal }
@@ -67,6 +77,7 @@ struct ReceiptItemsReadOnlySheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: AppSpacing.lg) {
+                    breakdownHeader
                     headerBlock
                     itemsList
                     if !isParticipantScoped {
@@ -82,7 +93,9 @@ struct ReceiptItemsReadOnlySheet: View {
             // ScrollView's default opaque background masks the glass
             // and the sheet reads as a flat dark tray.
             .scrollContentBackground(.hidden)
-            .navigationTitle(resolvedTitle)
+            // Breakdown variant carries its own big in-content title, so the
+            // inline nav title is suppressed to avoid a duplicate heading.
+            .navigationTitle(headerTitle == nil ? resolvedTitle : "")
             .navigationBarTitleDisplayMode(.inline)
             // `.toolbarBackground(.hidden)` removes the navigation bar's
             // own opaque material — otherwise it stacks an extra opaque
@@ -128,6 +141,39 @@ struct ReceiptItemsReadOnlySheet: View {
                 claimants: claimantEntries(for: item),
                 colorContext: colorContext
             )
+        }
+        // Per-adjustment "how this is distributed" sheet — the proportional
+        // sibling of the per-item sheet above.
+        .sheet(item: $selectedChargeForDistribution) { charge in
+            PerChargeDistributionSheet(
+                charge: charge,
+                currency: currency,
+                claimants: chargeShareEntries(for: charge),
+                colorContext: colorContext
+            )
+        }
+    }
+
+    /// Big in-content header for the Breakdown variant ("Breakdown" + the
+    /// proportional-distribution explainer). Absent for the plain
+    /// "Receipt items" / per-person entry points.
+    @ViewBuilder
+    private var breakdownHeader: some View {
+        if let headerTitle {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(headerTitle)
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundColor(AppColors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let headerSubtitle {
+                    Text(headerSubtitle)
+                        .font(AppFonts.bodySmallRegular)
+                        .foregroundColor(AppColors.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, AppSpacing.pageHorizontal)
         }
     }
 
@@ -201,7 +247,14 @@ struct ReceiptItemsReadOnlySheet: View {
     private func row(_ item: ReceiptItem) -> some View {
         let kind = item.kind
         let isDiscount = kind == .discount
-        let sharers = avatarParticipants(for: item)
+        // Item rows show their equal-split claimants; adjustment rows
+        // (fee/tip/discount) show everyone who carries a proportional cut —
+        // both reuse the same claimant/avatar pipeline so the piles render
+        // identically. `tappable` gates the detail sheet to rows that have
+        // someone to attribute to.
+        let claimants = rowClaimants(for: item)
+        let sharers = SplitClaimantBuilder.avatars(claimants)
+        let tappable = !claimants.isEmpty
         return HStack(spacing: AppSpacing.md) {
             ReceiptItemKindIcon(kind: kind)
             Text(item.name)
@@ -209,24 +262,22 @@ struct ReceiptItemsReadOnlySheet: View {
                 .foregroundColor(AppColors.textPrimary)
                 .lineLimit(2)
             Spacer(minLength: 8)
-            // "Who shares this" pile — only on assignable item rows of a
-            // byItems split that have ≥1 active assignee. Tapping the row
-            // opens the per-item distribution sheet. Unassigned / non-item
-            // rows show nothing here and stay inert.
-            if !sharers.isEmpty {
-                OverlappingAvatarStack(
-                    participants: sharers,
-                    avatarSize: 20,
-                    strokeColor: AppColors.backgroundElevated,
-                    maxVisible: 3,
-                    overflowCount: max(0, sharers.count - 3)
-                )
-            }
-            // Trailing column: line total on top, qty × unit price
-            // beneath. Mirrors the `ReceiptReviewView` row so a user
-            // who saw "2 × 850 RSD" under the amount during the post-
-            // scan review keeps that exact reading position open later.
+            // Trailing column: the "who shares this" avatar pile sits ABOVE
+            // the price (matching the item-assignment screen), then the line
+            // total, then qty × unit price. Item rows pile their assignees;
+            // adjustment rows pile the proportional sharers and tap through
+            // to the per-person distribution sheet. Rows with no roster /
+            // no sharers show no pile and stay inert.
             VStack(alignment: .trailing, spacing: AppSpacing.xxs) {
+                if !sharers.isEmpty {
+                    OverlappingAvatarStack(
+                        participants: sharers,
+                        avatarSize: 20,
+                        strokeColor: AppColors.backgroundElevated,
+                        maxVisible: 3,
+                        overflowCount: max(0, sharers.count - 3)
+                    )
+                }
                 ReceiptItemAmountText(
                     amount: item.lineTotal,
                     currency: currency,
@@ -255,11 +306,23 @@ struct ReceiptItemsReadOnlySheet: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture {
-            // Only assignable rows with claimants are interactive.
-            guard !sharers.isEmpty else { return }
+            // Only rows with someone to attribute to are interactive.
+            guard tappable else { return }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            selectedItemForClaimants = item
+            if kind == .item {
+                selectedItemForClaimants = item
+            } else {
+                selectedChargeForDistribution = item
+            }
         }
+    }
+
+    /// Claimants driving a row's avatar pile + detail sheet: equal-split
+    /// assignees for an item, proportional sharers for an adjustment.
+    private func rowClaimants(for item: ReceiptItem) -> [SplitClaimant] {
+        item.kind == .item
+            ? claimantEntries(for: item)
+            : chargeShareEntries(for: item)
     }
 
     /// Active claimants of `item` (assignees ∩ roster) with each one's
@@ -269,8 +332,10 @@ struct ReceiptItemsReadOnlySheet: View {
         SplitClaimantBuilder.claimants(of: item, roster: participants)
     }
 
-    private func avatarParticipants(for item: ReceiptItem) -> [OverlappingAvatarStack.Participant] {
-        SplitClaimantBuilder.avatars(claimantEntries(for: item))
+    /// Each participant's proportional cut of an adjustment, against the full
+    /// receipt's item base. Empty for item rows or when no roster supplied.
+    private func chargeShareEntries(for charge: ReceiptItem) -> [SplitClaimant] {
+        SplitClaimantBuilder.chargeShares(of: charge, items: items, roster: participants)
     }
 
     private var totalsBlock: some View {
@@ -350,6 +415,29 @@ enum SplitClaimantBuilder {
             )
         }
     }
+
+    /// Each participant's proportional cut of one adjustment line, resolved
+    /// against the roster, ordered self-first then by name for a stable
+    /// avatar / row order. `slice` is signed (discounts negative). Shared by
+    /// the full-receipt sheet, the Breakdown sheet, and the Receipt-items
+    /// card so all three attribute adjustments identically.
+    static func chargeShares(
+        of charge: ReceiptItem,
+        items: [ReceiptItem],
+        roster: [String: ItemAssignmentParticipant]
+    ) -> [SplitClaimant] {
+        guard !roster.isEmpty else { return [] }
+        let set = Set(roster.keys)
+        return SplitItemBreakdown.chargeDistribution(of: charge, items: items, participants: set)
+            .compactMap { d -> SplitClaimant? in
+                guard let p = roster[d.participantID] else { return nil }
+                return SplitClaimant(participant: p, slice: d.amount)
+            }
+            .sorted { a, b in
+                if a.participant.isMe != b.participant.isMe { return a.participant.isMe }
+                return a.participant.name.localizedCaseInsensitiveCompare(b.participant.name) == .orderedAscending
+            }
+    }
 }
 
 /// Read-only "who shares this item" sheet, opened by tapping an item row
@@ -408,6 +496,105 @@ struct PerItemClaimantsSheet: View {
                                         amount: entry.slice,
                                         currency: currency,
                                         isDiscount: false
+                                    )
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, AppSpacing.rowVertical)
+                                .background(
+                                    colorContext.cardFill,
+                                    in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+                                )
+                                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                            }
+                        }
+                    }
+
+                    Spacer().frame(height: 40)
+                }
+                .padding(.horizontal, AppSpacing.pageHorizontal)
+                .padding(.top, AppSpacing.lg)
+            }
+            .scrollContentBackground(.hidden)
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground {
+            contextBackground
+                .ignoresSafeArea()
+        }
+    }
+
+    @ViewBuilder
+    private var contextBackground: some View {
+        switch colorContext {
+        case .reminders: ReminderDetailPageBackground()
+        case .split:     SplitDetailPageBackground()
+        case .standard:  AppColors.backgroundPrimary
+        }
+    }
+}
+
+/// Read-only "how this adjustment is distributed" sheet, opened by tapping a
+/// fee / tip / discount row. Shows each participant + their PROPORTIONAL cut
+/// (by item share), the proportional sibling of `PerItemClaimantsSheet`.
+/// Same row design so the two read as one family.
+struct PerChargeDistributionSheet: View {
+    let charge: ReceiptItem
+    let currency: String
+    let claimants: [SplitClaimant]
+    var colorContext: ColorContext = .standard
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var subtitle: String {
+        "Distributed proportionally to each person's items."
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppSpacing.lg) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(charge.name)
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundColor(AppColors.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(subtitle)
+                            .font(AppFonts.bodySmallRegular)
+                            .foregroundColor(AppColors.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    GlassEffectContainer {
+                        VStack(spacing: AppSpacing.sm) {
+                            ForEach(claimants) { entry in
+                                HStack(spacing: AppSpacing.md) {
+                                    PixelCatView(
+                                        id: entry.participant.isMe ? UserIDService.currentID() : entry.participant.id,
+                                        size: 36,
+                                        blackAndWhite: !entry.participant.isConnected
+                                    )
+                                    .clipShape(Circle())
+
+                                    Text(entry.participant.isMe ? "You" : entry.participant.name)
+                                        .font(AppFonts.labelPrimary)
+                                        .foregroundColor(AppColors.textPrimary)
+                                        .lineLimit(1)
+
+                                    Spacer(minLength: 8)
+
+                                    ReceiptItemAmountText(
+                                        amount: entry.slice,
+                                        currency: currency,
+                                        isDiscount: charge.kind == .discount
                                     )
                                 }
                                 .padding(.horizontal, 14)

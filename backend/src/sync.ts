@@ -82,8 +82,8 @@ export function isValidVersion(n: unknown): n is number {
   return typeof n === "number" && Number.isInteger(n) && n >= 0;
 }
 
-export function isValidOp(s: unknown): s is "upsert" | "delete" {
-  return s === "upsert" || s === "delete";
+export function isValidOp(s: unknown): s is "upsert" | "delete" | "pair" {
+  return s === "upsert" || s === "delete" || s === "pair";
 }
 
 /// Resolve the logical user id bound (trust-on-first-use) to an attested
@@ -130,7 +130,7 @@ export async function recordDelivery(
     recipientId: string;
     txSyncId: string;
     version: number;
-    op: "upsert" | "delete";
+    op: "upsert" | "delete" | "pair";
     payload: string;
     checksum: string | null;
   },

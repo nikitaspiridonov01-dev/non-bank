@@ -81,6 +81,13 @@ final class ShareLinkCoordinator: ObservableObject {
 
     @Published var routingState: RoutingState = .idle
 
+    /// One-shot message for the "new friend added" toast, set when an
+    /// inbound link both creates a brand-new connection AND the server
+    /// confirms the pairing (so we never claim a pairing the server
+    /// rejected). The UI (MainTabView) shows a transient toast and clears
+    /// this back to nil. Nil on repeat opens / already-connected friends.
+    @Published var pairingToast: String?
+
     /// Diagnostic — last URL we tried to process. Useful for #if DEBUG
     /// console output.
     private(set) var lastReceivedURL: URL?
@@ -328,6 +335,15 @@ final class ShareLinkCoordinator: ObservableObject {
             ? transactionStore.transactions.first(where: { $0.id == existingID })
             : nil
 
+        // Whether the sharer was ALREADY a connected friend before this
+        // import — gates the "new friend added" toast so it fires only on a
+        // genuine first connection (incl. a phantom that becomes connected
+        // here), never on a repeat sync from an established friend. Computed
+        // BEFORE the mapper adds/upgrades the sharer.
+        let sharerWasConnected = friendStore.friends.contains {
+            $0.id == payload.s && $0.isConnected
+        }
+
         // Items-aware splitMode: the mapper needs to know whether the
         // receiver has scanned items for this transaction locally.
         // Pre-check `id` rather than re-deriving inside the mapper so
@@ -399,7 +415,7 @@ final class ShareLinkCoordinator: ObservableObject {
                     numParticipantsBucket: AnalyticsBuckets.friendCount(payload.f.count),
                     isUpdate: true
                 ))
-                recordPairingBestEffort(sharerID: payload.s)
+                recordPairingBestEffort(sharerID: payload.s, sharerName: payload.sn, announceNewFriend: !sharerWasConnected)
                 routingState = .completed(syncID: resolved.transaction.syncID, kind: .updated)
             } else {
                 // `addAndReturnID` already awaits the load; we use
@@ -423,7 +439,7 @@ final class ShareLinkCoordinator: ObservableObject {
                         numParticipantsBucket: AnalyticsBuckets.friendCount(payload.f.count),
                         isUpdate: false
                     ))
-                    recordPairingBestEffort(sharerID: payload.s)
+                    recordPairingBestEffort(sharerID: payload.s, sharerName: payload.sn, announceNewFriend: !sharerWasConnected)
                     routingState = .completed(syncID: resolved.transaction.syncID, kind: .createdNew)
                 } else {
                     // `addAndReturnID` looks up by syncID after the load
@@ -517,11 +533,23 @@ final class ShareLinkCoordinator: ObservableObject {
     /// local "paired" flag — `Friend.isConnected`, which the mapper and
     /// phantom-upgrade path already set to `true` for share-link friends,
     /// is the existing local signal that these two users are connected.
-    private func recordPairingBestEffort(sharerID: String) {
+    private func recordPairingBestEffort(
+        sharerID: String,
+        sharerName: String?,
+        announceNewFriend: Bool
+    ) {
         guard !sharerID.isEmpty else { return }
-        Task.detached(priority: .utility) {
+        Task { [weak self] in
             let myID = UserIDService.currentID()
-            await SyncPairing.recordPairing(myID: myID, sharerID: sharerID)
+            let confirmed = await SyncPairing.recordPairing(myID: myID, sharerID: sharerID)
+            // Announce only on a genuine first connection AND a server-
+            // confirmed pairing (CC3) — future shared expenses will sync
+            // automatically once both sides are paired.
+            if confirmed, announceNewFriend {
+                let trimmed = sharerName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let name = (trimmed?.isEmpty == false) ? trimmed! : "Your friend"
+                self?.pairingToast = "\(name) is now a friend — your shared expenses will sync automatically."
+            }
         }
     }
 

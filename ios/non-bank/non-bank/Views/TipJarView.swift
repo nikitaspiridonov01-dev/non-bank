@@ -116,12 +116,23 @@ struct TipJarView: View {
         .task {
             await service.loadProducts()
         }
-        // Fire confetti when the purchase state lands on `.succeeded`
-        // for ANY tier. Driven off the state transition (not the tap
-        // handler) so it can't miss a success that resolves after the
-        // view-local purchase flow returns.
+        // Single source of truth for a completed tip, regardless of which
+        // path drove it: a direct `product.purchase()` OR the service's
+        // `Transaction.updates` listener finishing a later-approved
+        // Ask-to-Buy tip. The service dedups by transaction id, so this
+        // `.succeeded` transition fires exactly once per purchase. Both
+        // the success analytics AND the confetti live here (not in
+        // `purchase(_:)`'s post-await switch) so a deferred tip approved
+        // out-of-band still counts, and a normal purchase — delivered by
+        // both paths — is never double-counted.
         .onChange(of: service.purchaseState) { _, newValue in
-            if case .succeeded = newValue {
+            if case .succeeded(let tier) = newValue {
+                didResolvePurchaseThisVisit = true
+                analytics.track(.tipPurchaseSucceeded(
+                    tier: mapTier(tier),
+                    priceBucket: priceBucket(for: tier),
+                    currency: currencyCode(for: tier)
+                ))
                 triggerFireworks()
             }
         }
@@ -189,15 +200,12 @@ struct TipJarView: View {
         // outcome event. The service drives `purchaseState`, which
         // the alert reads above — we mirror its post-purchase
         // value here so the funnel events line up with the alert
-        // semantics.
+        // semantics. NOTE: `.succeeded` is intentionally NOT handled
+        // here — it's emitted by the `purchaseState` observer above,
+        // which fires for both direct and listener-driven completions
+        // and dedups via the service. Handling it here too would
+        // double-count any normal purchase (both paths deliver it).
         switch service.purchaseState {
-        case .succeeded:
-            didResolvePurchaseThisVisit = true
-            analytics.track(.tipPurchaseSucceeded(
-                tier: analyticsTier,
-                priceBucket: priceBucket(for: tier),
-                currency: currencyCode(for: tier)
-            ))
         case .deferred:
             // Ask-to-Buy: pending a parent/organizer's approval — not a
             // drop. Record a resolving event so the started event isn't
@@ -214,7 +222,8 @@ struct TipJarView: View {
             // many `error_code` buckets and broke cross-session grouping.
             let code = service.lastFailureCode ?? "unknown"
             analytics.track(.tipPurchaseFailed(tier: analyticsTier, errorCode: code))
-        case .idle, .purchasing:
+        case .succeeded, .idle, .purchasing:
+            // `.succeeded` handled by the `purchaseState` observer (see note above).
             break
         }
     }

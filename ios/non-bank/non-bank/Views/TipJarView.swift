@@ -25,6 +25,14 @@ struct TipJarView: View {
     /// expensive in SwiftUI so we lean on tap as the proxy.
     @State private var didEngageWithTier: Bool = false
     @State private var lastTappedTier: TipJarService.Tier?
+    /// True once a purchase this visit resolved to a success or a
+    /// deferred (Ask-to-Buy) approval. Gates `tip_jar_dismissed` so we
+    /// only log the "saw the jar, didn't pay" funnel-leak when the user
+    /// genuinely left without a resolving purchase. View-local (resets
+    /// each visit) — unlike `service.lastPurchasedTier`, which lives on
+    /// the shared singleton and stays set across visits, so a prior
+    /// tip would wrongly suppress a later real dismissal.
+    @State private var didResolvePurchaseThisVisit: Bool = false
     /// Drives the celebratory confetti overlay shown after any
     /// successful tip. Flipped on by the `purchaseState` change
     /// observer below, auto-cleared by a timer so the burst tears
@@ -135,12 +143,15 @@ struct TipJarView: View {
         }
         .onDisappear {
             fireworksDismissTask?.cancel()
-            // Fire dismissal only if the user didn't actually
-            // purchase — `lastPurchasedTier` going non-nil means
-            // they bought and `tipPurchaseSucceeded` already fired
-            // from the service. The dismissed event tracks the
-            // funnel-leak side: "saw the jar, didn't pay."
-            if service.lastPurchasedTier == nil {
+            // Fire dismissal only if no purchase resolved THIS visit
+            // (neither a success nor a deferred Ask-to-Buy). We track a
+            // view-local flag rather than `service.lastPurchasedTier`
+            // because that singleton field stays set across visits — a
+            // user who tipped once and later reopened-then-left without
+            // tipping would otherwise never be counted as a dismissal.
+            // The dismissed event tracks the funnel-leak: "saw the jar,
+            // didn't pay."
+            if !didResolvePurchaseThisVisit {
                 let dwell = Date().timeIntervalSince(openedAt)
                 analytics.track(.tipJarDismissed(
                     source: .settings,
@@ -181,18 +192,27 @@ struct TipJarView: View {
         // semantics.
         switch service.purchaseState {
         case .succeeded:
+            didResolvePurchaseThisVisit = true
             analytics.track(.tipPurchaseSucceeded(
                 tier: analyticsTier,
-                priceBucket: priceBucket(for: tier)
+                priceBucket: priceBucket(for: tier),
+                currency: currencyCode(for: tier)
             ))
+        case .deferred:
+            // Ask-to-Buy: pending a parent/organizer's approval — not a
+            // drop. Record a resolving event so the started event isn't
+            // orphaned, and mark the visit resolved so we don't also log
+            // it as a dismissal leak.
+            didResolvePurchaseThisVisit = true
+            analytics.track(.tipPurchaseDeferred(tier: analyticsTier))
         case .cancelled:
             analytics.track(.tipPurchaseCancelled(tier: analyticsTier))
-        case .failed(let msg):
-            // Short stable code over the localised message — drop
-            // the message into a fingerprint hash to keep the
-            // dashboard's `error_code` cardinality low while
-            // staying distinguishable.
-            let code = "msg_\(String(msg.hashValue % 100000, radix: 36))"
+        case .failed:
+            // Stable, locale-independent code from the service (NSError
+            // domain + code) — not a per-launch-random hash of the
+            // localized message, which scattered one failure across
+            // many `error_code` buckets and broke cross-session grouping.
+            let code = service.lastFailureCode ?? "unknown"
             analytics.track(.tipPurchaseFailed(tier: analyticsTier, errorCode: code))
         case .idle, .purchasing:
             break
@@ -232,18 +252,31 @@ struct TipJarView: View {
         }
     }
 
-    /// Coarse price bucket — we don't want a per-locale exact USD
-    /// amount in the event, just "cheap / med / high / premium" so
-    /// the dashboard can group by intent rather than localised
-    /// display price.
+    /// Coarse price bucket — we don't want a per-locale exact amount in
+    /// the event, just "cheap / med / high / premium" so the dashboard
+    /// can group by intent. Each tier maps to a distinct bucket:
+    /// coffee ($0.99) and kitten ($1.99) used to collapse into one
+    /// "<2" band, which made the bucket redundant with `tier` for the
+    /// two cheapest tiers — split so every tier is separable on the
+    /// price axis too. Pair with the `currency` dimension (below) when
+    /// comparing across storefronts.
     private func priceBucket(for tier: TipJarService.Tier) -> String {
         switch tier {
-        case .coffee:     return "<2"
-        case .kitten:     return "<2"
+        case .coffee:     return "<1"
+        case .kitten:     return "1-2"
         case .croissant:  return "2-5"
         case .pizza:      return "5-7"
         case .chefsTable: return "7+"
         }
+    }
+
+    /// Currency code of the purchased product's localized price (e.g.
+    /// "USD", "EUR") so "how much" can be segmented by storefront —
+    /// price buckets aren't comparable across currencies without it.
+    /// PII-safe: a storefront currency, never an amount. Falls back to
+    /// "unknown" if product metadata isn't loaded.
+    private func currencyCode(for tier: TipJarService.Tier) -> String {
+        service.product(for: tier)?.priceFormatStyle.currencyCode ?? "unknown"
     }
 }
 

@@ -193,9 +193,14 @@ enum AnalyticsEvent {
 
     case tipJarViewed(source: TipJarSource)
     case tipPurchaseStarted(tier: TipTier)
-    case tipPurchaseSucceeded(tier: TipTier, priceBucket: String)
+    case tipPurchaseSucceeded(tier: TipTier, priceBucket: String, currency: String)
     case tipPurchaseFailed(tier: TipTier, errorCode: String)
     case tipPurchaseCancelled(tier: TipTier)
+    /// StoreKit returned `.pending` — a Family Sharing "Ask to Buy"
+    /// approval is required, so the purchase has neither succeeded nor
+    /// been abandoned. Gives `tip_purchase_started` a resolving
+    /// counterpart instead of looking like a silent funnel drop.
+    case tipPurchaseDeferred(tier: TipTier)
 
     // MARK: - Help / settings
 
@@ -352,6 +357,7 @@ extension AnalyticsEvent {
         case .tipPurchaseSucceeded: return "tip_purchase_succeeded"
         case .tipPurchaseFailed: return "tip_purchase_failed"
         case .tipPurchaseCancelled: return "tip_purchase_cancelled"
+        case .tipPurchaseDeferred: return "tip_purchase_deferred"
 
         case .helpMailComposeOpened: return "help_mail_compose_opened"
         case .licensesViewed: return "licenses_viewed"
@@ -573,11 +579,17 @@ extension AnalyticsEvent {
             return ["source": source.rawValue]
         case .tipPurchaseStarted(let tier):
             return ["tier": tier.rawValue]
-        case .tipPurchaseSucceeded(let tier, let priceBucket):
-            return ["tier": tier.rawValue, "price_bucket": priceBucket]
+        case .tipPurchaseSucceeded(let tier, let priceBucket, let currency):
+            return [
+                "tier": tier.rawValue,
+                "price_bucket": priceBucket,
+                "currency": currency
+            ]
         case .tipPurchaseFailed(let tier, let code):
             return ["tier": tier.rawValue, "error_code": code]
         case .tipPurchaseCancelled(let tier):
+            return ["tier": tier.rawValue]
+        case .tipPurchaseDeferred(let tier):
             return ["tier": tier.rawValue]
 
         case .helpMailComposeOpened(let kind):

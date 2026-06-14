@@ -87,10 +87,21 @@ final class TipJarService: ObservableObject {
     @Published private(set) var purchaseState: PurchaseState = .idle
     @Published private(set) var lastPurchasedTier: Tier?
 
+    /// Stable, locale-independent code for the most recent failed
+    /// purchase — derived from the underlying error's `NSError`
+    /// domain + code, never the localized message (which varies per
+    /// language) or `String.hashValue` (which is randomized per process
+    /// launch). Consumed by the analytics layer for
+    /// `tip_purchase_failed.error_code` so the same failure groups
+    /// across launches, devices, and locales. `nil` until a failure.
+    @Published private(set) var lastFailureCode: String?
+
     enum PurchaseState: Equatable {
         case idle
         case purchasing(Tier)
         case succeeded(Tier)
+        /// `.pending` from StoreKit — Ask-to-Buy approval required.
+        case deferred(Tier)
         case failed(String)
         case cancelled
 
@@ -138,9 +149,11 @@ final class TipJarService: ObservableObject {
     /// service can react (confetti, success overlay, error toast).
     func purchase(_ tier: Tier) async {
         guard let product = product(for: tier) else {
+            lastFailureCode = "no_product"
             purchaseState = .failed("This tip isn't available right now. Please try again later.")
             return
         }
+        lastFailureCode = nil
         purchaseState = .purchasing(tier)
         do {
             let result = try await product.purchase()
@@ -152,21 +165,38 @@ final class TipJarService: ObservableObject {
                     lastPurchasedTier = tier
                     purchaseState = .succeeded(tier)
                 case .unverified(_, let error):
+                    lastFailureCode = Self.stableErrorCode(from: error)
                     purchaseState = .failed(error.localizedDescription)
                 }
             case .userCancelled:
                 purchaseState = .cancelled
             case .pending:
-                // Family-share / Ask-to-Buy flow. We treat it as a
-                // graceful exit — the user will get the confirmation
-                // via the system once the request is approved.
-                purchaseState = .idle
+                // Family-share / Ask-to-Buy flow. Surface a distinct
+                // `.deferred` state (rather than collapsing to `.idle`)
+                // so the funnel can tell "awaiting approval" apart from
+                // "looked and left." The user gets the system
+                // confirmation once the request is approved — completing
+                // that out-of-band transaction needs a
+                // `Transaction.updates` listener (not yet wired up).
+                purchaseState = .deferred(tier)
             @unknown default:
                 purchaseState = .idle
             }
         } catch {
+            lastFailureCode = Self.stableErrorCode(from: error)
             purchaseState = .failed(error.localizedDescription)
         }
+    }
+
+    /// Maps an arbitrary purchase error to a short, stable,
+    /// locale-independent code for low-cardinality analytics grouping.
+    /// `NSError` domain + numeric code (e.g. "SKErrorDomain.2") is
+    /// identical across launches, devices, and languages — unlike
+    /// `String.hashValue` (per-process randomized) or the localized
+    /// message (per-language).
+    static func stableErrorCode(from error: Error) -> String {
+        let ns = error as NSError
+        return "\(ns.domain).\(ns.code)"
     }
 
     /// Resets the success / failure state so the UI overlay can be

@@ -399,6 +399,7 @@ final class ShareLinkCoordinator: ObservableObject {
                     numParticipantsBucket: AnalyticsBuckets.friendCount(payload.f.count),
                     isUpdate: true
                 ))
+                recordPairingBestEffort(sharerID: payload.s)
                 routingState = .completed(syncID: resolved.transaction.syncID, kind: .updated)
             } else {
                 // `addAndReturnID` already awaits the load; we use
@@ -422,6 +423,7 @@ final class ShareLinkCoordinator: ObservableObject {
                         numParticipantsBucket: AnalyticsBuckets.friendCount(payload.f.count),
                         isUpdate: false
                     ))
+                    recordPairingBestEffort(sharerID: payload.s)
                     routingState = .completed(syncID: resolved.transaction.syncID, kind: .createdNew)
                 } else {
                     // `addAndReturnID` looks up by syncID after the load
@@ -496,6 +498,31 @@ final class ShareLinkCoordinator: ObservableObject {
         routingState = .idle
         pendingPayload = nil
         fetchedReceiptItems = nil
+    }
+
+    /// Server sync, Phase 0: tell the Worker that the local user and the
+    /// sharer are now paired, so a later phase can route sync updates
+    /// between them. Fired only once a real-user inbound import has
+    /// actually succeeded (both create and update paths) and the sharer
+    /// id is known.
+    ///
+    /// Strictly additive and best-effort: dispatched on a *detached* Task
+    /// so it never blocks, delays, or alters the import flow, and
+    /// `SyncPairing.recordPairing` swallows every failure (network,
+    /// attest, non-2xx). The detached task also reads
+    /// `UserIDService.currentID()` off the main actor.
+    ///
+    /// Guard: `recordPairing` no-ops when the sharer id is empty or equals
+    /// our own id (you can't pair with yourself). We don't add a separate
+    /// local "paired" flag — `Friend.isConnected`, which the mapper and
+    /// phantom-upgrade path already set to `true` for share-link friends,
+    /// is the existing local signal that these two users are connected.
+    private func recordPairingBestEffort(sharerID: String) {
+        guard !sharerID.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            let myID = UserIDService.currentID()
+            await SyncPairing.recordPairing(myID: myID, sharerID: sharerID)
+        }
     }
 
     /// Persist any items decrypted from the server-side store under the

@@ -332,7 +332,9 @@ private struct TipRowView: View {
                     Text(tier.blurb)
                         .font(AppFonts.metaRegular)
                         .foregroundColor(AppColors.textSecondary)
-                        .lineLimit(2)
+                        // No line cap — let the blurb wrap to as many lines
+                        // as it needs so longer copy (and larger Dynamic Type
+                        // / narrower screens) never truncates.
                         .fixedSize(horizontal: false, vertical: true)
                 }
 

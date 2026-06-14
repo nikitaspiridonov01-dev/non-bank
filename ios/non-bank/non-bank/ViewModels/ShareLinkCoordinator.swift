@@ -539,7 +539,10 @@ final class ShareLinkCoordinator: ObservableObject {
         announceNewFriend: Bool
     ) {
         guard !sharerID.isEmpty else { return }
-        Task { [weak self] in
+        // @MainActor so the post-await `pairingToast` assignment lands on the
+        // main thread (after `recordPairing`'s nonisolated network hop) — a
+        // background @Published write can fail to drive the SwiftUI toast.
+        Task { @MainActor [weak self] in
             let myID = UserIDService.currentID()
             let confirmed = await SyncPairing.recordPairing(myID: myID, sharerID: sharerID)
             // Announce only on a genuine first connection AND a server-

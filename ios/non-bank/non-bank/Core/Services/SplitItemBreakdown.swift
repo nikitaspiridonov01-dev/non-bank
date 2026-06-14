@@ -163,4 +163,34 @@ enum SplitItemBreakdown {
         // Preserve assignment order so avatar ordering is stable.
         return assignees.map { (participantID: $0, slice: perAssignee) }
     }
+
+    /// Per-participant proportional cut of ONE charge line (fee/tip/discount),
+    /// using the SAME item-base proportion `compute` applies — so a
+    /// per-adjustment "who pays what" tap sheet reconciles to each person's
+    /// share. `amount` is signed (discounts negative). Returns `[]` for an
+    /// item row, an empty roster, or when there's no item base to proportion
+    /// against (a participant with zero assigned items gets no row).
+    static func chargeDistribution(
+        of charge: ReceiptItem,
+        items: [ReceiptItem],
+        participants: Set<String>
+    ) -> [(participantID: String, amount: Double)] {
+        guard charge.kind != .item, !participants.isEmpty else { return [] }
+        var directBase: [String: Double] = [:]
+        var directItemTotal: Double = 0
+        for item in items where item.kind == .item {
+            let assignees = item.assignedParticipantIDs.filter(participants.contains)
+            guard !assignees.isEmpty else { continue }
+            let perAssignee = item.lineTotal / Double(assignees.count)
+            for id in assignees { directBase[id, default: 0] += perAssignee }
+            directItemTotal += item.lineTotal
+        }
+        guard directItemTotal > zeroEpsilon else { return [] }
+        return participants.compactMap { id -> (participantID: String, amount: Double)? in
+            let proportion = (directBase[id] ?? 0) / directItemTotal
+            let amount = charge.lineTotal * proportion
+            guard abs(amount) > zeroEpsilon else { return nil }
+            return (participantID: id, amount: amount)
+        }
+    }
 }

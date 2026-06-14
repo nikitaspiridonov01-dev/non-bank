@@ -108,4 +108,33 @@ final class SplitItemBreakdownTests: XCTestCase {
         XCTAssertTrue(breakdown["alice"]!.charges.isEmpty)
         XCTAssertEqual(breakdown["alice"]!.total, 20, accuracy: 0.001)
     }
+
+    /// `chargeDistribution` (drives the per-adjustment tap sheet) splits one
+    /// charge LINE proportionally and reconciles to the line total.
+    func testChargeDistribution_proportionalPerLine_reconciles() {
+        let items = [
+            makeItem(name: "Pizza", total: 20, assignees: ["alice"]),
+            makeItem(name: "Beer", total: 10, assignees: ["bob"]),
+            makeItem(name: "Service fee", total: 3, assignees: []),
+            makeItem(name: "Discount", total: -3, assignees: [])
+        ]
+        let participants: Set<String> = ["alice", "bob"]
+
+        let fee = items.first { $0.kind == .fee }!
+        let dist = SplitItemBreakdown.chargeDistribution(of: fee, items: items, participants: participants)
+        let byID = Dictionary(uniqueKeysWithValues: dist.map { ($0.participantID, $0.amount) })
+        // Alice 20/30, Bob 10/30 → fee 3 → 2 / 1; sum == line total.
+        XCTAssertEqual(byID["alice"]!, 2, accuracy: 0.001)
+        XCTAssertEqual(byID["bob"]!, 1, accuracy: 0.001)
+        XCTAssertEqual(dist.reduce(0) { $0 + $1.amount }, 3, accuracy: 0.001)
+
+        // A discount line stays negative and reconciles too.
+        let discount = items.first { $0.kind == .discount }!
+        let ddist = SplitItemBreakdown.chargeDistribution(of: discount, items: items, participants: participants)
+        XCTAssertEqual(ddist.reduce(0) { $0 + $1.amount }, -3, accuracy: 0.001)
+
+        // An item row has no proportional distribution.
+        let pizza = items.first { $0.kind == .item }!
+        XCTAssertTrue(SplitItemBreakdown.chargeDistribution(of: pizza, items: items, participants: participants).isEmpty)
+    }
 }

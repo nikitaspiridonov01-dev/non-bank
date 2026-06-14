@@ -2,27 +2,14 @@ import Foundation
 
 /// Pure phrase builder for "Recently used" split shortcut subtitles.
 ///
-/// The strings here are copied VERBATIM from
-/// `CreateTransactionModal.modeSubtitleText` / `settleUpSubtitle` /
-/// `subtitlePayerPrefix` / `truncatedSubtitleName` so a recent
-/// shortcut reads identically to the live subtitle shown under the
-/// amount once the same configuration is active. The only difference
-/// is the inputs: the modal's builders read the live VM's
-/// `display*` state, whereas these take explicit values resolved from
-/// a `RecentSplitOption` + `FriendStore` at render time.
-///
-/// If the modal's phrasing ever changes, update both — they are
-/// intentionally kept in lockstep.
+/// Unlike the live subtitle under the amount (which reads "You pay and split
+/// evenly with N people"), a recent shortcut names the actual participants so
+/// you can tell two recents apart at a glance — "Between you and Alex" vs
+/// "Between you, Sam and 2 more people". `.settleUp` keeps its directional
+/// phrasing ("{payer} pays for you"). Inputs are resolved live from a
+/// `RecentSplitOption` + `FriendStore` at render time. Names are NOT
+/// truncated — the row subtitle wraps instead of clipping.
 enum RecentSplitSubtitleBuilder {
-    /// Mirror of `CreateTransactionModal.subtitleNameMaxLength`.
-    static let nameMaxLength = 10
-
-    /// Mirror of `CreateTransactionModal.truncatedSubtitleName`.
-    static func truncatedName(_ name: String) -> String {
-        if name.count <= nameMaxLength { return name }
-        let kept = name.prefix(nameMaxLength - 1)
-        return "\(kept)…"
-    }
 
     /// A participant in a recent option, resolved live.
     struct Person {
@@ -48,37 +35,51 @@ enum RecentSplitSubtitleBuilder {
         if mode == .settleUp {
             return settleUpSubtitle(payer: settleUpPayer, recipient: settleUpRecipient)
         }
+        return betweenPhrase(friends: friends, youIncluded: youIncluded)
+    }
 
-        let payerPrefix = "You pay"   // recorded shortcuts always replay with the default payer = You
-        let participantCount = (youIncluded ? 1 : 0) + friends.count
-        let peopleWord = participantCount == 1 ? "person" : "people"
+    /// "Between …" participant summary. "You" leads when included; an
+    /// overflow past three names collapses to "N more people".
+    ///   - you + 1 friend   → "Between you and Alex"
+    ///   - 2 friends        → "Between Alex and Sam"
+    ///   - you + 2 friends  → "Between you, Alex and Sam"
+    ///   - you + 3+ friends → "Between you, Alex and 2 more people"
+    private static func betweenPhrase(friends: [Person], youIncluded: Bool) -> String {
+        var names: [String] = []
+        if youIncluded { names.append("you") }
+        names += friends.map(\.name)
+        let list = naturalList(names)
+        return list.isEmpty ? "Just you" : "Between \(list)"
+    }
 
-        switch mode {
-        case .evenly:
-            return "\(payerPrefix) and split evenly with \(participantCount) \(peopleWord)"
-        case .byAmount:
-            return "\(payerPrefix) and split by amount with \(participantCount) \(peopleWord)"
-        case .byItems:
-            return "\(payerPrefix) and split the receipt with \(participantCount) \(peopleWord)"
-        case .settleUp:
-            return settleUpSubtitle(payer: settleUpPayer, recipient: settleUpRecipient)
+    /// Grammatical join with a head-and-tail overflow:
+    /// `[a]`→"a", `[a,b]`→"a and b", `[a,b,c]`→"a, b and c",
+    /// `[a,b,c,d,…]`→"a, b and N more people".
+    private static func naturalList(_ items: [String]) -> String {
+        switch items.count {
+        case 0: return ""
+        case 1: return items[0]
+        case 2: return "\(items[0]) and \(items[1])"
+        case 3: return "\(items[0]), \(items[1]) and \(items[2])"
+        default:
+            let remaining = items.count - 2
+            let noun = remaining == 1 ? "person" : "people"
+            return "\(items[0]), \(items[1]) and \(remaining) more \(noun)"
         }
     }
 
-    /// Mirror of `CreateTransactionModal.settleUpSubtitle`, expressed
-    /// directly from the directional payer/recipient pair rather than
-    /// re-deriving it from a payers array.
+    /// Directional settle-up phrasing from the payer/recipient pair:
     ///   - "You pay for {recipient}"
     ///   - "{payer} pays for you"
     ///   - "{payer} pays for {recipient}"
     private static func settleUpSubtitle(payer: Person?, recipient: Person?) -> String {
         guard let payer, let recipient else { return "Settle up" }
         if payer.id == "me" {
-            return "You pay for \(truncatedName(recipient.name))"
+            return "You pay for \(recipient.name)"
         }
         if recipient.id == "me" {
-            return "\(truncatedName(payer.name)) pays for you"
+            return "\(payer.name) pays for you"
         }
-        return "\(truncatedName(payer.name)) pays for \(truncatedName(recipient.name))"
+        return "\(payer.name) pays for \(recipient.name)"
     }
 }

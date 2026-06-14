@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Read-only items breakdown shown when the user taps the `ItemsBadgePill`
 /// on an already-saved transaction row. The committed item set lives in
@@ -25,8 +26,17 @@ struct ReceiptItemsReadOnlySheet: View {
     /// opened it (no jarring dark slab landing on top of a tinted
     /// page).
     var colorContext: ColorContext = .standard
+    /// Split participants keyed by assignment id (`Friend.id` /
+    /// `ReceiptItem.selfParticipantID`). When non-empty, each `.item` row
+    /// assigned to ≥1 of them shows a "who shares this" avatar pile and
+    /// becomes tappable to a per-item distribution sheet. Empty (default)
+    /// keeps the original non-interactive list, so existing callers are
+    /// unaffected.
+    var participants: [String: ItemAssignmentParticipant] = [:]
 
     @Environment(\.dismiss) private var dismiss
+    /// The item whose per-person distribution sheet is currently open.
+    @State private var selectedItemForClaimants: ReceiptItem? = nil
 
     private var grandTotal: Double {
         items.reduce(0) { $0 + $1.lineTotal }
@@ -109,6 +119,16 @@ struct ReceiptItemsReadOnlySheet: View {
             contextBackground
                 .ignoresSafeArea()
         }
+        // Per-item "who shares this" distribution sheet. Sheet-on-sheet:
+        // presented from this already-.large sheet, with its own detents.
+        .sheet(item: $selectedItemForClaimants) { item in
+            PerItemClaimantsSheet(
+                item: item,
+                currency: currency,
+                claimants: claimantEntries(for: item),
+                colorContext: colorContext
+            )
+        }
     }
 
     @ViewBuilder
@@ -177,6 +197,7 @@ struct ReceiptItemsReadOnlySheet: View {
     private func row(_ item: ReceiptItem) -> some View {
         let kind = item.kind
         let isDiscount = kind == .discount
+        let sharers = avatarParticipants(for: item)
         return HStack(spacing: AppSpacing.md) {
             ReceiptItemKindIcon(kind: kind)
             Text(item.name)
@@ -184,6 +205,19 @@ struct ReceiptItemsReadOnlySheet: View {
                 .foregroundColor(AppColors.textPrimary)
                 .lineLimit(2)
             Spacer(minLength: 8)
+            // "Who shares this" pile — only on assignable item rows of a
+            // byItems split that have ≥1 active assignee. Tapping the row
+            // opens the per-item distribution sheet. Unassigned / non-item
+            // rows show nothing here and stay inert.
+            if !sharers.isEmpty {
+                OverlappingAvatarStack(
+                    participants: sharers,
+                    avatarSize: 20,
+                    strokeColor: AppColors.backgroundElevated,
+                    maxVisible: 3,
+                    overflowCount: max(0, sharers.count - 3)
+                )
+            }
             // Trailing column: line total on top, qty × unit price
             // beneath. Mirrors the `ReceiptReviewView` row so a user
             // who saw "2 × 850 RSD" under the amount during the post-
@@ -209,6 +243,34 @@ struct ReceiptItemsReadOnlySheet: View {
         // instead of the flat `backgroundElevated` slab that read as
         // a dark block dropped onto a lavender page.
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            // Only assignable rows with claimants are interactive.
+            guard !sharers.isEmpty else { return }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            selectedItemForClaimants = item
+        }
+    }
+
+    /// Active claimants of `item` (assignees ∩ roster) with each one's
+    /// equal slice, in assignment order. Empty for non-item rows, rows
+    /// with no active assignees, or when no roster was supplied.
+    private func claimantEntries(for item: ReceiptItem) -> [SplitClaimant] {
+        guard !participants.isEmpty else { return [] }
+        let roster = Set(participants.keys)
+        return SplitItemBreakdown.claimants(of: item, participants: roster).compactMap { c in
+            guard let p = participants[c.participantID] else { return nil }
+            return SplitClaimant(participant: p, slice: c.slice)
+        }
+    }
+
+    private func avatarParticipants(for item: ReceiptItem) -> [OverlappingAvatarStack.Participant] {
+        claimantEntries(for: item).map { entry in
+            OverlappingAvatarStack.Participant(
+                id: entry.participant.isMe ? UserIDService.currentID() : entry.participant.id,
+                isConnected: entry.participant.isConnected
+            )
+        }
     }
 
     private var totalsBlock: some View {
@@ -244,4 +306,108 @@ struct ReceiptItemsReadOnlySheet: View {
         }
     }
 
+}
+
+// MARK: - Per-item distribution
+
+/// One claimant of a receipt line + their equal slice of its price.
+/// A struct (not a tuple) so it's `Identifiable` for `ForEach`.
+private struct SplitClaimant: Identifiable {
+    let participant: ItemAssignmentParticipant
+    let slice: Double
+    var id: String { participant.id }
+}
+
+/// Read-only "who shares this item" sheet, opened by tapping an item row
+/// on a `byItems` split. Shows each claimant + their equal slice of the
+/// item's price. Price division only — proportional fees/discounts are
+/// surfaced on the per-person breakdown, not here, because they can't be
+/// honestly attributed to a single line.
+private struct PerItemClaimantsSheet: View {
+    let item: ReceiptItem
+    let currency: String
+    let claimants: [SplitClaimant]
+    var colorContext: ColorContext = .standard
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var subtitle: String {
+        let n = claimants.count
+        return "Split between \(n) \(n == 1 ? "person" : "people")"
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppSpacing.lg) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(item.name)
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundColor(AppColors.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(subtitle)
+                            .font(AppFonts.bodySmallRegular)
+                            .foregroundColor(AppColors.textTertiary)
+                    }
+
+                    VStack(spacing: AppSpacing.sm) {
+                        ForEach(claimants) { entry in
+                            HStack(spacing: AppSpacing.md) {
+                                PixelCatView(
+                                    id: entry.participant.isMe ? UserIDService.currentID() : entry.participant.id,
+                                    size: 36,
+                                    blackAndWhite: !entry.participant.isConnected
+                                )
+                                .clipShape(Circle())
+
+                                Text(entry.participant.isMe ? "You" : entry.participant.name)
+                                    .font(AppFonts.labelPrimary)
+                                    .foregroundColor(AppColors.textPrimary)
+                                    .lineLimit(1)
+
+                                Spacer(minLength: 8)
+
+                                ReceiptItemAmountText(
+                                    amount: entry.slice,
+                                    currency: currency,
+                                    isDiscount: false
+                                )
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, AppSpacing.rowVertical)
+                            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                        }
+                    }
+
+                    Spacer().frame(height: 40)
+                }
+                .padding(.horizontal, AppSpacing.pageHorizontal)
+                .padding(.top, AppSpacing.lg)
+            }
+            .scrollContentBackground(.hidden)
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground {
+            contextBackground
+                .ignoresSafeArea()
+        }
+    }
+
+    @ViewBuilder
+    private var contextBackground: some View {
+        switch colorContext {
+        case .reminders: ReminderDetailPageBackground()
+        case .split:     SplitDetailPageBackground()
+        case .standard:  AppColors.backgroundPrimary
+        }
+    }
 }

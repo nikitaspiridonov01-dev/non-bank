@@ -433,6 +433,33 @@ struct TransactionDetailView: View {
         return .standard
     }
 
+    /// Roster of split participants for the read-only items sheet, keyed
+    /// by assignment id (`Friend.id` / `ReceiptItem.selfParticipantID`).
+    /// Non-empty only for a `byItems` split, so the items sheet shows the
+    /// per-item "who shares this" avatars + tap-through there and stays a
+    /// plain list everywhere else. `you` is always included; it only
+    /// surfaces on rows actually assigned to `__me__`. A friend the split
+    /// references but who's since been removed is skipped — the breakdown
+    /// helper drops their stale assignments the same way.
+    private var splitItemRoster: [String: ItemAssignmentParticipant] {
+        guard transaction.isSplit,
+              let split = transaction.splitInfo,
+              split.splitMode == .byItems else { return [:] }
+        var roster: [String: ItemAssignmentParticipant] = [
+            ReceiptItem.selfParticipantID: ItemAssignmentParticipant(
+                id: ReceiptItem.selfParticipantID, name: "You", isMe: true, isConnected: true
+            )
+        ]
+        for share in split.friends {
+            if let friend = friendStore.friend(byID: share.friendID) {
+                roster[friend.id] = ItemAssignmentParticipant(
+                    id: friend.id, name: friend.name, isMe: false, isConnected: friend.isConnected
+                )
+            }
+        }
+        return roster
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -861,7 +888,10 @@ struct TransactionDetailView: View {
                     // dark-grey tray landing on top of the lavender or
                     // warm-red detail card is the dissonance the user
                     // pointed out.
-                    colorContext: receiptSheetContext
+                    colorContext: receiptSheetContext,
+                    // Per-item "who shares this" avatars + tap-through.
+                    // Empty for non-byItems splits → plain list as before.
+                    participants: splitItemRoster
                 )
             }
         }

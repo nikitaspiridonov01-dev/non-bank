@@ -62,4 +62,46 @@ final class SyncDeliveryCryptoTests: XCTestCase {
             try SyncDeliveryCrypto.decrypt(base64: "%%%not-base64%%%", myID: "a", peerID: "b")
         )
     }
+
+    // MARK: - Pairing handshake (the sharer→recipient connection fix)
+
+    func test_handshake_roundTrip() throws {
+        // Recipient encrypts with (sharerID, the phantom id the sharer gave them).
+        let sharerID = "brave-otter-2931"
+        let phantomID = "amber-lynx-7K2D"   // the id the sharer assigned the recipient
+        let recipientRealID = "swift-puma-5F3A"
+        let h = SyncDeliveryCrypto.PairHandshake(rid: recipientRealID, n: "Sam")
+
+        let cipher = try SyncDeliveryCrypto.encryptHandshake(h, keyA: sharerID, keyB: phantomID)
+
+        // Sharer recovers it by trying its own id + the friend's (phantom) id.
+        let recovered = SyncDeliveryCrypto.tryDecryptHandshake(base64: cipher, keyA: sharerID, keyB: phantomID)
+        XCTAssertEqual(recovered, h)
+        XCTAssertEqual(recovered?.rid, recipientRealID)
+    }
+
+    func test_handshake_sharerRecoversByTryingFriendIDs() throws {
+        // Models the real pull path: the sharer doesn't know which friend it
+        // is, so it tries each friend id as keyB until one opens.
+        let sharerID = "brave-otter-2931"
+        let realPhantom = "amber-lynx-7K2D"
+        let cipher = try SyncDeliveryCrypto.encryptHandshake(
+            .init(rid: "swift-puma-5F3A", n: nil), keyA: sharerID, keyB: realPhantom
+        )
+        let friendIDs = ["wrong-1", "wrong-2", realPhantom, "wrong-3"]
+        var matched: SyncDeliveryCrypto.PairHandshake?
+        for fid in friendIDs {
+            if let h = SyncDeliveryCrypto.tryDecryptHandshake(base64: cipher, keyA: sharerID, keyB: fid) {
+                matched = h; break
+            }
+        }
+        XCTAssertEqual(matched?.rid, "swift-puma-5F3A", "only the real phantom id should authenticate")
+    }
+
+    func test_handshake_wrongPhantomFails() throws {
+        let cipher = try SyncDeliveryCrypto.encryptHandshake(
+            .init(rid: "real-id", n: nil), keyA: "sharer-1", keyB: "phantom-1"
+        )
+        XCTAssertNil(SyncDeliveryCrypto.tryDecryptHandshake(base64: cipher, keyA: "sharer-1", keyB: "phantom-2"))
+    }
 }

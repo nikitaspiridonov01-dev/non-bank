@@ -166,6 +166,16 @@ final class SyncEngine {
         var acks: [(txSyncID: String, version: Int)] = []
 
         for delivery in deliveries {
+            if delivery.op == "pair" {
+                // Reciprocal pairing handshake from someone who opened OUR
+                // share link: it tells us their real user id so we can upgrade
+                // the phantom friend we created for them to a connected
+                // real-id friend — after which our uploads actually reach them.
+                if await applyPairHandshake(delivery, myID: myID, friendStore: friendStore, transactionStore: transactionStore) {
+                    acks.append((delivery.tx_sync_id, delivery.version))
+                }
+                continue
+            }
             if delivery.op == "delete" {
                 if let existing = transactionStore.transactions.first(where: { $0.syncID == delivery.tx_sync_id }) {
                     transactionStore.delete(id: existing.id)
@@ -223,6 +233,36 @@ final class SyncEngine {
         }
 
         await SyncDeliveryService.ack(recipientID: myID, acks: acks)
+    }
+
+    /// Apply a reciprocal pairing handshake. We don't know the sender's real
+    /// id, so we try each of our friends' ids as the handshake key
+    /// (HKDF(sorted(myID, friend.id))) — the one that authenticates is the
+    /// phantom friend the sender opened our link as. Upgrade that phantom to
+    /// the sender's real id (carried in the handshake) and mark it connected,
+    /// so our future uploadSplit reaches them. Returns true if matched/applied.
+    private func applyPairHandshake(
+        _ delivery: SyncDeliveryService.InboxDelivery,
+        myID: String,
+        friendStore: FriendStore,
+        transactionStore: TransactionStore
+    ) async -> Bool {
+        for friend in friendStore.friends {
+            guard let handshake = SyncDeliveryCrypto.tryDecryptHandshake(
+                base64: delivery.payload, keyA: myID, keyB: friend.id
+            ) else { continue }
+            // Matched: `friend` is the phantom; `handshake.rid` is their real id.
+            if friend.id != handshake.rid {
+                await friendStore.upgradePhantom(phantomID: friend.id, realID: handshake.rid)
+                await transactionStore.upgradePhantomFriendID(from: friend.id, to: handshake.rid)
+            } else {
+                friendStore.markConnected(id: friend.id)
+            }
+            return true
+        }
+        // No matching friend (maybe they aren't in our list yet) — leave it
+        // un-acked so a later pull can retry once the friend exists.
+        return false
     }
 
     /// Headless apply — the non-UI sibling of

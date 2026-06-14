@@ -146,6 +146,14 @@ class FriendStore: ObservableObject {
         await load()
     }
 
+    /// Mark an existing friend connected (colour their avatar) WITHOUT an id
+    /// change — used when a pairing handshake confirms a friend whose id is
+    /// already their real user id but wasn't flagged connected yet.
+    func markConnected(id: String) {
+        guard let f = friends.first(where: { $0.id == id }), !f.isConnected else { return }
+        update(Friend(id: f.id, name: f.name, groups: f.groups, splitMode: f.splitMode, isConnected: true))
+    }
+
     /// All distinct group names from existing friends.
     var allGroups: [String] {
         Array(Set(friends.flatMap { $0.groups })).sorted()

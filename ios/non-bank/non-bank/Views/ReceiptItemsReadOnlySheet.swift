@@ -256,21 +256,11 @@ struct ReceiptItemsReadOnlySheet: View {
     /// equal slice, in assignment order. Empty for non-item rows, rows
     /// with no active assignees, or when no roster was supplied.
     private func claimantEntries(for item: ReceiptItem) -> [SplitClaimant] {
-        guard !participants.isEmpty else { return [] }
-        let roster = Set(participants.keys)
-        return SplitItemBreakdown.claimants(of: item, participants: roster).compactMap { c in
-            guard let p = participants[c.participantID] else { return nil }
-            return SplitClaimant(participant: p, slice: c.slice)
-        }
+        SplitClaimantBuilder.claimants(of: item, roster: participants)
     }
 
     private func avatarParticipants(for item: ReceiptItem) -> [OverlappingAvatarStack.Participant] {
-        claimantEntries(for: item).map { entry in
-            OverlappingAvatarStack.Participant(
-                id: entry.participant.isMe ? UserIDService.currentID() : entry.participant.id,
-                isConnected: entry.participant.isConnected
-            )
-        }
+        SplitClaimantBuilder.avatars(claimantEntries(for: item))
     }
 
     private var totalsBlock: some View {
@@ -312,10 +302,38 @@ struct ReceiptItemsReadOnlySheet: View {
 
 /// One claimant of a receipt line + their equal slice of its price.
 /// A struct (not a tuple) so it's `Identifiable` for `ForEach`.
-private struct SplitClaimant: Identifiable {
+struct SplitClaimant: Identifiable {
     let participant: ItemAssignmentParticipant
     let slice: Double
     var id: String { participant.id }
+}
+
+/// Builds the display claimant list + avatar descriptors for an item from
+/// a participant roster, intersecting assignments with the roster the same
+/// way `SplitItemBreakdown` does. Shared by the full-receipt sheet
+/// (Screen A) and the per-person breakdown sheet (Screen B) so both render
+/// identical avatars and slices.
+enum SplitClaimantBuilder {
+    static func claimants(
+        of item: ReceiptItem,
+        roster: [String: ItemAssignmentParticipant]
+    ) -> [SplitClaimant] {
+        guard !roster.isEmpty else { return [] }
+        let set = Set(roster.keys)
+        return SplitItemBreakdown.claimants(of: item, participants: set).compactMap { c in
+            guard let p = roster[c.participantID] else { return nil }
+            return SplitClaimant(participant: p, slice: c.slice)
+        }
+    }
+
+    static func avatars(_ claimants: [SplitClaimant]) -> [OverlappingAvatarStack.Participant] {
+        claimants.map { c in
+            OverlappingAvatarStack.Participant(
+                id: c.participant.isMe ? UserIDService.currentID() : c.participant.id,
+                isConnected: c.participant.isConnected
+            )
+        }
+    }
 }
 
 /// Read-only "who shares this item" sheet, opened by tapping an item row
@@ -323,7 +341,7 @@ private struct SplitClaimant: Identifiable {
 /// item's price. Price division only — proportional fees/discounts are
 /// surfaced on the per-person breakdown, not here, because they can't be
 /// honestly attributed to a single line.
-private struct PerItemClaimantsSheet: View {
+struct PerItemClaimantsSheet: View {
     let item: ReceiptItem
     let currency: String
     let claimants: [SplitClaimant]

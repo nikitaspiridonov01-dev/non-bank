@@ -93,6 +93,26 @@ struct ShareDistributionView: View {
         receiptItems.filter { $0.assignedParticipantIDs.contains(participantID) }
     }
 
+    /// Roster keyed by assignment id (`Friend.id` / `selfParticipantID`)
+    /// for the per-item "shared by" avatars + tap-through inside the
+    /// per-person breakdown sheet. `you` is always present; a friend the
+    /// split references but who's since been removed is skipped.
+    private var participantRoster: [String: ItemAssignmentParticipant] {
+        var roster: [String: ItemAssignmentParticipant] = [
+            ReceiptItem.selfParticipantID: ItemAssignmentParticipant(
+                id: ReceiptItem.selfParticipantID, name: "You", isMe: true, isConnected: true
+            )
+        ]
+        for friend in split.friends {
+            if let stored = friendStore.friend(byID: friend.friendID) {
+                roster[stored.id] = ItemAssignmentParticipant(
+                    id: stored.id, name: stored.name, isMe: false, isConnected: stored.isConnected
+                )
+            }
+        }
+        return roster
+    }
+
     private var total: Double {
         max(sharers.reduce(0) { $0 + $1.amount }, 0.0001)
     }
@@ -121,11 +141,21 @@ struct ShareDistributionView: View {
         .background(SplitPageBackground())
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $itemsSheetTarget) { target in
-            ReceiptItemsReadOnlySheet(
-                items: items(for: target.participantID),
+            // Per-person breakdown: each item shown at this person's SLICE
+            // (price ÷ co-assignees), plus their proportional cut of each
+            // fee/tip/discount as its own row, and the authoritative Total
+            // from SplitInfo.share. Computed from the same stored items via
+            // SplitItemBreakdown so the numbers reconcile to the split.
+            let allIDs = Set([ReceiptItem.selfParticipantID] + split.friends.map { $0.friendID })
+            let byID = SplitItemBreakdown.compute(items: receiptItems, participants: allIDs)
+            ParticipantBreakdownSheet(
+                participantName: target.name,
+                isMe: target.isMe,
+                breakdown: byID[target.participantID]
+                    ?? SplitItemBreakdown.ParticipantBreakdown(items: [], charges: [], total: target.amount),
+                totalShare: target.amount,
                 currency: currency,
-                participantName: target.isMe ? "You" : target.name,
-                colorContext: .split
+                roster: participantRoster
             )
         }
     }
@@ -277,5 +307,147 @@ struct ShareDistributionView: View {
             }
         }
         .frame(height: 8)
+    }
+}
+
+// MARK: - Per-person breakdown sheet
+
+/// One participant's share, itemised: each assigned item at this person's
+/// SLICE (price ÷ co-assignees), each fee/tip/discount as its own row
+/// showing their proportional cut, and the authoritative Total from
+/// `SplitInfo.share`. Items shared by >1 person carry a "shared by" avatar
+/// pile and tap through to `PerItemClaimantsSheet`. Display-only.
+private struct ParticipantBreakdownSheet: View {
+    let participantName: String
+    let isMe: Bool
+    let breakdown: SplitItemBreakdown.ParticipantBreakdown
+    /// Source-of-truth total (the persisted `SplitInfo` share) — shown
+    /// verbatim so the footer can't drift from the split by a rounding cent.
+    let totalShare: Double
+    let currency: String
+    let roster: [String: ItemAssignmentParticipant]
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedItemForClaimants: ReceiptItem? = nil
+
+    private var title: String { isMe ? "Your items" : "\(participantName)'s items" }
+
+    private var shareLabel: String { isMe ? "your share" : "\(participantName)'s share" }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: AppSpacing.sm) {
+                    ForEach(breakdown.items) { slice in
+                        itemRow(slice)
+                    }
+                    ForEach(breakdown.charges) { cut in
+                        chargeRow(cut)
+                    }
+                    totalRow
+                        .padding(.top, AppSpacing.xs)
+                    Spacer().frame(height: 40)
+                }
+                .padding(.horizontal, AppSpacing.pageHorizontal)
+                .padding(.top, AppSpacing.lg)
+            }
+            .scrollContentBackground(.hidden)
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground {
+            SplitDetailPageBackground().ignoresSafeArea()
+        }
+        .sheet(item: $selectedItemForClaimants) { item in
+            PerItemClaimantsSheet(
+                item: item,
+                currency: currency,
+                claimants: SplitClaimantBuilder.claimants(of: item, roster: roster),
+                colorContext: .split
+            )
+        }
+    }
+
+    private func itemRow(_ slice: SplitItemBreakdown.ItemSlice) -> some View {
+        let claimants = SplitClaimantBuilder.claimants(of: slice.item, roster: roster)
+        let shared = claimants.count > 1
+        let avatars = shared ? SplitClaimantBuilder.avatars(claimants) : []
+        return HStack(spacing: AppSpacing.md) {
+            ReceiptItemKindIcon(kind: .item)
+            Text(slice.item.name)
+                .font(AppFonts.body)
+                .foregroundColor(AppColors.textPrimary)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            if !avatars.isEmpty {
+                OverlappingAvatarStack(
+                    participants: avatars,
+                    avatarSize: 20,
+                    strokeColor: AppColors.backgroundElevated,
+                    maxVisible: 3,
+                    overflowCount: max(0, avatars.count - 3)
+                )
+            }
+            ReceiptItemAmountText(amount: slice.slice, currency: currency, isDiscount: false)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, AppSpacing.rowVertical)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            // Only items shared by >1 person open a per-item detail.
+            guard shared else { return }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            selectedItemForClaimants = slice.item
+        }
+    }
+
+    private func chargeRow(_ cut: SplitItemBreakdown.ChargeCut) -> some View {
+        HStack(spacing: AppSpacing.md) {
+            ReceiptItemKindIcon(kind: cut.kind)
+            Text(chargeLabel(cut.kind))
+                .font(AppFonts.body)
+                .foregroundColor(AppColors.textSecondary)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            ReceiptItemAmountText(
+                amount: cut.amount,
+                currency: currency,
+                isDiscount: cut.kind == .discount
+            )
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, AppSpacing.rowVertical)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+    }
+
+    private func chargeLabel(_ kind: ReceiptItem.Kind) -> String {
+        switch kind {
+        case .fee:      return "Service fee (\(shareLabel))"
+        case .tip:      return "Tip (\(shareLabel))"
+        case .discount: return "Discount (\(shareLabel))"
+        case .item:     return ""
+        }
+    }
+
+    private var totalRow: some View {
+        HStack {
+            Text("Total")
+                .font(AppFonts.bodyEmphasized)
+                .foregroundColor(AppColors.textPrimary)
+            Spacer()
+            ReceiptItemAmountText(amount: totalShare, currency: currency, isDiscount: totalShare < 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, AppSpacing.md)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
     }
 }

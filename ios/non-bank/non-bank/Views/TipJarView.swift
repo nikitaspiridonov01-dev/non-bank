@@ -24,6 +24,12 @@ struct TipJarView: View {
     /// expensive in SwiftUI so we lean on tap as the proxy.
     @State private var didEngageWithTier: Bool = false
     @State private var lastTappedTier: TipJarService.Tier?
+    /// Drives the celebratory confetti overlay shown after any
+    /// successful tip. Flipped on by the `purchaseState` change
+    /// observer below, auto-cleared by a timer so the burst tears
+    /// itself down once the animation completes.
+    @State private var showFireworks: Bool = false
+    @State private var fireworksDismissTask: Task<Void, Never>?
 
     var body: some View {
         List {
@@ -87,10 +93,28 @@ struct TipJarView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(AppColors.backgroundPrimary)
+        // Celebratory burst over the whole screen on any successful tip.
+        // `FireworksView` disables hit-testing internally, so the
+        // "Thank you!" section and the nav-bar close affordance under it
+        // stay fully interactive.
+        .overlay {
+            if showFireworks {
+                FireworksView()
+            }
+        }
         .navigationTitle("Leave a tip")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await service.loadProducts()
+        }
+        // Fire confetti when the purchase state lands on `.succeeded`
+        // for ANY tier. Driven off the state transition (not the tap
+        // handler) so it can't miss a success that resolves after the
+        // view-local purchase flow returns.
+        .onChange(of: service.purchaseState) { _, newValue in
+            if case .succeeded = newValue {
+                triggerFireworks()
+            }
         }
         .onAppear {
             openedAt = Date()
@@ -102,6 +126,7 @@ struct TipJarView: View {
             analytics.recordFeatureUseIfFirst(.tipJar)
         }
         .onDisappear {
+            fireworksDismissTask?.cancel()
             // Fire dismissal only if the user didn't actually
             // purchase — `lastPurchasedTier` going non-nil means
             // they bought and `tipPurchaseSucceeded` already fired
@@ -166,12 +191,33 @@ struct TipJarView: View {
         }
     }
 
+    /// Shows the confetti overlay and schedules its own teardown.
+    /// Idempotent within a burst: re-triggering (e.g. a second tip
+    /// while the first burst is still on screen) restarts a fresh
+    /// burst and resets the dismiss timer so it never lingers.
+    private func triggerFireworks() {
+        fireworksDismissTask?.cancel()
+        // Toggle off→on so SwiftUI rebuilds `FireworksView` from
+        // scratch (fresh particle field + animation clock) even if a
+        // previous burst hadn't finished.
+        showFireworks = false
+        showFireworks = true
+        fireworksDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(FireworksView.duration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            withAnimation(AppMotion.normal) {
+                showFireworks = false
+            }
+        }
+    }
+
     /// Maps the `TipJarService.Tier` enum to the analytics-side
     /// `TipTier` enum so the taxonomy file doesn't have to import
     /// StoreKit.
     private func mapTier(_ tier: TipJarService.Tier) -> TipTier {
         switch tier {
         case .coffee:     return .coffee
+        case .kitten:     return .kitten
         case .croissant:  return .croissant
         case .pizza:      return .pizza
         case .chefsTable: return .chefstable
@@ -185,6 +231,7 @@ struct TipJarView: View {
     private func priceBucket(for tier: TipJarService.Tier) -> String {
         switch tier {
         case .coffee:     return "<2"
+        case .kitten:     return "<2"
         case .croissant:  return "2-5"
         case .pizza:      return "5-7"
         case .chefsTable: return "7+"

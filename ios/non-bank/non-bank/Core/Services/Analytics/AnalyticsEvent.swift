@@ -727,7 +727,7 @@ enum InsightsCardType: String {
     case monthlyTrend = "monthly_trend"
 }
 enum TipJarSource: String { case settings, onboarding, postSplit = "post_split" }
-enum TipTier: String { case coffee, croissant, pizza, chefstable }
+enum TipTier: String { case coffee, kitten, croissant, pizza, chefstable }
 enum SupportKind: String { case feature, bug, support }
 
 // MARK: New (Phase A) — receipt-scan deep-dive

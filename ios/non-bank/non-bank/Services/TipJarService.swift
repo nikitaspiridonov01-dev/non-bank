@@ -4,15 +4,16 @@ import Combine
 
 /// StoreKit2 wrapper for the "tip the developer" consumable IAPs.
 ///
-/// Four tip tiers with a culinary theme — each tier upgrades the meal
+/// Five tip tiers with a culinary theme — each tier upgrades the meal
 /// being "bought" for the dev so the upsell reads emotionally instead
-/// of as a dry "$0.99 / $2.99 / $4.99 / $9.99" list:
+/// of as a dry "$0.99 / $1.99 / $2.99 / $4.99 / $9.99" list:
 ///   - ☕ Coffee — $0.99
+///   - 🐱 Kitten food — $1.99
 ///   - 🥐 Croissant — $2.99
 ///   - 🍕 Pizza — $4.99   ← visually highlighted as "Recommended"
 ///   - 🧑‍🍳 Chef's table — $9.99  ← labelled "Most generous"
 ///
-/// All four products are `Consumable` so the user can buy any tier
+/// All five products are `Consumable` so the user can buy any tier
 /// multiple times. Receipt items don't need to be re-validated on
 /// launch (we don't unlock anything in return); the only purchase
 /// state we keep around is the in-memory `lastPurchasedProductID`
@@ -26,6 +27,7 @@ final class TipJarService: ObservableObject {
     /// Store Connect entries created with the same IDs).
     enum Tier: String, CaseIterable, Identifiable {
         case coffee     = "com.nonbank.tip.coffee"
+        case kitten     = "com.nonbank.tip.kitten"
         case croissant  = "com.nonbank.tip.croissant"
         case pizza      = "com.nonbank.tip.pizza"
         case chefsTable = "com.nonbank.tip.chefstable"
@@ -35,6 +37,7 @@ final class TipJarService: ObservableObject {
         var emoji: String {
             switch self {
             case .coffee:     return "☕"
+            case .kitten:     return "🐱"
             case .croissant:  return "🥐"
             case .pizza:      return "🍕"
             case .chefsTable: return "🧑‍🍳"
@@ -44,6 +47,7 @@ final class TipJarService: ObservableObject {
         var title: String {
             switch self {
             case .coffee:     return "Coffee"
+            case .kitten:     return "Kitten food"
             case .croissant:  return "Croissant"
             case .pizza:      return "Pizza night"
             case .chefsTable: return "Chef's table"
@@ -53,6 +57,7 @@ final class TipJarService: ObservableObject {
         var blurb: String {
             switch self {
             case .coffee:     return "A small thanks for shipping non-bank."
+            case .kitten:     return "Keep the office cat fed while features ship."
             case .croissant:  return "Fuel for a Saturday-morning fix-up session."
             case .pizza:      return "A round for the team after a long sprint."
             case .chefsTable: return "Sponsor a whole feature. Seriously, thank you."

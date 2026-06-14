@@ -18,6 +18,21 @@
       "type" : "Consumable"
     },
     {
+      "displayPrice" : "1.99",
+      "familyShareable" : false,
+      "internalID" : "1005",
+      "localizations" : [
+        {
+          "description" : "A snack for the office cat",
+          "displayName" : "Kitten food",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.nonbank.tip.kitten",
+      "referenceName" : "Tip Kitten",
+      "type" : "Consumable"
+    },
+    {
       "displayPrice" : "2.99",
       "familyShareable" : false,
       "internalID" : "1002",

@@ -18,21 +18,6 @@
       "type" : "Consumable"
     },
     {
-      "displayPrice" : "1.99",
-      "familyShareable" : false,
-      "internalID" : "1005",
-      "localizations" : [
-        {
-          "description" : "A snack for the office cat",
-          "displayName" : "Kitten food",
-          "locale" : "en_US"
-        }
-      ],
-      "productID" : "com.nonbank.tip.kitten",
-      "referenceName" : "Tip Kitten",
-      "type" : "Consumable"
-    },
-    {
       "displayPrice" : "2.99",
       "familyShareable" : false,
       "internalID" : "1002",
@@ -68,13 +53,13 @@
       "internalID" : "1004",
       "localizations" : [
         {
-          "description" : "Chef's table — fuel for a whole sprint",
-          "displayName" : "Chef's table",
+          "description" : "Sponsor a feature and feed the office cat",
+          "displayName" : "Kitten food",
           "locale" : "en_US"
         }
       ],
       "productID" : "com.nonbank.tip.chefstable",
-      "referenceName" : "Tip Chef's Table",
+      "referenceName" : "Tip Kitten",
       "type" : "Consumable"
     }
   ],

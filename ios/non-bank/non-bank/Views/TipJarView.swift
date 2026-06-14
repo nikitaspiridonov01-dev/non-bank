@@ -254,10 +254,9 @@ struct TipJarView: View {
     private func mapTier(_ tier: TipJarService.Tier) -> TipTier {
         switch tier {
         case .coffee:     return .coffee
-        case .kitten:     return .kitten
         case .croissant:  return .croissant
         case .pizza:      return .pizza
-        case .chefsTable: return .chefstable
+        case .kitten:     return .kitten
         }
     }
 
@@ -272,10 +271,9 @@ struct TipJarView: View {
     private func priceBucket(for tier: TipJarService.Tier) -> String {
         switch tier {
         case .coffee:     return "<1"
-        case .kitten:     return "1-2"
         case .croissant:  return "2-5"
         case .pizza:      return "5-7"
-        case .chefsTable: return "7+"
+        case .kitten:     return "7+"
         }
     }
 

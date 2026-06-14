@@ -25,54 +25,55 @@ final class TipJarService: ObservableObject {
     /// Stable tier metadata. The `productID` strings have to match the
     /// `.storekit` configuration file (and, in production, the App
     /// Store Connect entries created with the same IDs).
+    /// Four tip tiers, declaration order = display order (cheapest → top).
+    /// Kitten is the top "most generous" tier and deliberately REUSES the
+    /// existing `com.nonbank.tip.chefstable` product ($9.99): it replaces
+    /// chef's table rather than adding a new IAP, so no new App Store
+    /// Connect product is needed. (Rename that IAP's display name to
+    /// "Kitten food" in ASC so the system purchase sheet matches the card.)
     enum Tier: String, CaseIterable, Identifiable {
         case coffee     = "com.nonbank.tip.coffee"
-        case kitten     = "com.nonbank.tip.kitten"
         case croissant  = "com.nonbank.tip.croissant"
         case pizza      = "com.nonbank.tip.pizza"
-        case chefsTable = "com.nonbank.tip.chefstable"
+        case kitten     = "com.nonbank.tip.chefstable" // legacy chef's-table product, $9.99
 
         var id: String { rawValue }
 
         var emoji: String {
             switch self {
             case .coffee:     return "☕"
-            case .kitten:     return "🐱"
             case .croissant:  return "🥐"
             case .pizza:      return "🍕"
-            case .chefsTable: return "🧑‍🍳"
+            case .kitten:     return "🐱"
             }
         }
 
         var title: String {
             switch self {
             case .coffee:     return "Coffee"
-            case .kitten:     return "Kitten food"
             case .croissant:  return "Croissant"
             case .pizza:      return "Pizza night"
-            case .chefsTable: return "Chef's table"
+            case .kitten:     return "Kitten food"
             }
         }
 
         var blurb: String {
             switch self {
             case .coffee:     return "A small thanks for shipping non-bank."
-            case .kitten:     return "Keep the office cat fed while features ship."
             case .croissant:  return "Fuel for a Saturday-morning fix-up session."
             case .pizza:      return "A round for the team after a long sprint."
-            case .chefsTable: return "Sponsor a whole feature. Seriously, thank you."
+            case .kitten:     return "Sponsor a whole feature — and keep the office cat very well fed. Seriously, thank you."
             }
         }
 
-        /// Visual badge displayed on the card. We tilt the user toward
-        /// pizza (the "Recommended" label) by giving it the accent
-        /// fill — the chef's table tier gets a quieter "Most generous"
-        /// chip so the very high price doesn't feel like the default.
+        /// Visual badge displayed on the card. Pizza gets the accent
+        /// "Recommended" fill; the top kitten tier gets a quieter "Most
+        /// generous" chip so its high price doesn't feel like the default.
         var badge: Badge? {
             switch self {
-            case .pizza:      return .recommended
-            case .chefsTable: return .mostGenerous
-            default:          return nil
+            case .pizza:  return .recommended
+            case .kitten: return .mostGenerous
+            default:      return nil
             }
         }
 

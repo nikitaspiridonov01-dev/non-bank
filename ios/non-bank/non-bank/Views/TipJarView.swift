@@ -12,6 +12,7 @@ import StoreKit
 ///     same weight as the cheaper tiers.
 struct TipJarView: View {
     @StateObject private var service = TipJarService.shared
+    @EnvironmentObject private var router: NavigationRouter
     @State private var purchasingTier: TipJarService.Tier?
     @Environment(\.analytics) private var analytics
     /// Wall-clock anchor for `tip_jar_dismissed` dwell — measures
@@ -117,6 +118,13 @@ struct TipJarView: View {
             }
         }
         .onAppear {
+            // Hide the global tab bar while this screen is up — the tip
+            // tier rows sit at the bottom of the list and the floating
+            // tab bar + FAB would otherwise overlap and swallow taps on
+            // the lowest tier. Restored centrally by `SettingsView`'s
+            // `.onAppear` when the user pops back to the Settings root —
+            // same convention as Import / Export Transactions.
+            router.hideTabBar = true
             openedAt = Date()
             // `tipJarViewed` carries the entry source. The setting
             // sub-route is the only path today; expand the enum

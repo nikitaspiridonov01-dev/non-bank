@@ -3,6 +3,7 @@ import SwiftUI
 struct FriendsView: View {
     @EnvironmentObject var friendStore: FriendStore
     @EnvironmentObject var transactionStore: TransactionStore
+    @EnvironmentObject var router: NavigationRouter
     @Environment(\.analytics) private var analytics
     @State private var searchText = ""
     @State private var selectedGroup: String? = nil
@@ -77,6 +78,13 @@ struct FriendsView: View {
         // Reminders-style hero header on this screen only.
         .navigationBarHidden(false)
         .navigationBarTitleDisplayMode(.large)
+        // Hide the global tab bar while this screen is up — the friends
+        // list scrolls full-height and the floating tab bar + FAB would
+        // overlap the lowest rows (and the per-row swipe / tap targets).
+        // Restored centrally by `SettingsView`'s `.onAppear` when the
+        // user pops back to the Settings root — same convention as
+        // Import / Export Transactions.
+        .onAppear { router.hideTabBar = true }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(action: { sheetFriend = .create }) {

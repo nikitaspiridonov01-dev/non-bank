@@ -114,7 +114,51 @@ final class TipJarService: ObservableObject {
         }
     }
 
-    private init() {}
+    /// Background listener for `Transaction.updates`. Delivers
+    /// transactions that complete OUTSIDE the `product.purchase()` call —
+    /// the canonical case being a Family Sharing "Ask to Buy" tip the
+    /// organizer approves minutes or hours after the buyer tapped (the
+    /// buyer's `purchase()` already returned `.pending`). Without this,
+    /// an approved tip is never finished, never sets `lastPurchasedTier`,
+    /// and never fires success — the conversion is silently lost and the
+    /// consumable transaction sits unfinished. Gap "FS-3" from the audit.
+    private var updatesListener: Task<Void, Never>?
+
+    /// Transaction ids already finished this process. A normal (non-
+    /// deferred) purchase is delivered BOTH by `product.purchase()` and
+    /// by `Transaction.updates`; we process whichever arrives first and
+    /// treat the duplicate as a no-op so we never finish twice or (via the
+    /// view's `.succeeded` observer) double-fire success + fireworks.
+    /// In-memory only — consumables need no persistence, so this resets on
+    /// relaunch, which is fine: StoreKit only re-delivers unfinished
+    /// transactions, and we finish each one the first time we see it.
+    private var finishedTransactionIDs: Set<UInt64> = []
+
+    private init() {
+        // Start the out-of-band transaction listener as early as possible
+        // so an Ask-to-Buy approval that lands before any view observes is
+        // still finished and recorded.
+        updatesListener = Task { [weak self] in
+            // `StoreKit.Transaction` is fully qualified throughout: the app
+            // has its own `Transaction` model (a bank-style ledger entry),
+            // so a bare `Transaction` would resolve to that, not StoreKit's.
+            for await update in StoreKit.Transaction.updates {
+                // Trust only cryptographically verified transactions —
+                // leave anything unverified unfinished so StoreKit can
+                // re-deliver it, and never grant on it.
+                guard case .verified(let transaction) = update else { continue }
+                // Skip products that aren't one of our five tip
+                // consumables: they belong to some other flow and aren't
+                // ours to finish.
+                guard let tier = Tier(rawValue: transaction.productID) else { continue }
+                await self?.complete(transaction, tier: tier)
+            }
+        }
+    }
+
+    deinit {
+        updatesListener?.cancel()
+    }
 
     // MARK: - Loading
 
@@ -161,9 +205,11 @@ final class TipJarService: ObservableObject {
             case .success(let verification):
                 switch verification {
                 case .verified(let transaction):
-                    await transaction.finish()
-                    lastPurchasedTier = tier
-                    purchaseState = .succeeded(tier)
+                    // Same finish/record path the `Transaction.updates`
+                    // listener uses — `complete` dedups by transaction id,
+                    // so the duplicate delivery of THIS very transaction
+                    // via the listener is a harmless no-op.
+                    await complete(transaction, tier: tier)
                 case .unverified(_, let error):
                     lastFailureCode = Self.stableErrorCode(from: error)
                     purchaseState = .failed(error.localizedDescription)
@@ -174,10 +220,11 @@ final class TipJarService: ObservableObject {
                 // Family-share / Ask-to-Buy flow. Surface a distinct
                 // `.deferred` state (rather than collapsing to `.idle`)
                 // so the funnel can tell "awaiting approval" apart from
-                // "looked and left." The user gets the system
-                // confirmation once the request is approved — completing
-                // that out-of-band transaction needs a
-                // `Transaction.updates` listener (not yet wired up).
+                // "looked and left." Once the organizer approves, the
+                // transaction arrives out-of-band via the
+                // `Transaction.updates` listener (started in `init`), which
+                // finishes it and drives `.succeeded` — completing the
+                // conversion the buyer started here.
                 purchaseState = .deferred(tier)
             @unknown default:
                 purchaseState = .idle
@@ -186,6 +233,22 @@ final class TipJarService: ObservableObject {
             lastFailureCode = Self.stableErrorCode(from: error)
             purchaseState = .failed(error.localizedDescription)
         }
+    }
+
+    /// Finalizes a verified tip transaction arriving from EITHER path —
+    /// the direct `product.purchase()` result or the `Transaction.updates`
+    /// listener (Ask-to-Buy approvals that land out-of-band). Idempotent
+    /// per transaction id: a normal purchase is delivered by both paths,
+    /// so the first call finishes + records success and the duplicate
+    /// returns early. That single `.succeeded` transition is what the
+    /// view's `purchaseState` observer turns into exactly one
+    /// `tip_purchase_succeeded` event and one fireworks burst.
+    private func complete(_ transaction: StoreKit.Transaction, tier: Tier) async {
+        guard !finishedTransactionIDs.contains(transaction.id) else { return }
+        finishedTransactionIDs.insert(transaction.id)
+        await transaction.finish()
+        lastPurchasedTier = tier
+        purchaseState = .succeeded(tier)
     }
 
     /// Maps an arbitrary purchase error to a short, stable,

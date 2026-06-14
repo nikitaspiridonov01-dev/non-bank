@@ -363,13 +363,17 @@ final class SplitDebtServiceTests: XCTestCase {
         XCTAssertEqual(SplitDebtService.userPosition(in: tx), .borrowed(10))
     }
 
-    func testUserPosition_evenSplit_notInvolved() {
-        // User paid exactly their share → no net. Display-wise treated as notInvolved.
+    func testUserPosition_evenSplit_settled() {
+        // User IS a participant (share 5, paid 5) but contribution and
+        // consumption cancel out → `.settled`, NOT `.notInvolved`.
+        // `.notInvolved` is reserved for "no share AND paid nothing"; a
+        // perfectly balanced split must read as settled so the UI doesn't
+        // show the wrong "you're not involved" copy (see userPosition).
         let tx = makeSplit(
             date: pastDate, paidByMe: 5, myShare: 5,
             friends: [FriendShare(friendID: "A", share: 5, paidAmount: 5)]
         )
-        XCTAssertEqual(SplitDebtService.userPosition(in: tx), .notInvolved)
+        XCTAssertEqual(SplitDebtService.userPosition(in: tx), .settled)
     }
 
     // MARK: - perTransactionSettlement

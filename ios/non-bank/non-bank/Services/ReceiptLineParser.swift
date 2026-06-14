@@ -191,6 +191,17 @@ struct ReceiptLineParser {
     private static let priceLookbehindCommon = #"(?<![./:])"#
     private static let priceLookaheadCommon = #"(?![/\d.,:]|\p{L}{2})"#
 
+    /// Stricter lookbehind for the BARE-INTEGER fallback only: also rejects a
+    /// preceding DIGIT. The decimal patterns can legitimately match a 3-digit
+    /// suffix of a longer no-separator amount ("1100,00" → "100,00"), so they
+    /// must keep the permissive common lookbehind. But the bare-integer
+    /// pattern would otherwise match a SUB-run of a date/id: in "11.04.2026"
+    /// the engine rejects the year start "2026" (preceded by ".") then
+    /// advances and matches "026"/"26" (preceded by a digit). Forbidding a
+    /// preceding digit makes the bare integer start at a real boundary and
+    /// kills that date false-positive without touching the decimal patterns.
+    private static let bareIntegerLookbehind = #"(?<![./:\d])"#
+
     private static let pricePatternsTiered: [String] = [
         // 2-decimal (highest confidence): 5,50 / 1.100,00 / -5,00
         priceLookbehindCommon + #"(\-?\d{1,3}(?:[.,]\d{3})*[.,]\d{2})"# + priceLookaheadCommon,
@@ -205,7 +216,7 @@ struct ReceiptLineParser {
     /// dotted/slashed/colon sequence. Threshold ≥ 10 (`\d{2,}`) avoids
     /// false-matching quantities and line numbers; the shared lookarounds
     /// reject `2024` in `12.05.2024`, `5` in `1/5`, `37` in `13:37`.
-    private static let bareIntegerPattern = priceLookbehindCommon + #"(\-?\d{2,})"# + priceLookaheadCommon
+    private static let bareIntegerPattern = bareIntegerLookbehind + #"(\-?\d{2,})"# + priceLookaheadCommon
 
     static func findRightmostPriceMatch(
         in text: String,

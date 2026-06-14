@@ -20,7 +20,10 @@ final class CurrencyAPI: CurrencyAPIProtocol {
         let data = try await client.fetchData(from: url)
 
         // v2 returns array: [{"base":"USD","quote":"EUR","rate":0.92,...}, ...]
-        guard let array = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+        // `try?` so malformed JSON surfaces as our NetworkError.decodingFailed
+        // instead of leaking a raw Foundation CocoaError — callers (and the
+        // currency layer's error handling) only expect NetworkError.
+        guard let array = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
             throw NetworkError.decodingFailed
         }
 

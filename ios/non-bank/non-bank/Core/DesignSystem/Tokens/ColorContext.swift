@@ -100,6 +100,23 @@ extension ColorContext {
         }
     }
 
+    /// Card / row fill for this context — the warm sub-app surface the
+    /// Reminders / Split palettes already expose (`reminderCardFill` /
+    /// `splitCardFill`), with `backgroundElevated` (soft beige) as the
+    /// standard fallback. Used as a UNIFORM layer UNDER a per-row
+    /// `.glassEffect` so iOS-26 Liquid Glass samples a constant backdrop
+    /// instead of a size-dependent slice of the live MeshGradient page —
+    /// a taller row (wrapped name / extra chip line) otherwise reads
+    /// lighter than a short one. Deliberately never a system gray or
+    /// pure white (warm-palette rule).
+    var cardFill: Color {
+        switch self {
+        case .standard:  return AppColors.backgroundElevated
+        case .reminders: return AppColors.reminderCardFill
+        case .split:     return AppColors.splitCardFill
+        }
+    }
+
     /// Matching `PixelTint` so animated illustrations on this
     /// context's screens automatically theme to it.
     var pixelTint: PixelTint {

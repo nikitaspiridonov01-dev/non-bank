@@ -700,6 +700,14 @@ struct TransactionDetailView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                                 .padding(14)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                // Uniform under-fill (same shape) so the
+                                // glass tint stays constant as the notes
+                                // grow taller — no sibling here, so no
+                                // GlassEffectContainer is needed.
+                                .background(
+                                    receiptSheetContext.cardFill,
+                                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                )
                                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
                         .padding(.vertical, AppSpacing.xxs)
@@ -1224,9 +1232,14 @@ struct TransactionDetailView: View {
                     .foregroundColor(AppColors.textPrimary)
                 }
             }
-            VStack(spacing: AppSpacing.xs) {
-                ForEach(Array(receiptItems.prefix(2))) { item in
-                    receiptItemRow(item)
+            // Apple-required grouping so the two preview rows' glass
+            // stays mutually consistent (each keeps its own `.glassEffect`
+            // over a uniform under-fill).
+            GlassEffectContainer {
+                VStack(spacing: AppSpacing.xs) {
+                    ForEach(Array(receiptItems.prefix(2))) { item in
+                        receiptItemRow(item)
+                    }
                 }
             }
         }
@@ -1258,6 +1271,15 @@ struct TransactionDetailView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.rowVertical)
+        // Uniform sub-app card fill UNDER the glass (same rounded-rect
+        // shape) so each preview row samples a constant backdrop — a
+        // wrapped 2-line item name no longer reads lighter than a short
+        // one. `receiptSheetContext` maps `source` to the same sub-app
+        // palette as this view's page background.
+        .background(
+            receiptSheetContext.cardFill,
+            in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+        )
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
     }
 

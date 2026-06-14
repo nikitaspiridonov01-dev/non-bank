@@ -185,9 +185,13 @@ struct ReceiptItemsReadOnlySheet: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 40)
         } else {
-            VStack(spacing: AppSpacing.sm) {
-                ForEach(items) { item in
-                    row(item)
+            // Apple-required grouping so sibling row glass stays
+            // mutually consistent (each row keeps its own `.glassEffect`).
+            GlassEffectContainer {
+                VStack(spacing: AppSpacing.sm) {
+                    ForEach(items) { item in
+                        row(item)
+                    }
                 }
             }
             .padding(.horizontal, AppSpacing.pageHorizontal)
@@ -237,11 +241,17 @@ struct ReceiptItemsReadOnlySheet: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.rowVertical)
+        // Uniform sub-app card fill UNDER the glass (same rounded-rect
+        // shape) so every row samples a constant backdrop — a taller
+        // 2-line row no longer reads lighter than a short one. The glass
+        // sits on top of this controlled fill rather than the live page
+        // gradient.
+        .background(
+            colorContext.cardFill,
+            in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+        )
         // iOS-26 Liquid Glass — same modifier the transaction card
-        // uses for its Notes block and timeline rows. Adapts to the
-        // sub-app tint sitting under it (warm-red / lavender / cream)
-        // instead of the flat `backgroundElevated` slab that read as
-        // a dark block dropped onto a lavender page.
+        // uses for its Notes block and timeline rows.
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture {
@@ -272,6 +282,12 @@ struct ReceiptItemsReadOnlySheet: View {
         )
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.md)
+        // Uniform under-fill (same shape) so the totals card samples the
+        // same constant backdrop as the item rows above.
+        .background(
+            colorContext.cardFill,
+            in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+        )
         // Same Liquid Glass family as the item rows above so the
         // totals card reads as one of the cards rather than a
         // contrasting solid block.
@@ -368,32 +384,40 @@ struct PerItemClaimantsSheet: View {
                             .foregroundColor(AppColors.textTertiary)
                     }
 
-                    VStack(spacing: AppSpacing.sm) {
-                        ForEach(claimants) { entry in
-                            HStack(spacing: AppSpacing.md) {
-                                PixelCatView(
-                                    id: entry.participant.isMe ? UserIDService.currentID() : entry.participant.id,
-                                    size: 36,
-                                    blackAndWhite: !entry.participant.isConnected
+                    // Grouped so sibling claimant-row glass stays
+                    // mutually consistent, each over a uniform under-fill.
+                    GlassEffectContainer {
+                        VStack(spacing: AppSpacing.sm) {
+                            ForEach(claimants) { entry in
+                                HStack(spacing: AppSpacing.md) {
+                                    PixelCatView(
+                                        id: entry.participant.isMe ? UserIDService.currentID() : entry.participant.id,
+                                        size: 36,
+                                        blackAndWhite: !entry.participant.isConnected
+                                    )
+                                    .clipShape(Circle())
+
+                                    Text(entry.participant.isMe ? "You" : entry.participant.name)
+                                        .font(AppFonts.labelPrimary)
+                                        .foregroundColor(AppColors.textPrimary)
+                                        .lineLimit(1)
+
+                                    Spacer(minLength: 8)
+
+                                    ReceiptItemAmountText(
+                                        amount: entry.slice,
+                                        currency: currency,
+                                        isDiscount: false
+                                    )
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, AppSpacing.rowVertical)
+                                .background(
+                                    colorContext.cardFill,
+                                    in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
                                 )
-                                .clipShape(Circle())
-
-                                Text(entry.participant.isMe ? "You" : entry.participant.name)
-                                    .font(AppFonts.labelPrimary)
-                                    .foregroundColor(AppColors.textPrimary)
-                                    .lineLimit(1)
-
-                                Spacer(minLength: 8)
-
-                                ReceiptItemAmountText(
-                                    amount: entry.slice,
-                                    currency: currency,
-                                    isDiscount: false
-                                )
+                                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
                             }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, AppSpacing.rowVertical)
-                            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
                         }
                     }
 

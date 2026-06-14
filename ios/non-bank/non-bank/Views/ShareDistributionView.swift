@@ -199,9 +199,13 @@ struct ShareDistributionView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 40)
         } else {
-            VStack(spacing: AppSpacing.md) {
-                ForEach(Array(sharers.enumerated()), id: \.offset) { _, sharer in
-                    row(sharer)
+            // Apple-required grouping so sibling row glass stays
+            // mutually consistent (each row keeps its own `.glassEffect`).
+            GlassEffectContainer {
+                VStack(spacing: AppSpacing.md) {
+                    ForEach(Array(sharers.enumerated()), id: \.offset) { _, sharer in
+                        row(sharer)
+                    }
                 }
             }
             .padding(.horizontal, AppSpacing.pageHorizontal)
@@ -256,6 +260,14 @@ struct ShareDistributionView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
+        // Uniform Split card fill UNDER the glass (same rounded-rect
+        // shape) so every row samples a constant backdrop — a row with
+        // the extra "N items" chip line no longer reads lighter than a
+        // single-line row. Glass sits on top of this controlled fill.
+        .background(
+            AppColors.splitCardFill,
+            in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous)
+        )
         // `.glassEffect(.regular, in:)` — iOS 26 Liquid Glass that
         // matches the toolbar Close / Edit pills and the friend
         // rows in the debt summary so all Split list rows read as
@@ -338,14 +350,22 @@ private struct ParticipantBreakdownSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: AppSpacing.sm) {
-                    ForEach(breakdown.items) { slice in
-                        itemRow(slice)
+                    // Apple-required grouping so all sibling row glass
+                    // (items, charges, total) stays mutually consistent;
+                    // each row keeps its own `.glassEffect` over a uniform
+                    // under-fill.
+                    GlassEffectContainer {
+                        VStack(spacing: AppSpacing.sm) {
+                            ForEach(breakdown.items) { slice in
+                                itemRow(slice)
+                            }
+                            ForEach(breakdown.charges) { cut in
+                                chargeRow(cut)
+                            }
+                            totalRow
+                                .padding(.top, AppSpacing.xs)
+                        }
                     }
-                    ForEach(breakdown.charges) { cut in
-                        chargeRow(cut)
-                    }
-                    totalRow
-                        .padding(.top, AppSpacing.xs)
                     Spacer().frame(height: 40)
                 }
                 .padding(.horizontal, AppSpacing.pageHorizontal)
@@ -400,6 +420,12 @@ private struct ParticipantBreakdownSheet: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.rowVertical)
+        // Uniform under-fill (same shape) so a wrapped 2-line item name
+        // doesn't make the glass read lighter than a single-line row.
+        .background(
+            AppColors.splitCardFill,
+            in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+        )
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture {
@@ -426,6 +452,11 @@ private struct ParticipantBreakdownSheet: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.rowVertical)
+        // Uniform under-fill (same shape) — constant backdrop per row.
+        .background(
+            AppColors.splitCardFill,
+            in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+        )
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
     }
 
@@ -448,6 +479,11 @@ private struct ParticipantBreakdownSheet: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.md)
+        // Uniform under-fill (same shape) — constant backdrop per row.
+        .background(
+            AppColors.splitCardFill,
+            in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+        )
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
     }
 }

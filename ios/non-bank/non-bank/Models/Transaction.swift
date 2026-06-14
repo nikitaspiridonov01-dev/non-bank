@@ -41,6 +41,16 @@ struct Transaction: Identifiable, Codable, Equatable {
     /// (counted in insights) for new and imported transactions.
     let excludedFromInsights: Bool
 
+    /// Monotonic edit counter for server-mediated sync. Incremented on
+    /// every local content edit (see `bumpingEditVersion()`), carried in
+    /// the share payload (`SharedTransactionPayload.ev`) and the
+    /// `pending_deliveries.version` column. The sync apply path
+    /// (`ShareIntentClassifier`) and the server UPSERT both refuse to
+    /// apply an incoming edit whose version isn't strictly greater than
+    /// the stored one — so an out-of-order / stale delivery can never
+    /// clobber a newer copy. Starts at 0; persisted in SQLite.
+    let editVersion: Int
+
     init(
         id: Int,
         syncID: String = UUID().uuidString,
@@ -58,7 +68,8 @@ struct Transaction: Identifiable, Codable, Equatable {
         parentReminderID: Int? = nil,
         splitInfo: SplitInfo? = nil,
         payloadChecksum: String? = nil,
-        excludedFromInsights: Bool = false
+        excludedFromInsights: Bool = false,
+        editVersion: Int = 0
     ) {
         self.id = id
         self.syncID = syncID
@@ -77,6 +88,7 @@ struct Transaction: Identifiable, Codable, Equatable {
         self.splitInfo = splitInfo
         self.payloadChecksum = payloadChecksum
         self.excludedFromInsights = excludedFromInsights
+        self.editVersion = editVersion
     }
 
     /// Convenience accessor — derived from `type`, not stored separately.
@@ -124,7 +136,8 @@ struct Transaction: Identifiable, Codable, Equatable {
             parentReminderID: nil,
             splitInfo: splitInfo,
             payloadChecksum: payloadChecksum,
-            excludedFromInsights: excludedFromInsights
+            excludedFromInsights: excludedFromInsights,
+            editVersion: editVersion
         )
     }
 
@@ -149,7 +162,8 @@ struct Transaction: Identifiable, Codable, Equatable {
             parentReminderID: parentReminderID,
             splitInfo: splitInfo,
             payloadChecksum: payloadChecksum,
-            excludedFromInsights: excluded
+            excludedFromInsights: excluded,
+            editVersion: editVersion
         )
     }
 
@@ -178,7 +192,36 @@ struct Transaction: Identifiable, Codable, Equatable {
             parentReminderID: parentReminderID,
             splitInfo: splitInfo,
             payloadChecksum: payloadChecksum,
-            excludedFromInsights: excludedFromInsights
+            excludedFromInsights: excludedFromInsights,
+            editVersion: editVersion
+        )
+    }
+
+    /// Returns a copy with `editVersion` incremented and `lastModified`
+    /// bumped — call on every local content edit of a split transaction
+    /// so paired friends' sync apply can order edits and the server UPSERT
+    /// can reject stale ones. Non-split edits don't need it but it's
+    /// harmless to bump.
+    func bumpingEditVersion() -> Transaction {
+        Transaction(
+            id: id,
+            syncID: syncID,
+            emoji: emoji,
+            category: category,
+            title: title,
+            description: description,
+            amount: amount,
+            currency: currency,
+            date: date,
+            type: type,
+            tags: tags,
+            lastModified: Date(),
+            repeatInterval: repeatInterval,
+            parentReminderID: parentReminderID,
+            splitInfo: splitInfo,
+            payloadChecksum: payloadChecksum,
+            excludedFromInsights: excludedFromInsights,
+            editVersion: editVersion + 1
         )
     }
 

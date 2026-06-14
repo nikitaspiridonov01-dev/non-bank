@@ -103,6 +103,16 @@ struct SharedTransactionPayload: Codable, Equatable {
     /// imported reminder behaves the same as a locally-created one.
     let r: SharedRecurring?
 
+    /// Monotonic edit version (`Transaction.editVersion`). Additive and
+    /// OPTIONAL: old apps that predate server-sync omit it and new
+    /// decoders ignore the absence (treated as "no version info"); old
+    /// decoders ignore the unknown key. The receiver's
+    /// `ShareIntentClassifier` uses it as a guard — it never applies an
+    /// incoming edit whose version isn't strictly greater than the local
+    /// copy's, so a stale / out-of-order delivery can't clobber a newer
+    /// transaction. `nil` falls back to the pre-sync checksum-only behavior.
+    let ev: Int?
+
     struct Participant: Codable, Equatable {
         /// Sharer's stable ID for this friend (`FriendIDGenerator` format,
         /// e.g. `"amber-lynx-7K2D"`). Receivers may match against their
@@ -140,7 +150,8 @@ struct SharedTransactionPayload: Codable, Equatable {
         sm: String?,
         sn: String?,
         f: [Participant],
-        r: SharedRecurring? = nil
+        r: SharedRecurring? = nil,
+        ev: Int? = nil
     ) {
         self.v = v
         self.id = id
@@ -158,6 +169,7 @@ struct SharedTransactionPayload: Codable, Equatable {
         self.sn = sn
         self.f = f
         self.r = r
+        self.ev = ev
     }
 }
 

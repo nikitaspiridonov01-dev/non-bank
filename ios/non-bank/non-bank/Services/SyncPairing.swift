@@ -70,8 +70,16 @@ enum SyncPairing {
     ///
     /// No-ops when the two ids are equal (you can't pair with yourself) or
     /// when either id is empty.
-    static func recordPairing(myID: String, sharerID: String) async {
-        guard !myID.isEmpty, !sharerID.isEmpty, myID != sharerID else { return }
+    ///
+    /// Returns `true` only when the server confirmed the pairing with a 2xx
+    /// response. Marked `@discardableResult` so the existing fire-and-forget
+    /// call sites stay unchanged, while the recipient toast path can `await`
+    /// the result and only celebrate "new friend added" on a real success
+    /// (a 403/offline/5xx returns `false`, so we never claim a pairing the
+    /// server rejected).
+    @discardableResult
+    static func recordPairing(myID: String, sharerID: String) async -> Bool {
+        guard !myID.isEmpty, !sharerID.isEmpty, myID != sharerID else { return false }
 
         let backendURL = BackendConfig.baseURL
         let endpoint = backendURL
@@ -88,7 +96,7 @@ enum SyncPairing {
             pair_hmac: pairHMAC(myID, sharerID),
             user_id: myID
         )
-        guard let httpBody = try? JSONEncoder().encode(body) else { return }
+        guard let httpBody = try? JSONEncoder().encode(body) else { return false }
         req.httpBody = httpBody
 
         // App Attest: same headers `/v1/parse-receipt` sends. On the
@@ -101,19 +109,22 @@ enum SyncPairing {
             req.setValue(value, forHTTPHeaderField: key)
         }
 
-        // Best-effort: any thrown error or non-2xx is intentionally
-        // ignored. There is no retry and no caller-visible result.
+        // Best-effort: any thrown error or non-2xx is swallowed (no retry
+        // here — the caller decides whether to surface anything). We return
+        // whether the server confirmed (2xx) so a caller that cares (the
+        // recipient toast) can gate on a real success.
         do {
             let (_, response) = try await URLSession.shared.data(for: req)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             #if DEBUG
-            if let http = response as? HTTPURLResponse {
-                print("[SyncPairing] /v1/sync/pair → \(http.statusCode)")
-            }
+            print("[SyncPairing] /v1/sync/pair → \(status)")
             #endif
+            return (200...299).contains(status)
         } catch {
             #if DEBUG
             print("[SyncPairing] recordPairing failed (ignored): \(error.localizedDescription)")
             #endif
+            return false
         }
     }
 

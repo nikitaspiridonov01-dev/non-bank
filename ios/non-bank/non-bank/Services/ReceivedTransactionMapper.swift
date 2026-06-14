@@ -326,7 +326,12 @@ enum ReceivedTransactionMapper {
             type: payload.k == "inc" ? .income : .expenses,
             tags: nil,
             repeatInterval: receivedRepeatInterval,
-            splitInfo: receiverSplit
+            splitInfo: receiverSplit,
+            // Adopt the sharer's edit version so the local copy carries the
+            // version it was synced to — the next delivery's version guard
+            // (ShareIntentClassifier) compares against this. Legacy payloads
+            // without `ev` keep the existing local version (or 0 on create).
+            editVersion: payload.ev ?? existingTransaction?.editVersion ?? 0
         )
 
         return ResolvedShare(

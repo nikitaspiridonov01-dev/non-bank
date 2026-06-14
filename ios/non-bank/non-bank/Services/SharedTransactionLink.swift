@@ -204,7 +204,8 @@ enum SharedTransactionLink {
             sm: split.splitMode?.rawValue,
             sn: sharerName,
             f: participants,
-            r: recurring
+            r: recurring,
+            ev: transaction.editVersion
         )
 
         return try buildURL(payload: payload, style: style)

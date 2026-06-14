@@ -207,6 +207,13 @@ class SQLiteService: DatabaseProtocol {
             exec("ALTER TABLE transactions ADD COLUMN excluded_from_insights INTEGER NOT NULL DEFAULT 0;")
         }
 
+        // --- Server-sync edit version ---
+        // Monotonic per-transaction edit counter for server-mediated
+        // sync's version guard. Default 0 for pre-existing rows.
+        if !columnExists("edit_version", in: "transactions") {
+            exec("ALTER TABLE transactions ADD COLUMN edit_version INTEGER NOT NULL DEFAULT 0;")
+        }
+
         // --- Friends v2: add groups_json, split_mode columns ---
         if !columnExists("groups_json", in: "friends") {
             exec("ALTER TABLE friends ADD COLUMN groups_json TEXT;")
@@ -317,9 +324,10 @@ class SQLiteService: DatabaseProtocol {
             sqlite3_bind_null(statement, 16)
         }
         sqlite3_bind_int(statement, 17, transaction.excludedFromInsights ? 1 : 0)
+        sqlite3_bind_int(statement, 18, Int32(transaction.editVersion))
     }
 
-    private static let transactionInsertSQL = "INSERT INTO transactions (emoji, category, title, description, amount, currency, date, type, isIncome, tags, sync_id, last_modified, repeat_interval, parent_reminder_id, split_info, payload_checksum, excluded_from_insights) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+    private static let transactionInsertSQL = "INSERT INTO transactions (emoji, category, title, description, amount, currency, date, type, isIncome, tags, sync_id, last_modified, repeat_interval, parent_reminder_id, split_info, payload_checksum, excluded_from_insights, edit_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
 
     func insert(transaction: Transaction) async {
         await withCheckedContinuation { continuation in
@@ -387,10 +395,16 @@ class SQLiteService: DatabaseProtocol {
         if sqlite3_column_type(statement, 17) != SQLITE_NULL {
             excludedFromInsights = sqlite3_column_int(statement, 17) != 0
         }
-        return Transaction(id: id, syncID: syncID, emoji: emoji, category: category, title: title, description: description, amount: amount, currency: currency, date: date, type: type, tags: tags, lastModified: lastModified, repeatInterval: repeatInterval, parentReminderID: parentReminderID, splitInfo: splitInfo, payloadChecksum: payloadChecksum, excludedFromInsights: excludedFromInsights)
+        // Column 18 — edit_version — NOT NULL DEFAULT 0; check NULL
+        // defensively for rows read on a partially-migrated database.
+        var editVersion = 0
+        if sqlite3_column_type(statement, 18) != SQLITE_NULL {
+            editVersion = Int(sqlite3_column_int(statement, 18))
+        }
+        return Transaction(id: id, syncID: syncID, emoji: emoji, category: category, title: title, description: description, amount: amount, currency: currency, date: date, type: type, tags: tags, lastModified: lastModified, repeatInterval: repeatInterval, parentReminderID: parentReminderID, splitInfo: splitInfo, payloadChecksum: payloadChecksum, excludedFromInsights: excludedFromInsights, editVersion: editVersion)
     }
 
-    private static let transactionSelectSQL = "SELECT id, emoji, category, title, description, amount, currency, date, type, isIncome, tags, sync_id, last_modified, repeat_interval, parent_reminder_id, split_info, payload_checksum, excluded_from_insights FROM transactions ORDER BY date DESC;"
+    private static let transactionSelectSQL = "SELECT id, emoji, category, title, description, amount, currency, date, type, isIncome, tags, sync_id, last_modified, repeat_interval, parent_reminder_id, split_info, payload_checksum, excluded_from_insights, edit_version FROM transactions ORDER BY date DESC;"
 
     func fetchAllTransactions() async -> [Transaction] {
         await withCheckedContinuation { continuation in
@@ -444,14 +458,14 @@ class SQLiteService: DatabaseProtocol {
     func update(transaction: Transaction) async {
         await withCheckedContinuation { continuation in
             dbQueue.async {
-                let updateString = "UPDATE transactions SET emoji = ?, category = ?, title = ?, description = ?, amount = ?, currency = ?, date = ?, type = ?, isIncome = ?, tags = ?, sync_id = ?, last_modified = ?, repeat_interval = ?, parent_reminder_id = ?, split_info = ?, payload_checksum = ?, excluded_from_insights = ? WHERE id = ?;"
+                let updateString = "UPDATE transactions SET emoji = ?, category = ?, title = ?, description = ?, amount = ?, currency = ?, date = ?, type = ?, isIncome = ?, tags = ?, sync_id = ?, last_modified = ?, repeat_interval = ?, parent_reminder_id = ?, split_info = ?, payload_checksum = ?, excluded_from_insights = ?, edit_version = ? WHERE id = ?;"
                 var statement: OpaquePointer?
                 if sqlite3_prepare_v2(self.db, updateString, -1, &statement, nil) == SQLITE_OK {
                     self.bindTransactionFields(statement, transaction)
-                    // excluded_from_insights binds as column 17 inside
-                    // bindTransactionFields; the WHERE clause's `id` is
-                    // the next free slot.
-                    sqlite3_bind_int(statement, 18, Int32(transaction.id))
+                    // bindTransactionFields binds columns 1–18 (ending with
+                    // edit_version at 18); the WHERE clause's `id` is the
+                    // next free slot.
+                    sqlite3_bind_int(statement, 19, Int32(transaction.id))
                     if sqlite3_step(statement) != SQLITE_DONE {
                         print("Failed to update transaction")
                     }
@@ -591,7 +605,7 @@ class SQLiteService: DatabaseProtocol {
     func fetchTransactionBySyncID(_ syncID: String) async -> Transaction? {
         await withCheckedContinuation { continuation in
             dbQueue.async {
-                let query = "SELECT id, emoji, category, title, description, amount, currency, date, type, isIncome, tags, sync_id, last_modified, repeat_interval, parent_reminder_id, split_info, payload_checksum, excluded_from_insights FROM transactions WHERE sync_id = ? LIMIT 1;"
+                let query = "SELECT id, emoji, category, title, description, amount, currency, date, type, isIncome, tags, sync_id, last_modified, repeat_interval, parent_reminder_id, split_info, payload_checksum, excluded_from_insights, edit_version FROM transactions WHERE sync_id = ? LIMIT 1;"
                 var statement: OpaquePointer?
                 var result: Transaction?
                 if sqlite3_prepare_v2(self.db, query, -1, &statement, nil) == SQLITE_OK {

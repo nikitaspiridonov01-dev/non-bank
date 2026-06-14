@@ -114,6 +114,20 @@ enum ShareIntentClassifier {
                storedChecksum == payload.checksum {
                 return .identical(existingID: existing.id)
             }
+            // Monotonic version guard: never apply an incoming edit that
+            // isn't strictly newer than the local copy. Defends against
+            // out-of-order / stale-link / replayed delivery clobbering a
+            // fresher local (or already-synced) version — and resolves a
+            // same-version concurrent edit deterministically in favour of
+            // the local copy (the server applies the same first-writer-wins
+            // rule, so the two converge). `ev == nil` is a legacy payload
+            // with no version info: fall through to the normal update
+            // prompt (pre-sync behavior). `.identical` here means "nothing
+            // newer to apply — just navigate to what we already have".
+            if let incomingVersion = payload.ev,
+               incomingVersion <= existing.editVersion {
+                return .identical(existingID: existing.id)
+            }
             return .updatePrompt(existingID: existing.id, knownParticipantIndex: knownIndex)
         }
 

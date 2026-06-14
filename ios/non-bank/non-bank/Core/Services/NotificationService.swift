@@ -1,5 +1,6 @@
 import Foundation
 import UserNotifications
+import UIKit
 
 /// Local-notification scheduling for future-dated and recurring transactions.
 ///
@@ -20,9 +21,17 @@ enum NotificationService {
     // MARK: - Authorization
 
     /// Request permission once at app start; hooks in `MainTabView.onAppear`.
+    /// On grant, also register for remote (APNs) push so server-synced
+    /// shared expenses can nudge the recipient immediately — the device
+    /// token arrives in `AppDelegate` and is forwarded to the backend.
     static func requestAuthorization() {
         UNUserNotificationCenter.current()
-            .requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+            .requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+                guard granted else { return }
+                DispatchQueue.main.async {
+                    UIApplication.shared.registerForRemoteNotifications()
+                }
+            }
     }
 
     // MARK: - Public API

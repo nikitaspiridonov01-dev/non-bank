@@ -167,4 +167,32 @@ enum SyncDeliveryService {
             return false
         }
     }
+
+    // MARK: - Push token registration (P3)
+
+    private struct RegisterTokenBody: Encodable {
+        let user_id: String
+        let token: String
+        let env: String
+    }
+
+    /// POST /v1/sync/register-token — register this device's APNs token so
+    /// the server can push when a delivery lands. `env` is "sandbox" for
+    /// Xcode dev builds, "production" for TestFlight / App Store. Best-effort.
+    @discardableResult
+    static func registerToken(userID: String, token: String, env: String) async -> Bool {
+        var req = URLRequest(url: syncEndpoint("register-token"))
+        req.httpMethod = "POST"
+        await attest(&req)
+        guard let httpBody = try? JSONEncoder().encode(
+            RegisterTokenBody(user_id: userID, token: token, env: env)
+        ) else { return false }
+        req.httpBody = httpBody
+        do {
+            let (_, response) = try await URLSession.shared.data(for: req)
+            return isOK(response)
+        } catch {
+            return false
+        }
+    }
 }

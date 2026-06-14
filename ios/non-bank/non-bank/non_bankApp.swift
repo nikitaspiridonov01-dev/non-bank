@@ -14,6 +14,10 @@ import FirebaseCore
 
 @main
 struct non_bankApp: App {
+    /// Bridges UIApplicationDelegate APNs device-token callbacks into the
+    /// SwiftUI lifecycle (P3 push). See `AppDelegate`.
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     @StateObject var currencyStore = CurrencyStore()
     @StateObject var router = NavigationRouter()
     @StateObject var syncManager = SyncManager()

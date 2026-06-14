@@ -68,6 +68,18 @@ class FriendStore: ObservableObject {
         Task {
             await repo.delete(id: friend.id)
             await syncManager?.pushFriend(friend, action: .delete)
+            // Server-sync (CC2): removing a PAIRED friend revokes the
+            // server pairing so future split transactions no longer
+            // auto-deliver in EITHER direction (the pairing is one symmetric
+            // row per pair). Best-effort — the local delete already
+            // happened; the recipient's own upload would also start getting
+            // 409 'pairing_inactive'. Locally, the friend is gone from
+            // `friends`, so this device also stops uploading to / decrypting
+            // from them.
+            if friend.isConnected {
+                let pairHMAC = SyncPairing.pairHMAC(UserIDService.currentID(), friend.id)
+                await SyncDeliveryService.revoke(pairHMAC: pairHMAC)
+            }
         }
         // `hadSplits` is true if the friend appears on any split-
         // mode transaction — useful for "are users deleting active

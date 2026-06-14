@@ -248,6 +248,14 @@ struct MainTabView: View {
                 }
                 Task { await syncManager.syncIfEnabled() }
             }
+            // Server-mediated split sync (independent of CloudKit). Wire the
+            // stores once, then pull this device's inbox so deliveries that
+            // arrived while we were away apply on open.
+            SyncEngine.shared.transactionStore = transactionStore
+            SyncEngine.shared.friendStore = friendStore
+            SyncEngine.shared.categoryStore = categoryStore
+            SyncEngine.shared.receiptItemStore = receiptItemStore
+            Task { await SyncEngine.shared.pullAndApply() }
             requestNotificationPermission()
             startSpawnTimer()
         }
@@ -274,6 +282,8 @@ struct MainTabView: View {
                 if SyncManager.isCloudKitEnabled {
                     Task { await syncManager.syncIfEnabled() }
                 }
+                // Pull server-sync deliveries on every foreground.
+                Task { await SyncEngine.shared.pullAndApply() }
                 // Check for new spawns every time the app becomes active
                 transactionStore.processRecurringSpawns()
                 startSpawnTimer()

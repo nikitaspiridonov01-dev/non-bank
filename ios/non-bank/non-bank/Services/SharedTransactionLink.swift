@@ -139,15 +139,18 @@ enum SharedTransactionLink {
     /// - Parameter category: the `Category` record matching
     ///   `transaction.category` — resolved by the caller because the
     ///   encoder is intentionally store-agnostic.
-    static func encode(
+    /// Build the wire payload for a split transaction WITHOUT encoding it
+    /// into a URL. Extracted from `encode` so the server-sync engine
+    /// (`SyncEngine`), which needs the payload object to encrypt and
+    /// deliver, reuses the exact same construction (including `ev`).
+    static func buildPayload(
         transaction: Transaction,
         sharerID: String,
         sharerName: String?,
         friends: [Friend],
         category: Category,
-        repeatInterval: RepeatInterval? = nil,
-        style: URLStyle = defaultURLStyle
-    ) throws -> URL {
+        repeatInterval: RepeatInterval? = nil
+    ) throws -> SharedTransactionPayload {
         guard let split = transaction.splitInfo else {
             throw SharedTransactionError.notASplitTransaction
         }
@@ -188,7 +191,7 @@ enum SharedTransactionLink {
         // `.byItems` back to `.byAmount` on its side — see the no-items
         // branch in that file.
 
-        let payload = SharedTransactionPayload(
+        return SharedTransactionPayload(
             v: currentSchemaVersion,
             id: transaction.syncID,
             s: sharerID,
@@ -207,7 +210,27 @@ enum SharedTransactionLink {
             r: recurring,
             ev: transaction.editVersion
         )
+    }
 
+    /// Build a share-link URL from a split transaction. Thin wrapper over
+    /// `buildPayload` + `buildURL`.
+    static func encode(
+        transaction: Transaction,
+        sharerID: String,
+        sharerName: String?,
+        friends: [Friend],
+        category: Category,
+        repeatInterval: RepeatInterval? = nil,
+        style: URLStyle = defaultURLStyle
+    ) throws -> URL {
+        let payload = try buildPayload(
+            transaction: transaction,
+            sharerID: sharerID,
+            sharerName: sharerName,
+            friends: friends,
+            category: category,
+            repeatInterval: repeatInterval
+        )
         return try buildURL(payload: payload, style: style)
     }
 

@@ -1,0 +1,258 @@
+import Foundation
+
+/// Server-mediated sync orchestrator (Phase 1). Glues the pieces built in
+/// A/B/C1 together:
+///   * UPLOAD — when a split transaction is saved/edited, push an
+///     encrypted delivery to every PAIRED participant (`SyncDeliveryService`
+///     + `SyncDeliveryCrypto`, addressed by `SyncPairing.pairHMAC`).
+///   * PULL  — on app foreground, fetch this device's inbox, decrypt each
+///     delivery (by trying each paired friend's key), apply it headlessly
+///     through the SAME pipeline the manual share-link import uses
+///     (`ShareIntentClassifier` + `ReceivedTransactionMapper`), then ack.
+///
+/// Weak store refs are wired in `MainTabView.onAppear` (mirroring
+/// `SyncManager`). Everything is best-effort and never blocks the UI: a
+/// transaction is always saved locally first, so a sync failure is a missed
+/// delivery (retried next foreground), never data loss.
+///
+/// Version safety: uploads carry `transaction.editVersion`; the server
+/// UPSERT and the recipient's `ShareIntentClassifier` both refuse to apply
+/// anything not strictly newer, so concurrent / out-of-order edits can't
+/// clobber a fresher copy (see Phase A/B).
+@MainActor
+final class SyncEngine {
+    static let shared = SyncEngine()
+
+    weak var transactionStore: TransactionStore?
+    weak var friendStore: FriendStore?
+    weak var categoryStore: CategoryStore?
+    weak var receiptItemStore: ReceiptItemStore?
+
+    /// Re-entrancy guard so overlapping foregrounds don't double-pull.
+    private var isPulling = false
+
+    private init() {}
+
+    // MARK: - Upload (sender side)
+
+    /// Push the given transaction to every paired participant. No-op for
+    /// non-split transactions or when no participant is a connected
+    /// (paired) friend. Fire-and-forget per recipient.
+    func uploadSplit(_ transaction: Transaction) {
+        guard transaction.splitInfo != nil,
+              let friendStore, let categoryStore else { return }
+
+        let myID = UserIDService.currentID()
+        let myName = UserProfileService.displayName()
+        guard let category = categoryStore.categories.first(where: { $0.title == transaction.category })
+        else { return }
+
+        // Build the payload once (sharer perspective). payload.f carries
+        // every participant by id, so a paired recipient finds themselves
+        // by their userID on the other side.
+        guard let payload = try? SharedTransactionLink.buildPayload(
+            transaction: transaction,
+            sharerID: myID,
+            sharerName: myName,
+            friends: friendStore.friends,
+            category: category
+        ) else { return }
+
+        let pairedRecipients = (transaction.splitInfo?.friends ?? []).compactMap { share -> Friend? in
+            guard let f = friendStore.friends.first(where: { $0.id == share.friendID }),
+                  f.isConnected, f.id != myID else { return nil }
+            return f
+        }
+        guard !pairedRecipients.isEmpty else { return }
+
+        for recipient in pairedRecipients {
+            let pairHMAC = SyncPairing.pairHMAC(myID, recipient.id)
+            guard let cipher = try? SyncDeliveryCrypto.encrypt(payload, myID: myID, peerID: recipient.id)
+            else { continue }
+            let recipientID = recipient.id
+            let syncID = transaction.syncID
+            let version = transaction.editVersion
+            let checksum = payload.checksum
+            Task.detached {
+                await SyncDeliveryService.upload(
+                    pairHMAC: pairHMAC, recipientID: recipientID, txSyncID: syncID,
+                    version: version, op: "upsert", payloadCiphertext: cipher, checksum: checksum
+                )
+            }
+        }
+    }
+
+    /// Tell paired participants to delete their copy (tombstone). Called
+    /// when the user deletes a shared split transaction. Best-effort.
+    func uploadDelete(syncID: String, participantIDs: [String]) {
+        guard let friendStore else { return }
+        let myID = UserIDService.currentID()
+        let recipients = participantIDs.compactMap { id -> Friend? in
+            guard let f = friendStore.friends.first(where: { $0.id == id }),
+                  f.isConnected, f.id != myID else { return nil }
+            return f
+        }
+        for recipient in recipients {
+            let pairHMAC = SyncPairing.pairHMAC(myID, recipient.id)
+            let recipientID = recipient.id
+            Task.detached {
+                await SyncDeliveryService.upload(
+                    pairHMAC: pairHMAC, recipientID: recipientID, txSyncID: syncID,
+                    // A high version keeps the tombstone monotonic vs the
+                    // last edit the recipient saw; the server still guards
+                    // with `>` so a replayed older op can't resurrect it.
+                    version: Int.max, op: "delete", payloadCiphertext: "", checksum: nil
+                )
+            }
+        }
+    }
+
+    // MARK: - Pull + apply (recipient side)
+
+    /// Fetch + apply this device's inbox, then ack what we applied. Safe to
+    /// call on every foreground; guarded against overlap.
+    func pullAndApply() async {
+        guard !isPulling else { return }
+        guard let transactionStore, let friendStore,
+              let categoryStore, let receiptItemStore else { return }
+        isPulling = true
+        defer { isPulling = false }
+
+        let myID = UserIDService.currentID()
+        let deliveries = await SyncDeliveryService.fetchInbox(recipientID: myID)
+        guard !deliveries.isEmpty else { return }
+
+        // Candidate senders: our connected (paired) friends. We don't know
+        // the sender id from the row, so we try each one's key — the
+        // AES-GCM tag authenticates exactly the right one.
+        let pairedFriends = friendStore.friends.filter { $0.isConnected }
+        var acks: [(txSyncID: String, version: Int)] = []
+
+        for delivery in deliveries {
+            if delivery.op == "delete" {
+                if let existing = transactionStore.transactions.first(where: { $0.syncID == delivery.tx_sync_id }) {
+                    transactionStore.delete(id: existing.id)
+                }
+                acks.append((delivery.tx_sync_id, delivery.version))
+                continue
+            }
+
+            var payload: SharedTransactionPayload?
+            for friend in pairedFriends {
+                if let decoded = SyncDeliveryCrypto.tryDecrypt(
+                    base64: delivery.payload, myID: myID, candidatePeerID: friend.id
+                ) {
+                    payload = decoded
+                    break
+                }
+            }
+            // Couldn't decrypt with any paired friend's key — likely the
+            // sender was removed locally. Leave it un-acked; it TTLs out
+            // server-side. (Don't ack what we didn't apply.)
+            guard let payload else { continue }
+
+            let intent = ShareIntentClassifier.classify(
+                payload: payload,
+                receiverID: myID,
+                existingTransactions: transactionStore.transactions,
+                checksumOf: { $0.payloadChecksum }
+            )
+
+            switch intent {
+            case .identical:
+                // Already have this (or an equal/newer version via the
+                // version guard) — nothing to apply, just ack.
+                acks.append((delivery.tx_sync_id, delivery.version))
+            case .createAuto(let index):
+                if await applyHeadless(payload: payload, index: index, existingID: nil, isUpdate: false,
+                                       transactionStore: transactionStore, friendStore: friendStore,
+                                       categoryStore: categoryStore, receiptItemStore: receiptItemStore) {
+                    acks.append((delivery.tx_sync_id, delivery.version))
+                }
+            case .updatePrompt(let existingID, let knownIndex):
+                // Synced deliveries always identify the receiver by userID,
+                // so knownIndex is set; apply directly. If it's somehow nil
+                // (ambiguous), skip + leave un-acked rather than guess.
+                if let index = knownIndex,
+                   await applyHeadless(payload: payload, index: index, existingID: existingID, isUpdate: true,
+                                       transactionStore: transactionStore, friendStore: friendStore,
+                                       categoryStore: categoryStore, receiptItemStore: receiptItemStore) {
+                    acks.append((delivery.tx_sync_id, delivery.version))
+                }
+            case .createWithPicker, .malformed:
+                // Can't resolve headlessly; leave un-acked.
+                break
+            }
+        }
+
+        await SyncDeliveryService.ack(recipientID: myID, acks: acks)
+    }
+
+    /// Headless apply — the non-UI sibling of
+    /// `ShareLinkCoordinator.pickedParticipant`. Reuses the same mapper +
+    /// store writes, minus the routing state, the picker, and the separate
+    /// share-items channel (synced deliveries carry only the financial
+    /// summary; a `.byItems` split degrades to `.byAmount` on apply, the
+    /// mapper's documented no-items fallback). Returns whether it applied.
+    private func applyHeadless(
+        payload: SharedTransactionPayload,
+        index: Int,
+        existingID: Int?,
+        isUpdate: Bool,
+        transactionStore: TransactionStore,
+        friendStore: FriendStore,
+        categoryStore: CategoryStore,
+        receiptItemStore: ReceiptItemStore
+    ) async -> Bool {
+        // Phantom-upgrade pass (update path only) — mirror the coordinator
+        // so a manually-added contact gets unified with the real userID.
+        if isUpdate, let txID = existingID,
+           let existing = transactionStore.transactions.first(where: { $0.id == txID }),
+           let split = existing.splitInfo {
+            if let upgrade = PhantomFriendUpgradeDetector.detectUpgrade(
+                oldFriendIDsInTransaction: Set(split.friends.map(\.friendID)),
+                newPayloadParticipantIDs: payload.f.map(\.id),
+                receiverID: UserIDService.currentID(),
+                sharerID: payload.s
+            ) {
+                await friendStore.upgradePhantom(phantomID: upgrade.phantomID, realID: upgrade.realID)
+                await transactionStore.upgradePhantomFriendID(from: upgrade.phantomID, to: upgrade.realID)
+            }
+        }
+
+        let existingTx: Transaction? = isUpdate
+            ? transactionStore.transactions.first(where: { $0.id == existingID })
+            : nil
+        let receiverHasLocalItems: Bool = {
+            guard let txID = existingTx?.id else { return false }
+            return !receiptItemStore.items(forTransactionID: txID).isEmpty
+        }()
+
+        do {
+            let resolved = try ReceivedTransactionMapper.map(
+                payload: payload,
+                receiverParticipantIndex: index,
+                existingFriends: friendStore.friends,
+                existingCategories: categoryStore.categories,
+                nextTransactionID: existingID ?? 0,
+                existingTransaction: existingTx,
+                receiverHasLocalItemsForTx: receiverHasLocalItems,
+                payloadCameWithItems: false
+            )
+            for friend in resolved.newFriends {
+                await friendStore.add(friend)
+            }
+            if let cat = resolved.newCategory {
+                categoryStore.addCategory(cat)
+            }
+            if isUpdate {
+                await transactionStore.updateAndWait(resolved.transaction)
+            } else {
+                _ = await transactionStore.addAndReturnID(resolved.transaction)
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+}

@@ -564,6 +564,11 @@ struct CreateTransactionModal: View {
         // animation window where the toolbar ✓ is still hit-testable.
 
         if editingTransaction != nil {
+            // Server-sync: a real edit bumps the monotonic edit version so
+            // paired friends apply it over their copy (and the version guard
+            // rejects any staler delivery). The rebuilt tx started at 0, so
+            // carry the existing row's version + 1.
+            tx = tx.settingEditVersion((editingTransaction?.editVersion ?? 0) + 1)
             transactionStore.update(tx)
             // For an in-place edit we already know the row id, so save items
             // immediately if a fresh scan happened during this edit.
@@ -573,6 +578,7 @@ struct CreateTransactionModal: View {
                 }
             }
             trackTransactionSaved(tx, isEdit: true)
+            SyncEngine.shared.uploadSplit(tx)
             dismiss()
             return
         }
@@ -583,6 +589,7 @@ struct CreateTransactionModal: View {
             // blocks; dismiss immediately.
             transactionStore.add(tx)
             trackTransactionSaved(tx, isEdit: false)
+            SyncEngine.shared.uploadSplit(tx)
             dismiss()
             promptShareIfSplit(tx)
             return
@@ -602,6 +609,7 @@ struct CreateTransactionModal: View {
         trackTransactionSaved(tx, isEdit: false)
         dismiss()
         promptShareIfSplit(tx)
+        SyncEngine.shared.uploadSplit(tx)
         Task {
             if let newID = await transactionStore.addAndReturnID(tx) {
                 await receiptItemStore.saveItems(pendingItems, for: newID)

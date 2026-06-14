@@ -225,6 +225,33 @@ struct Transaction: Identifiable, Codable, Equatable {
         )
     }
 
+    /// Returns a copy with `editVersion` set to an explicit value (and
+    /// `lastModified` bumped). Used by the edit path, where the freshly
+    /// rebuilt transaction starts at version 0 but must carry the existing
+    /// row's version + 1 so paired friends order this edit correctly.
+    func settingEditVersion(_ version: Int) -> Transaction {
+        Transaction(
+            id: id,
+            syncID: syncID,
+            emoji: emoji,
+            category: category,
+            title: title,
+            description: description,
+            amount: amount,
+            currency: currency,
+            date: date,
+            type: type,
+            tags: tags,
+            lastModified: Date(),
+            repeatInterval: repeatInterval,
+            parentReminderID: parentReminderID,
+            splitInfo: splitInfo,
+            payloadChecksum: payloadChecksum,
+            excludedFromInsights: excludedFromInsights,
+            editVersion: version
+        )
+    }
+
     /// The amount to render as the primary number in transaction rows
     /// and cards on home / reminders / category lists. For split
     /// transactions in include-potential mode, this is `myShare` —

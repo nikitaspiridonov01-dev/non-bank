@@ -613,6 +613,11 @@ struct CreateTransactionModal: View {
         Task {
             if let newID = await transactionStore.addAndReturnID(tx) {
                 await receiptItemStore.saveItems(pendingItems, for: newID)
+                // Items only exist under the real id after this save — push
+                // them to the share-items channel now so a paired recipient
+                // gets the byItems breakdown (uploadSplit above ran before
+                // the items were persisted).
+                SyncEngine.shared.uploadItemsIfNeeded(tx.withID(newID))
             }
         }
     }

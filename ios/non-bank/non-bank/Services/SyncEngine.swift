@@ -80,6 +80,43 @@ final class SyncEngine {
                 )
             }
         }
+
+        // byItems carries its receipt items over the SAME encrypted
+        // share-items channel the manual share uses (keyed by the payload
+        // checksum), so a synced byItems split stays byItems on the other
+        // side instead of degrading to byAmount.
+        uploadItemsIfNeeded(transaction)
+    }
+
+    /// Upload a byItems transaction's receipt items to the share-items
+    /// channel keyed by the current payload checksum, so a paired recipient
+    /// can reconstruct the per-item split. No-op for non-byItems / when the
+    /// store has no items for this tx. Idempotent (UPSERT). Re-uploaded on
+    /// every edit because the checksum changes with the content.
+    func uploadItemsIfNeeded(_ transaction: Transaction) {
+        guard transaction.splitInfo?.splitMode == .byItems,
+              let receiptItemStore, let friendStore, let categoryStore else { return }
+        let items = receiptItemStore.items(forTransactionID: transaction.id)
+        guard !items.isEmpty else { return }
+        let myID = UserIDService.currentID()
+        guard let category = categoryStore.categories.first(where: { $0.title == transaction.category }),
+              let payload = try? SharedTransactionLink.buildPayload(
+                transaction: transaction, sharerID: myID,
+                sharerName: UserProfileService.displayName(),
+                friends: friendStore.friends, category: category),
+              let url = try? SharedTransactionLink.buildURL(payload: payload),
+              let urlPayload = SharedTransactionLink.urlPayloadString(of: url)
+        else { return }
+        let shareID = payload.checksum
+        Task {
+            do {
+                let cipher = try ShareItemsCrypto.encryptItems(items, urlPayload: urlPayload)
+                try await ShareItemsService.shared.upload(shareID: shareID, ciphertextBase64: cipher)
+            } catch {
+                // Best-effort — if this fails the recipient simply degrades
+                // to byAmount for now and re-syncs on the next edit.
+            }
+        }
     }
 
     /// Tell paired participants to delete their copy (tombstone). Called
@@ -228,6 +265,20 @@ final class SyncEngine {
             return !receiptItemStore.items(forTransactionID: txID).isEmpty
         }()
 
+        // Fetch the byItems receipt items from the share-items channel, the
+        // same one the manual import uses (keyed by the payload checksum).
+        // A byItems split degrades to byAmount ONLY when the channel has
+        // nothing / can't be decrypted — never by default.
+        var fetchedItems: [ReceiptItem] = []
+        if payload.sm == SplitMode.byItems.rawValue,
+           let url = try? SharedTransactionLink.buildURL(payload: payload),
+           let urlPayload = SharedTransactionLink.urlPayloadString(of: url),
+           let base64 = try? await ShareItemsService.shared.fetch(shareID: payload.checksum),
+           let decrypted = try? ShareItemsCrypto.decryptItems(base64: base64, urlPayload: urlPayload) {
+            fetchedItems = decrypted
+        }
+        let itemsCameFromShare = !fetchedItems.isEmpty
+
         do {
             let resolved = try ReceivedTransactionMapper.map(
                 payload: payload,
@@ -237,7 +288,7 @@ final class SyncEngine {
                 nextTransactionID: existingID ?? 0,
                 existingTransaction: existingTx,
                 receiverHasLocalItemsForTx: receiverHasLocalItems,
-                payloadCameWithItems: false
+                payloadCameWithItems: itemsCameFromShare
             )
             for friend in resolved.newFriends {
                 await friendStore.add(friend)
@@ -245,12 +296,23 @@ final class SyncEngine {
             if let cat = resolved.newCategory {
                 categoryStore.addCategory(cat)
             }
+            let appliedTxID: Int?
             if isUpdate {
                 await transactionStore.updateAndWait(resolved.transaction)
+                appliedTxID = existingID
             } else {
-                _ = await transactionStore.addAndReturnID(resolved.transaction)
+                appliedTxID = await transactionStore.addAndReturnID(resolved.transaction)
             }
-            return true
+            // Persist the synced items under the applied tx, rewriting
+            // assignees from the sender's identity space into ours (same
+            // helper the manual import uses).
+            if itemsCameFromShare, let txID = appliedTxID {
+                let rewritten = ReceivedTransactionMapper.rewriteItemAssignees(
+                    items: fetchedItems, payload: payload, receiverParticipantIndex: index
+                )
+                await receiptItemStore.saveItems(rewritten, for: txID)
+            }
+            return appliedTxID != nil
         } catch {
             return false
         }

@@ -260,4 +260,95 @@ final class ShareIntentClassifierTests: XCTestCase {
         )
         XCTAssertEqual(intent, .malformed)
     }
+
+    // MARK: - Monotonic version guard (concurrent-edit collisions)
+
+    /// Build a payload carrying an explicit edit version `ev`. Checksum
+    /// will differ from any stored checksum the tests inject, so the
+    /// classifier reaches the version comparison (not the identical-
+    /// checksum short-circuit).
+    private func makeVersionedPayload(ev: Int?) -> SharedTransactionPayload {
+        SharedTransactionPayload(
+            v: 1, id: "tx-ver", s: "sharer-A1B2",
+            ta: 20, pa: 20, ms: 10, c: "EUR", d: 1_700_000_000, k: "exp",
+            t: "Test", cn: "Food", ce: "🍕", sm: nil, sn: nil,
+            f: [.init(id: "friend-0", n: "Friend 0", sh: 10, pa: 0)],
+            r: nil, ev: ev
+        )
+    }
+
+    private func makeStored(editVersion: Int) -> Transaction {
+        Transaction(
+            id: 7, syncID: "tx-ver",
+            emoji: "🍕", category: "Food", title: "Stored",
+            description: nil, amount: 10, currency: "EUR",
+            date: Date(timeIntervalSince1970: 1_700_000_000),
+            type: .expenses, tags: nil, editVersion: editVersion
+        )
+    }
+
+    /// S3 — out-of-order / stale delivery: an OLDER edit must NOT overwrite
+    /// a newer local copy. Classified as `.identical` (no apply).
+    func testVersionGuard_olderIncoming_isIdentical() {
+        let payload = makeVersionedPayload(ev: 3)
+        let stored = makeStored(editVersion: 5)
+        let intent = ShareIntentClassifier.classify(
+            payload: payload, receiverID: receiverID,
+            existingTransactions: [stored],
+            checksumOf: { _ in "different-from-incoming" }
+        )
+        XCTAssertEqual(intent, .identical(existingID: 7))
+    }
+
+    /// S2 — concurrent edit at the SAME version: local wins (deterministic,
+    /// matches the server's first-writer-wins). `.identical`, no apply.
+    func testVersionGuard_equalVersion_isIdentical() {
+        let payload = makeVersionedPayload(ev: 3)
+        let stored = makeStored(editVersion: 3)
+        let intent = ShareIntentClassifier.classify(
+            payload: payload, receiverID: receiverID,
+            existingTransactions: [stored],
+            checksumOf: { _ in "different-from-incoming" }
+        )
+        XCTAssertEqual(intent, .identical(existingID: 7))
+    }
+
+    /// A strictly-newer edit applies (update prompt).
+    func testVersionGuard_newerIncoming_isUpdatePrompt() {
+        let payload = makeVersionedPayload(ev: 4)
+        let stored = makeStored(editVersion: 3)
+        let intent = ShareIntentClassifier.classify(
+            payload: payload, receiverID: receiverID,
+            existingTransactions: [stored],
+            checksumOf: { _ in "different-from-incoming" }
+        )
+        XCTAssertEqual(intent, .updatePrompt(existingID: 7, knownParticipantIndex: nil))
+    }
+
+    /// Legacy payload with no version info (`ev == nil`) falls back to the
+    /// pre-sync checksum-only behavior — a checksum mismatch is an update
+    /// prompt, not silently dropped.
+    func testVersionGuard_legacyNilVersion_isUpdatePrompt() {
+        let payload = makeVersionedPayload(ev: nil)
+        let stored = makeStored(editVersion: 3)
+        let intent = ShareIntentClassifier.classify(
+            payload: payload, receiverID: receiverID,
+            existingTransactions: [stored],
+            checksumOf: { _ in "different-from-incoming" }
+        )
+        XCTAssertEqual(intent, .updatePrompt(existingID: 7, knownParticipantIndex: nil))
+    }
+
+    /// An identical checksum is still `.identical` regardless of version —
+    /// the byte-for-byte short-circuit runs before the version compare.
+    func testVersionGuard_identicalChecksum_shortCircuitsToIdentical() {
+        let payload = makeVersionedPayload(ev: 99)
+        let stored = makeStored(editVersion: 1)
+        let intent = ShareIntentClassifier.classify(
+            payload: payload, receiverID: receiverID,
+            existingTransactions: [stored],
+            checksumOf: { _ in payload.checksum }
+        )
+        XCTAssertEqual(intent, .identical(existingID: 7))
+    }
 }

@@ -255,6 +255,14 @@ struct MainTabView: View {
             SyncEngine.shared.friendStore = friendStore
             SyncEngine.shared.categoryStore = categoryStore
             SyncEngine.shared.receiptItemStore = receiptItemStore
+            // Manual-share fallback: if an auto-upload to a PAIRED friend
+            // fails (offline / server error), surface the share prompt so the
+            // user can still get the split to them via the link. Skipped when
+            // a prompt is already up (e.g. a first-share nudge).
+            SyncEngine.shared.onUploadFailure = { [weak router] syncID in
+                guard let router, router.pendingSplitShareSyncID == nil else { return }
+                router.promptSplitShare(syncID: syncID)
+            }
             Task { await SyncEngine.shared.pullAndApply() }
             requestNotificationPermission()
             startSpawnTimer()

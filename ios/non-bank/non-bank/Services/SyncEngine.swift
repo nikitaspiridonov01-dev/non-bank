@@ -28,6 +28,13 @@ final class SyncEngine {
     weak var categoryStore: CategoryStore?
     weak var receiptItemStore: ReceiptItemStore?
 
+    /// Invoked on the main actor with a transaction's syncID when an
+    /// auto-upload to a PAIRED recipient fails (offline / server error), so
+    /// the UI can offer the manual share link as a fallback. Wired in
+    /// `MainTabView`; uploads are only ever triggered by a user save/edit,
+    /// so this fires in a context where a share prompt is appropriate.
+    var onUploadFailure: ((String) -> Void)?
+
     /// Re-entrancy guard so overlapping foregrounds don't double-pull.
     private var isPulling = false
 
@@ -65,35 +72,57 @@ final class SyncEngine {
         }
         guard !pairedRecipients.isEmpty else { return }
 
-        for recipient in pairedRecipients {
-            let pairHMAC = SyncPairing.pairHMAC(myID, recipient.id)
-            guard let cipher = try? SyncDeliveryCrypto.encrypt(payload, myID: myID, peerID: recipient.id)
-            else { continue }
-            let recipientID = recipient.id
-            let syncID = transaction.syncID
-            let version = transaction.editVersion
-            let checksum = payload.checksum
-            Task.detached {
-                await SyncDeliveryService.upload(
-                    pairHMAC: pairHMAC, recipientID: recipientID, txSyncID: syncID,
-                    version: version, op: "upsert", payloadCiphertext: cipher, checksum: checksum
-                )
+        // ORDERING (race fix): a byItems split carries its receipt items over
+        // a SEPARATE share-items channel keyed by the payload checksum. The
+        // delivery (and its push) must NOT outrun the items — if it does, the
+        // recipient's headless fetch 404s, `itemsCameFromShare` is false, and
+        // the split degrades byItems→byAmount. So await the items upload FIRST
+        // inside one Task, then fan the deliveries out concurrently. For
+        // non-byItems splits `uploadItems` returns immediately (no latency).
+        let recipientIDs = pairedRecipients.map(\.id)
+        let syncID = transaction.syncID
+        let version = transaction.editVersion
+        let checksum = payload.checksum
+        Task {
+            // 1. Items first — block deliveries until they're in place.
+            await self.uploadItems(transaction)
+            // 2. Deliveries — fan out concurrently now that the items are
+            //    fetchable the moment a delivery lands.
+            for recipientID in recipientIDs {
+                let pairHMAC = SyncPairing.pairHMAC(myID, recipientID)
+                guard let cipher = try? SyncDeliveryCrypto.encrypt(payload, myID: myID, peerID: recipientID)
+                else { continue }
+                Task.detached {
+                    let ok = await SyncDeliveryService.upload(
+                        pairHMAC: pairHMAC, recipientID: recipientID, txSyncID: syncID,
+                        version: version, op: "upsert", payloadCiphertext: cipher, checksum: checksum
+                    )
+                    if !ok {
+                        // Offline / server error reaching a paired friend — let
+                        // the UI offer the manual share link as a fallback.
+                        await MainActor.run { SyncEngine.shared.onUploadFailure?(syncID) }
+                    }
+                }
             }
         }
+    }
 
-        // byItems carries its receipt items over the SAME encrypted
-        // share-items channel the manual share uses (keyed by the payload
-        // checksum), so a synced byItems split stays byItems on the other
-        // side instead of degrading to byAmount.
-        uploadItemsIfNeeded(transaction)
+    /// Fire-and-forget wrapper around `uploadItems`. Kept for the
+    /// `CreateTransactionModal` new-tx-with-receipt-scan path, which only
+    /// learns the autoincrement transaction id (and so can link / upload its
+    /// items) AFTER `uploadSplit` has already run — it tops up the
+    /// share-items channel out-of-band there.
+    func uploadItemsIfNeeded(_ transaction: Transaction) {
+        Task { await uploadItems(transaction) }
     }
 
     /// Upload a byItems transaction's receipt items to the share-items
     /// channel keyed by the current payload checksum, so a paired recipient
     /// can reconstruct the per-item split. No-op for non-byItems / when the
     /// store has no items for this tx. Idempotent (UPSERT). Re-uploaded on
-    /// every edit because the checksum changes with the content.
-    func uploadItemsIfNeeded(_ transaction: Transaction) {
+    /// every edit because the checksum changes with the content. `async` so
+    /// the upload flow can AWAIT it before sending deliveries (race fix).
+    func uploadItems(_ transaction: Transaction) async {
         guard transaction.splitInfo?.splitMode == .byItems,
               let receiptItemStore, let friendStore, let categoryStore else { return }
         let items = receiptItemStore.items(forTransactionID: transaction.id)
@@ -108,14 +137,12 @@ final class SyncEngine {
               let urlPayload = SharedTransactionLink.urlPayloadString(of: url)
         else { return }
         let shareID = payload.checksum
-        Task {
-            do {
-                let cipher = try ShareItemsCrypto.encryptItems(items, urlPayload: urlPayload)
-                try await ShareItemsService.shared.upload(shareID: shareID, ciphertextBase64: cipher)
-            } catch {
-                // Best-effort — if this fails the recipient simply degrades
-                // to byAmount for now and re-syncs on the next edit.
-            }
+        do {
+            let cipher = try ShareItemsCrypto.encryptItems(items, urlPayload: urlPayload)
+            try await ShareItemsService.shared.upload(shareID: shareID, ciphertextBase64: cipher)
+        } catch {
+            // Best-effort — if this fails the recipient simply degrades
+            // to byAmount for now and re-syncs on the next edit.
         }
     }
 
@@ -310,6 +337,14 @@ final class SyncEngine {
             return !receiptItemStore.items(forTransactionID: txID).isEmpty
         }()
 
+        // Did the SHARER change content on this update? The recipient persists
+        // `payloadChecksum` alongside the tx, so a mismatch vs the incoming
+        // payload's checksum means the items the recipient already holds belong
+        // to a STALE (previous) payload. First-time imports (no existingTx) and
+        // unchanged re-shares (equal checksums) are NOT content changes.
+        let payloadChecksumChanged = existingTx != nil
+            && existingTx?.payloadChecksum != payload.checksum
+
         // Fetch the byItems receipt items from the share-items channel, the
         // same one the manual import uses (keyed by the payload checksum).
         // A byItems split degrades to byAmount ONLY when the channel has
@@ -324,7 +359,27 @@ final class SyncEngine {
         }
         let itemsCameFromShare = !fetchedItems.isEmpty
 
+        // STALE-ITEMS guard: on a CHANGED-checksum byItems update where THIS
+        // payload's items didn't arrive (fetch 404'd / raced / failed to
+        // decrypt), the recipient still holds the OLD checksum's items. Applying
+        // now would keep stale items on screen or silently degrade to byAmount.
+        // Bail WITHOUT acking: the delivery stays in the inbox and the next
+        // natural pull retries once the sharer's items propagate (no busy-loop —
+        // bounded by the pull cadence + the server-side delivery TTL).
+        if payload.sm == SplitMode.byItems.rawValue,
+           payloadChecksumChanged, !itemsCameFromShare {
+            return false
+        }
+
         do {
+            // Decouple "has old local items" from "items for THIS payload are
+            // usable": for a CHANGED-checksum update the local items are stale
+            // and must NOT prop up the items-aware splitMode decision — only
+            // freshly-fetched items do. (We already returned above when a
+            // changed update brought no items, so reaching here on a changed
+            // update implies itemsCameFromShare == true.) First imports and
+            // unchanged re-shares keep trusting local items as before.
+            let localItemsUsable = receiverHasLocalItems && !payloadChecksumChanged
             let resolved = try ReceivedTransactionMapper.map(
                 payload: payload,
                 receiverParticipantIndex: index,
@@ -332,7 +387,7 @@ final class SyncEngine {
                 existingCategories: categoryStore.categories,
                 nextTransactionID: existingID ?? 0,
                 existingTransaction: existingTx,
-                receiverHasLocalItemsForTx: receiverHasLocalItems,
+                receiverHasLocalItemsForTx: localItemsUsable,
                 payloadCameWithItems: itemsCameFromShare
             )
             for friend in resolved.newFriends {

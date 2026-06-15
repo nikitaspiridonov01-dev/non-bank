@@ -436,7 +436,11 @@ class SyncManager: ObservableObject {
                                     parentReminderID: remoteTx.parentReminderID,
                                     splitInfo: remoteTx.splitInfo,
                                     payloadChecksum: remoteTx.payloadChecksum,
-                                    excludedFromInsights: remoteTx.excludedFromInsights
+                                    excludedFromInsights: remoteTx.excludedFromInsights,
+                                    // Keep the highest split-sync version across the merge:
+                                    // a peer that hasn't learned this field yet sends 0 and
+                                    // must never reset a higher local version.
+                                    editVersion: max(localTx.editVersion, remoteTx.editVersion)
                                 )
                                 await db.updateTransaction(updated)
                             }
@@ -544,7 +548,11 @@ class SyncManager: ObservableObject {
                         parentReminderID: remoteTx.parentReminderID,
                         splitInfo: remoteTx.splitInfo,
                         payloadChecksum: remoteTx.payloadChecksum,
-                        excludedFromInsights: remoteTx.excludedFromInsights
+                        excludedFromInsights: remoteTx.excludedFromInsights,
+                        // Keep the highest split-sync version across the merge:
+                        // a peer that hasn't learned this field yet sends 0 and
+                        // must never reset a higher local version.
+                        editVersion: max(localTx.editVersion, remoteTx.editVersion)
                     )
                     toUpdateLocally.append(updated)
                 } else if localTx.lastModified > remoteTx.lastModified {

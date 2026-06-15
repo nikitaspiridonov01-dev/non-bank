@@ -51,19 +51,6 @@ struct ShareSplitPromptSheet: View {
         categoryStore.categories.first(where: { $0.title == transaction.category })
     }
 
-    /// True when at least one participant isn't a connected (paired)
-    /// friend yet — i.e. this is (likely) a FIRST share to them. Drives an
-    /// additive first-share hint that explains opening the link in-app
-    /// pairs them for automatic future sync. Suppressed once everyone is
-    /// paired (re-shares stay on the existing copy).
-    private var hasUnpairedParticipant: Bool {
-        guard let split = transaction.splitInfo else { return false }
-        return split.friends.contains { share in
-            let friend = friendStore.friends.first(where: { $0.id == share.friendID })
-            return !(friend?.isConnected ?? false)
-        }
-    }
-
     private func buildShareURL() -> URL? {
         guard let category = resolvedCategory else { return nil }
         return try? SharedTransactionLink.encode(
@@ -146,33 +133,19 @@ struct ShareSplitPromptSheet: View {
                     .font(AppFonts.displayMedium)
                     .foregroundColor(AppColors.textPrimary)
 
-                Text("Send it so friends always have the latest version.")
-                    .font(AppFonts.bodyRegular)
-                    .foregroundColor(AppColors.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, AppSpacing.lg)
-
-                // First-share hint: appears only while a participant isn't
-                // paired yet. Additive — the existing copy + the system
-                // share-sheet text are untouched.
-                if hasUnpairedParticipant {
-                    HStack(alignment: .top, spacing: AppSpacing.sm) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(AppFonts.bodySmallEmphasized)
-                            .foregroundColor(AppColors.splitAccent)
-                        Text("When they open it in non-bank, future changes sync automatically.")
-                            .font(AppFonts.bodySmallRegular)
-                            .foregroundColor(AppColors.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(AppSpacing.md)
-                    .background(
-                        RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
-                            .fill(AppColors.splitCardFill)
-                    )
-                    .padding(.horizontal, AppSpacing.lg)
+                // One compact supporting line — "friends get the latest" and
+                // "future edits sync once they open it in non-bank" merged
+                // into a single block. Arrows icon kept; no card background.
+                HStack(alignment: .top, spacing: AppSpacing.sm) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(AppFonts.bodyEmphasized)
+                        .foregroundColor(AppColors.splitAccent)
+                    Text("Send it so friends have the latest — and future changes sync once they open it in non-bank.")
+                        .font(AppFonts.bodyRegular)
+                        .foregroundColor(AppColors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .padding(.horizontal, AppSpacing.lg)
             }
 
             VStack(spacing: AppSpacing.sm) {

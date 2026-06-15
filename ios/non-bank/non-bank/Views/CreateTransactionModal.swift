@@ -535,13 +535,17 @@ struct CreateTransactionModal: View {
             return
         }
 
-        // Reuse a stable `syncID` across any re-commit of this same logical
+        // syncID is the stable cross-device identity. For a NEW transaction
+        // reuse one `inFlightSyncID` across any re-commit of this same logical
         // save so the store's syncID dedup collapses a double-commit to one
-        // row instead of two diverging ids. Editing keeps the existing
-        // transaction's identity untouched (build resolves it from the row).
+        // row. For an EDIT we MUST carry the existing transaction's syncID
+        // forward — `buildTransaction` mints a fresh UUID when this is nil, so
+        // leaving it nil rotated the syncID on every edit: locally masked (the
+        // store updates by `id`), but each sync upload then carried a brand-new
+        // syncID, so paired friends saw a DUPLICATE instead of an update.
         let saveSyncID: String? = editingTransaction == nil
             ? { let id = inFlightSyncID ?? UUID().uuidString; inFlightSyncID = id; return id }()
-            : nil
+            : editingTransaction?.syncID
         guard var tx = vm.buildTransaction(
             editingId: editingTransaction?.id,
             syncID: saveSyncID
@@ -630,6 +634,15 @@ struct CreateTransactionModal: View {
     /// times within one commit because the activation/feature gates
     /// are idempotent (UserDefaults-backed).
     private func trackTransactionSaved(_ tx: Transaction, isEdit: Bool) {
+        // Delightful save feedback: roll the Home "Net total" counter to
+        // its new value with a synchronized ramping "spin-up" haptic.
+        // Fired here (not on every balance recompute) so it ONLY plays on
+        // a real user create/edit save — every commit branch funnels
+        // through this helper after the store write. The create modal is
+        // mid-dismiss; the pulse is a global signal so it survives the
+        // teardown and the Home balance picks it up once it's visible.
+        BalanceSavePulse.shared.fire()
+
         if isEdit {
             // Field-level diffing would need the original tx; we
             // don't track which specific field changed in this pass.
@@ -746,17 +759,34 @@ struct CreateTransactionModal: View {
         recentSplitOptionsStore.record(option)
     }
 
-    /// Post-create hook: if the saved transaction is a split, raise
-    /// the share-prompt overlay so the user gets a nudge to send the
-    /// link before they forget. The receiver opens the same modal we
-    /// already use on the transaction-detail share path.
+    /// Post-create hook: nudge the user to send the share link — but ONLY
+    /// when sending it would actually accomplish something.
+    ///
+    /// With server-sync, the link's job is to PAIR a participant who isn't
+    /// paired yet (the first share): once they open it, future edits sync
+    /// automatically. So we prompt only when a participant is still unpaired.
+    /// If everyone is already paired, the save auto-uploads silently and the
+    /// nudge would just be noise — suppress it. (A FAILED auto-upload — e.g.
+    /// offline / server error — separately re-raises the prompt as a manual
+    /// fallback; see `SyncEngine.onUploadFailure` wired in `MainTabView`.)
     private func promptShareIfSplit(_ tx: Transaction) {
-        guard tx.isSplit else { return }
+        guard tx.isSplit, hasUnpairedSplitParticipant(tx) else { return }
         // Defer a beat so the create-modal dismissal animation finishes
         // before the share prompt presents on top of MainTabView. iOS
         // drops the second sheet otherwise.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             router.promptSplitShare(syncID: tx.syncID)
+        }
+    }
+
+    /// True when at least one split participant isn't a connected (paired)
+    /// friend yet — i.e. this is (likely) a first share to them. Mirrors
+    /// `ShareSplitPromptSheet.hasUnpairedParticipant`.
+    private func hasUnpairedSplitParticipant(_ tx: Transaction) -> Bool {
+        guard let split = tx.splitInfo else { return false }
+        return split.friends.contains { share in
+            let friend = friendStore.friends.first(where: { $0.id == share.friendID })
+            return !(friend?.isConnected ?? false)
         }
     }
 
@@ -1100,8 +1130,10 @@ struct CreateTransactionModal: View {
                 if payerConflict || splitHasUnresolvedConflict {
                     shakeSubtitleWithHaptic()
                 } else if vm.isAmountValid {
-                    let generator = UINotificationFeedbackGenerator()
-                    generator.notificationOccurred(.success)
+                    // No success "thud" here — the save itself fires the
+                    // ramping counter haptic (see `BalanceSavePulse.fire`
+                    // → `CounterHaptics`), and a one-shot notification on
+                    // top of it would muddy the spin-up's leading ticks.
                     trySave()
                 }
             }) {

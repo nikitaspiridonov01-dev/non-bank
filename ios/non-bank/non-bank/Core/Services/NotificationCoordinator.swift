@@ -29,6 +29,15 @@ final class NotificationCoordinator: NSObject, ObservableObject, UNUserNotificat
         let syncID = userInfo[NotificationService.userInfoSyncIDKey] as? String
         Task { @MainActor [weak self] in
             self?.pendingTransactionSyncID = syncID
+            // The tap can arrive while the app is ALREADY running (foreground
+            // banner tap, or returning from background). In the foreground
+            // case `scenePhase` doesn't transition, so the scene-activation
+            // pull never fires and the tapped (remote-synced) transaction is
+            // never fetched — the screen then can't open. Pull the sync inbox
+            // here so the tx is applied, after which the count-change observer
+            // pops the card open. Harmless for local reminder taps: the tx is
+            // already present and the pull is an idempotent no-op fetch.
+            await SyncEngine.shared.pullAndApply()
         }
         completionHandler()
     }

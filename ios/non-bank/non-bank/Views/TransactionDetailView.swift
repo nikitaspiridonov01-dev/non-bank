@@ -427,8 +427,19 @@ struct TransactionDetailView: View {
     /// (lines ~632-647) so the sheet matches the parent atmosphere
     /// rather than landing as a dark slab on a lavender / warm-red
     /// detail card.
+    ///
+    /// A split receipt always gets the `.split` recipe regardless of the
+    /// entry source, so the items sheet's per-row glass samples
+    /// `splitCardFill` over `SplitDetailPageBackground` — the exact recipe
+    /// the per-person `ParticipantBreakdownSheet` ("Your items") uses.
+    /// Keying purely on `source` left a `byItems` split opened from Home
+    /// falling through to `.standard`, where the same glass sampled the
+    /// darker `backgroundElevated` over a flat `backgroundPrimary` and read
+    /// visibly darker than the per-person sheet. Reminder surfaces still win
+    /// first; plain non-split receipts stay `.standard`.
     private var receiptSheetContext: ColorContext {
         if source.isReminder { return .reminders }
+        if transaction.isSplit { return .split }
         if source == .debts { return .split }
         return .standard
     }

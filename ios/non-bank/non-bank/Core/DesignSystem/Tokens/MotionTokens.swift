@@ -55,3 +55,25 @@ enum AppMotion {
     /// reads as toy-like in a finance app.
     static let bouncy = Animation.spring(response: 0.45, dampingFraction: 0.7)
 }
+
+// MARK: - Balance Counter Motion
+//
+// Shared tuning for the Home-screen "Net total" count-up that plays
+// when the user creates or edits a transaction. Pulled out into its own
+// token so the rolling number and the `CounterHaptics` ramp stay in
+// lockstep — both read `BalanceCounterMotion.duration`, so changing the
+// spin-up length is a one-line edit that keeps haptic + visual synced.
+enum BalanceCounterMotion {
+
+    /// Total spin-up time for the count-up + ramping haptic (~0.75s).
+    /// Long enough to read as a deliberate roll, short enough not to
+    /// stall the user after the create modal dismisses.
+    static let duration: TimeInterval = 0.75
+
+    /// Drives the digit roll. `easeOut` so the counter sprints out of
+    /// the gate and decelerates into the final value — the classic
+    /// "spinning to a stop" feel. Paired with `.contentTransition(
+    /// .numericText(value:))` on the balance digits.
+    static var animation: Animation { .easeOut(duration: duration) }
+}
+

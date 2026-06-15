@@ -28,6 +28,13 @@ final class SyncEngine {
     weak var categoryStore: CategoryStore?
     weak var receiptItemStore: ReceiptItemStore?
 
+    /// Invoked on the main actor with a transaction's syncID when an
+    /// auto-upload to a PAIRED recipient fails (offline / server error), so
+    /// the UI can offer the manual share link as a fallback. Wired in
+    /// `MainTabView`; uploads are only ever triggered by a user save/edit,
+    /// so this fires in a context where a share prompt is appropriate.
+    var onUploadFailure: ((String) -> Void)?
+
     /// Re-entrancy guard so overlapping foregrounds don't double-pull.
     private var isPulling = false
 
@@ -74,10 +81,15 @@ final class SyncEngine {
             let version = transaction.editVersion
             let checksum = payload.checksum
             Task.detached {
-                await SyncDeliveryService.upload(
+                let ok = await SyncDeliveryService.upload(
                     pairHMAC: pairHMAC, recipientID: recipientID, txSyncID: syncID,
                     version: version, op: "upsert", payloadCiphertext: cipher, checksum: checksum
                 )
+                if !ok {
+                    // Offline / server error reaching a paired friend — let the
+                    // UI offer the manual share link as a fallback.
+                    await MainActor.run { SyncEngine.shared.onUploadFailure?(syncID) }
+                }
             }
         }
 

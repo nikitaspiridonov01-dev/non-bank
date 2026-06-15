@@ -132,6 +132,11 @@ final class CloudKitService {
         // InsightsSettings for the global toggle, which is synced
         // separately via NSUbiquitousKeyValueStore).
         record["excludedFromInsights"] = (tx.excludedFromInsights ? 1 : 0) as CKRecordValue
+        // Monotonic split-sync version guard. CloudKit (own-device sync)
+        // must carry this so a transaction round-tripped through iCloud
+        // keeps its editVersion instead of resetting to 0 and breaking
+        // SyncEngine.pullAndApply's version comparison.
+        record["editVersion"] = tx.editVersion as CKRecordValue
 
         return record
     }
@@ -171,6 +176,9 @@ final class CloudKitService {
         // Missing key = false (rows that pre-date the feature on either
         // side default to "counted in insights").
         let excludedFromInsights = (record["excludedFromInsights"] as? Int).map { $0 != 0 } ?? false
+        // Missing key = 0 (legacy records that pre-date this field on
+        // either device default to the lowest version).
+        let editVersion = record["editVersion"] as? Int ?? 0
 
         return Transaction(
             id: 0, syncID: syncID, emoji: emoji, category: category,
@@ -179,7 +187,8 @@ final class CloudKitService {
             type: type, tags: tags, lastModified: lastModified,
             repeatInterval: repeatInterval, parentReminderID: parentReminderID, splitInfo: splitInfo,
             payloadChecksum: payloadChecksum,
-            excludedFromInsights: excludedFromInsights
+            excludedFromInsights: excludedFromInsights,
+            editVersion: editVersion
         )
     }
 

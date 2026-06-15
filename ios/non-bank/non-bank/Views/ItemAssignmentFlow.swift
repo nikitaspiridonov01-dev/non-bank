@@ -630,9 +630,13 @@ struct ItemAssignmentReview: View {
             ReceiptItemsReadOnlySheet(
                 items: breakdownItems,
                 currency: currency,
+                // Split glass recipe (splitCardFill over SplitDetailPageBackground)
+                // so the rows match the per-person "Your items" sheet instead of
+                // sampling the darker standard backdrop.
+                colorContext: .split,
                 participants: breakdownRoster,
                 headerTitle: "Breakdown",
-                headerSubtitle: "Additional adjustments are distributed proportionally to each person's items."
+                headerSubtitle: breakdownBlurb
             )
         }
     }
@@ -657,6 +661,16 @@ struct ItemAssignmentReview: View {
 
     // MARK: - Sub-views
 
+    /// Subtitle for the breakdown affordance + the Breakdown sheet. The
+    /// breakdown is a general per-item view that's ALWAYS available: with
+    /// adjustments present it explains the proportional distribution; with
+    /// none it's a neutral "here's the full breakdown" line.
+    private var breakdownBlurb: String {
+        proportionalItems.isEmpty
+            ? "See how each person's share splits across the receipt items."
+            : "Additional adjustments are distributed proportionally to each person's items."
+    }
+
     private var headerSummary: some View {
         // Title + subtitle vocabulary mirrors the rest of the
         // orchestrator's flow screens (FriendPickerContent's header
@@ -664,41 +678,34 @@ struct ItemAssignmentReview: View {
         // for the same step-anchor weight, `textTertiary` subtitle
         // for the same dimmed-supporting role.
         //
-        // The subtitle + inline "See breakdown" link render only
-        // when there's something proportional to explain — receipts
-        // with only regular items are fully described by the direct
-        // assignments below, so the boilerplate "additional adjustments
-        // are distributed proportionally" line would be misleading
-        // there (it implies the link would surface something the user
-        // can't actually see).
+        // The "See breakdown" affordance is ALWAYS shown — the breakdown
+        // sheet is a general per-item view (every line + who shares it), so
+        // it's useful even with no proportional adjustments; the subtitle
+        // copy adapts via `breakdownBlurb`.
         VStack(alignment: .leading, spacing: 6) {
             Text("Review the split")
                 .font(.system(size: 32, weight: .bold))
                 .foregroundColor(AppColors.textPrimary)
-            if !proportionalItems.isEmpty {
-                // The "See breakdown" link is concatenated INTO the
-                // subtitle paragraph (rather than landing on its own
-                // row underneath) so the affordance reads as the
-                // natural end of the sentence — "...each person's
-                // items. See breakdown ›". Swift's `Text + Text`
-                // concatenation lets the chevron and the link both
-                // sit inline; the surrounding Button hands the whole
-                // block as one tap target.
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showProportionalBreakdown = true
-                } label: {
-                    (Text("Additional adjustments are distributed proportionally to each person's items. ")
-                        .foregroundColor(AppColors.textTertiary)
-                     + Text("See breakdown")
-                        .foregroundColor(.accentColor)
-                        .fontWeight(.medium))
-                        .font(AppFonts.bodySmallRegular)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .buttonStyle(.plain)
+            // The "See breakdown" link is concatenated INTO the subtitle
+            // paragraph (rather than landing on its own row underneath) so
+            // the affordance reads as the natural end of the sentence —
+            // "...receipt items. See breakdown". Swift's `Text + Text`
+            // concatenation keeps the link inline; the surrounding Button
+            // hands the whole block as one tap target.
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showProportionalBreakdown = true
+            } label: {
+                (Text(breakdownBlurb + " ")
+                    .foregroundColor(AppColors.textTertiary)
+                 + Text("See breakdown")
+                    .foregroundColor(.accentColor)
+                    .fontWeight(.medium))
+                    .font(AppFonts.bodySmallRegular)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

@@ -630,6 +630,15 @@ struct CreateTransactionModal: View {
     /// times within one commit because the activation/feature gates
     /// are idempotent (UserDefaults-backed).
     private func trackTransactionSaved(_ tx: Transaction, isEdit: Bool) {
+        // Delightful save feedback: roll the Home "Net total" counter to
+        // its new value with a synchronized ramping "spin-up" haptic.
+        // Fired here (not on every balance recompute) so it ONLY plays on
+        // a real user create/edit save — every commit branch funnels
+        // through this helper after the store write. The create modal is
+        // mid-dismiss; the pulse is a global signal so it survives the
+        // teardown and the Home balance picks it up once it's visible.
+        BalanceSavePulse.shared.fire()
+
         if isEdit {
             // Field-level diffing would need the original tx; we
             // don't track which specific field changed in this pass.
@@ -1117,8 +1126,10 @@ struct CreateTransactionModal: View {
                 if payerConflict || splitHasUnresolvedConflict {
                     shakeSubtitleWithHaptic()
                 } else if vm.isAmountValid {
-                    let generator = UINotificationFeedbackGenerator()
-                    generator.notificationOccurred(.success)
+                    // No success "thud" here — the save itself fires the
+                    // ramping counter haptic (see `BalanceSavePulse.fire`
+                    // → `CounterHaptics`), and a one-shot notification on
+                    // top of it would muddy the spin-up's leading ticks.
                     trySave()
                 }
             }) {

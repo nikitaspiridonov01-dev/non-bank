@@ -27,6 +27,24 @@ struct BalanceHeaderView: View {
     /// alongside the other home-screen modals.
     let onInsightsTap: () -> Void
 
+    /// One-shot "a save just happened" signal. Drives the count-up: the
+    /// number only ROLLS when this fires; every other balance change
+    /// (load, tab switch, sync pull, currency swap, trend-bar hover)
+    /// snaps instantly with no animation. See `BalanceSavePulse`.
+    @ObservedObject private var savePulse = BalanceSavePulse.shared
+
+    /// The value the digits actually render. Lags `displayBalance` only
+    /// during a save count-up, when `withAnimation` interpolates it from
+    /// the old total to the new one (with `.numericText` rolling the
+    /// digits). Outside a save it tracks `displayBalance` exactly.
+    @State private var renderedBalance: Double = 0
+    @State private var didInitBalance = false
+
+    /// The last `pulseID` we already animated, so a balance change that
+    /// arrives in the same save doesn't double-fire, and so we can tell
+    /// a save-driven change apart from an incidental recompute.
+    @State private var lastAnimatedPulseID = 0
+
     private var isHoveringBar: Bool { hoveredBarIdx != nil }
 
     var displayBalance: Double {
@@ -34,6 +52,31 @@ struct BalanceHeaderView: View {
             return trendBars[idx].balance
         }
         return balance
+    }
+
+    /// Reconcile `renderedBalance` with the latest `displayBalance`,
+    /// animating only when a fresh save pulse is responsible.
+    ///
+    /// Called from both the `displayBalance` and `pulseID` `onChange`
+    /// handlers so it's order-independent: a save bumps `pulseID` and
+    /// (separately, via the store→HomeView recompute) `displayBalance`,
+    /// and SwiftUI may deliver those in either order. We roll the
+    /// number on whichever arrives once BOTH a new pulse is pending and
+    /// the value actually differs; all other changes snap.
+    private func syncRenderedBalance() {
+        let target = displayBalance
+        let pulsePending = savePulse.pulseID != lastAnimatedPulseID
+        if pulsePending && target != renderedBalance {
+            lastAnimatedPulseID = savePulse.pulseID
+            withAnimation(BalanceCounterMotion.animation) {
+                renderedBalance = target
+            }
+        } else if !pulsePending {
+            // No save responsible — instant (load, hover, tab, currency).
+            renderedBalance = target
+        }
+        // else: pulse pending but value unchanged so far — wait for the
+        // balance recompute to land, then animate on the next call.
     }
 
     var body: some View {
@@ -62,17 +105,26 @@ struct BalanceHeaderView: View {
             .padding(.bottom, 4 * (1 - collapseProgress))
 
             // 2. Balance digits
+            //
+            // The digits read `renderedBalance` (not `displayBalance`)
+            // so the save count-up can roll them from the old total to
+            // the new one. `.contentTransition(.numericText(value:))`
+            // gives each glyph the odometer-style tumble as the value
+            // interpolates inside `withAnimation`.
             HStack(alignment: .firstTextBaseline, spacing: AppSpacing.xs) {
-                Text(NumberFormatting.balanceSign(displayBalance))
+                Text(NumberFormatting.balanceSign(renderedBalance))
                     .font(AppFonts.balanceSign)
                     .foregroundColor(AppColors.balanceSign)
+                    .contentTransition(.numericText(value: renderedBalance))
                     .padding(.trailing, 2)
-                Text(NumberFormatting.integerPart(displayBalance))
+                Text(NumberFormatting.integerPart(renderedBalance))
                     .font(AppFonts.balanceInteger)
                     .kerning(2)
-                Text(NumberFormatting.decimalPart(displayBalance))
+                    .contentTransition(.numericText(value: renderedBalance))
+                Text(NumberFormatting.decimalPart(renderedBalance))
                     .font(AppFonts.balanceDecimal)
                     .foregroundColor(AppColors.textPrimary.opacity(0.8))
+                    .contentTransition(.numericText(value: renderedBalance))
                 CurrencyDropdownButton(
                     selected: currencyStore.selectedCurrency,
                     onSelect: { code in onCurrencyChange(code) }
@@ -178,7 +230,25 @@ struct BalanceHeaderView: View {
         .background(Color.clear)
         .contentShape(Rectangle())
         .onTapGesture {
-            onTap() 
+            onTap()
+        }
+        .onAppear {
+            // Seed the displayed value without animating on first render
+            // (or when the home screen reappears) so the number doesn't
+            // count up from zero on a tab switch.
+            if !didInitBalance {
+                renderedBalance = displayBalance
+                lastAnimatedPulseID = savePulse.pulseID
+                didInitBalance = true
+            } else {
+                renderedBalance = displayBalance
+            }
+        }
+        .onChange(of: displayBalance) { _ in
+            syncRenderedBalance()
+        }
+        .onChange(of: savePulse.pulseID) { _ in
+            syncRenderedBalance()
         }
     }
 

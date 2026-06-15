@@ -535,13 +535,17 @@ struct CreateTransactionModal: View {
             return
         }
 
-        // Reuse a stable `syncID` across any re-commit of this same logical
+        // syncID is the stable cross-device identity. For a NEW transaction
+        // reuse one `inFlightSyncID` across any re-commit of this same logical
         // save so the store's syncID dedup collapses a double-commit to one
-        // row instead of two diverging ids. Editing keeps the existing
-        // transaction's identity untouched (build resolves it from the row).
+        // row. For an EDIT we MUST carry the existing transaction's syncID
+        // forward — `buildTransaction` mints a fresh UUID when this is nil, so
+        // leaving it nil rotated the syncID on every edit: locally masked (the
+        // store updates by `id`), but each sync upload then carried a brand-new
+        // syncID, so paired friends saw a DUPLICATE instead of an update.
         let saveSyncID: String? = editingTransaction == nil
             ? { let id = inFlightSyncID ?? UUID().uuidString; inFlightSyncID = id; return id }()
-            : nil
+            : editingTransaction?.syncID
         guard var tx = vm.buildTransaction(
             editingId: editingTransaction?.id,
             syncID: saveSyncID

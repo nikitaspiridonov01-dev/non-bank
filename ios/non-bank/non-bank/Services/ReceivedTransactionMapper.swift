@@ -326,7 +326,17 @@ enum ReceivedTransactionMapper {
             type: payload.k == "inc" ? .income : .expenses,
             tags: nil,
             repeatInterval: receivedRepeatInterval,
+            // Preserve the local reminder link on UPDATE so a synced recurring
+            // child doesn't lose its parent (and drop out of the Reminders
+            // screen). nil on first import — the sharer's recurring structure
+            // maps to no local parent id.
+            parentReminderID: existingTransaction?.parentReminderID,
             splitInfo: receiverSplit,
+            // Persist the payload checksum so a later identical re-share is
+            // detected as IDENTICAL (no-op) rather than a phantom UPDATE, and
+            // so an edit's changed checksum is detectable. Was nil before,
+            // which broke duplicate detection.
+            payloadChecksum: payload.checksum,
             // Adopt the sharer's edit version so the local copy carries the
             // version it was synced to — the next delivery's version guard
             // (ShareIntentClassifier) compares against this. Legacy payloads

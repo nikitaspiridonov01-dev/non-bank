@@ -188,7 +188,12 @@ class TransactionStore: ObservableObject {
                     parentReminderID: tx.parentReminderID,
                     splitInfo: tx.splitInfo,
                     payloadChecksum: tx.payloadChecksum,
-                    excludedFromInsights: tx.excludedFromInsights
+                    excludedFromInsights: tx.excludedFromInsights,
+                    // A category rename is not a content edit — preserve the
+                    // sync edit version so a stale server delivery can't
+                    // clobber this row on the next pull (the version guard
+                    // compares against editVersion).
+                    editVersion: tx.editVersion
                 )
                 await repo.update(updated)
                 rewritten.append(updated)
@@ -313,6 +318,18 @@ class TransactionStore: ObservableObject {
                     }
                 }
                 await syncManager?.pushTransaction(tx, action: .delete)
+                // Server-mediated sync: tell paired friends to delete their
+                // copy too. The CloudKit push above only reaches the user's
+                // own devices; without this a deleted split lingered on every
+                // friend's device forever. uploadDelete sends a version=Int.max
+                // tombstone, which also overwrites any still-pending upsert
+                // delivery for this tx on the server.
+                if let split = tx.splitInfo {
+                    SyncEngine.shared.uploadDelete(
+                        syncID: tx.syncID,
+                        participantIDs: split.friends.map { $0.friendID }
+                    )
+                }
                 if !cascadingItems.isEmpty {
                     await syncManager?.reconcileReceiptItems(
                         newItems: [],

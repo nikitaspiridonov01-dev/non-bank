@@ -93,26 +93,6 @@ struct ShareDistributionView: View {
         receiptItems.filter { $0.assignedParticipantIDs.contains(participantID) }
     }
 
-    /// Roster keyed by assignment id (`Friend.id` / `selfParticipantID`)
-    /// for the per-item "shared by" avatars + tap-through inside the
-    /// per-person breakdown sheet. `you` is always present; a friend the
-    /// split references but who's since been removed is skipped.
-    private var participantRoster: [String: ItemAssignmentParticipant] {
-        var roster: [String: ItemAssignmentParticipant] = [
-            ReceiptItem.selfParticipantID: ItemAssignmentParticipant(
-                id: ReceiptItem.selfParticipantID, name: "You", isMe: true, isConnected: true
-            )
-        ]
-        for friend in split.friends {
-            if let stored = friendStore.friend(byID: friend.friendID) {
-                roster[stored.id] = ItemAssignmentParticipant(
-                    id: stored.id, name: stored.name, isMe: false, isConnected: stored.isConnected
-                )
-            }
-        }
-        return roster
-    }
-
     private var total: Double {
         max(sharers.reduce(0) { $0 + $1.amount }, 0.0001)
     }
@@ -154,8 +134,7 @@ struct ShareDistributionView: View {
                 breakdown: byID[target.participantID]
                     ?? SplitItemBreakdown.ParticipantBreakdown(items: [], charges: [], total: target.amount),
                 totalShare: target.amount,
-                currency: currency,
-                roster: participantRoster
+                currency: currency
             )
         }
     }
@@ -337,10 +316,8 @@ private struct ParticipantBreakdownSheet: View {
     /// verbatim so the footer can't drift from the split by a rounding cent.
     let totalShare: Double
     let currency: String
-    let roster: [String: ItemAssignmentParticipant]
 
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedItemForClaimants: ReceiptItem? = nil
 
     private var title: String { isMe ? "Your items" : "\(participantName)'s items" }
 
@@ -384,23 +361,15 @@ private struct ParticipantBreakdownSheet: View {
         .presentationBackground {
             SplitDetailPageBackground().ignoresSafeArea()
         }
-        .sheet(item: $selectedItemForClaimants) { item in
-            PerItemClaimantsSheet(
-                item: item,
-                currency: currency,
-                claimants: SplitClaimantBuilder.claimants(of: item, roster: roster),
-                colorContext: .split
-            )
-        }
     }
 
     private func itemRow(_ slice: SplitItemBreakdown.ItemSlice) -> some View {
-        let claimants = SplitClaimantBuilder.claimants(of: slice.item, roster: roster)
-        let shared = claimants.count > 1
-        // No "who shares this" avatar pile here — this is a single person's
-        // breakdown, so the pile read as redundant. (The general Receipt
-        // items sheet still shows it.)
-        return HStack(spacing: AppSpacing.md) {
+        // This is one person's own breakdown, so rows are purely
+        // informational — no "who shares this" avatar pile and no tap-through
+        // to a per-item distribution sheet (there's nothing to drill into for
+        // a single person). The general Receipt-items / Breakdown sheets keep
+        // the interactive pile.
+        HStack(spacing: AppSpacing.md) {
             ReceiptItemKindIcon(kind: .item)
             Text(slice.item.name)
                 .font(AppFonts.body)
@@ -418,13 +387,6 @@ private struct ParticipantBreakdownSheet: View {
             in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
         )
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
-        .contentShape(Rectangle())
-        .onTapGesture {
-            // Only items shared by >1 person open a per-item detail.
-            guard shared else { return }
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            selectedItemForClaimants = slice.item
-        }
     }
 
     private func chargeRow(_ cut: SplitItemBreakdown.ChargeCut) -> some View {

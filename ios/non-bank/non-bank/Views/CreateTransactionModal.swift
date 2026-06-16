@@ -1130,10 +1130,9 @@ struct CreateTransactionModal: View {
                 if payerConflict || splitHasUnresolvedConflict {
                     shakeSubtitleWithHaptic()
                 } else if vm.isAmountValid {
-                    // No success "thud" here — the save itself fires the
-                    // ramping counter haptic (see `BalanceSavePulse.fire`
-                    // → `CounterHaptics`), and a one-shot notification on
-                    // top of it would muddy the spin-up's leading ticks.
+                    // No success haptic here — the save itself fires it via
+                    // `BalanceSavePulse.fire` (alongside the balance count-up),
+                    // so a second notification here would double it up.
                     trySave()
                 }
             }) {

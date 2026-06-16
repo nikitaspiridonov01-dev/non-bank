@@ -348,11 +348,9 @@ class CreateTransactionViewModel: ObservableObject {
     ) {
         if key == "✔︎" {
             if isAmountValid {
-                // The save path itself plays the ramping "counter spin-up"
-                // haptic (BalanceSavePulse.fire → CounterHaptics), in sync
-                // with the Home balance count-up — so we no longer fire a
-                // one-shot `.success` notification here, which would clash
-                // with the ramp's opening ticks.
+                // The save path itself fires the success haptic + Home
+                // balance count-up (BalanceSavePulse.fire), so we don't fire
+                // a second `.success` notification here.
                 onSave()
             }
             return

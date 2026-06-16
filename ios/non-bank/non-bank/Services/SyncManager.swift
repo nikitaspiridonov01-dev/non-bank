@@ -26,6 +26,9 @@ class SyncManager: ObservableObject {
     }
     @Published var syncStatus: SyncStatus = .idle
     @Published var iCloudAvailable: Bool = false
+    /// True while at least one local change failed to upload to iCloud and is
+    /// queued for retry. Surfaced so a backup gap is never silent.
+    @Published private(set) var hasUnsyncedChanges: Bool = false
 
     /// Timestamp of the last successful sync, persisted so the Settings
     /// UI can show a STABLE "Last synced …" date that survives across
@@ -56,6 +59,10 @@ class SyncManager: ObservableObject {
     private let pendingDeletesCatKey = "ck_pendingDeleteCategories"
     private let pendingDeletesFriendKey = "ck_pendingDeleteFriends"
     private let pendingDeletesItemKey = "ck_pendingDeleteReceiptItems"
+    private let pendingSaveTxKey = "ck_pendingSaveTransactions"
+    private let pendingSaveCatKey = "ck_pendingSaveCategories"
+    private let pendingSaveFriendKey = "ck_pendingSaveFriends"
+    private let pendingSaveItemKey = "ck_pendingSaveReceiptItems"
 
     private lazy var cloudKit = CloudKitService.shared
     private let db = SQLiteService.shared
@@ -127,11 +134,20 @@ class SyncManager: ObservableObject {
         isSyncing = true
         defer { isSyncing = false }
 
-        // 1. Fetch everything from CloudKit
-        let remoteTransactionRecords = try await cloudKit.fetchAllRecords(ofType: CloudKitService.transactionType)
-        let remoteCategoryRecords = try await cloudKit.fetchAllRecords(ofType: CloudKitService.categoryType)
-        let remoteFriendRecords = try await cloudKit.fetchAllRecords(ofType: CloudKitService.friendType)
-        let remoteReceiptItemRecords = try await cloudKit.fetchAllRecords(ofType: CloudKitService.receiptItemType)
+        // 1. Fetch everything from CloudKit via the ZONE-CHANGES API
+        //    (CKFetchRecordZoneChangesOperation), NOT a CKQuery. A query needs
+        //    a Queryable index on the `recordName` system field deployed to
+        //    the PRODUCTION schema; a missing one silently returns nothing —
+        //    that's why "reinstall + enable iCloud" restored zero records even
+        //    though the data was in the zone. The zone-changes fetch needs no
+        //    index. Reset the token first so we pull the ENTIRE zone (not just
+        //    deltas); the fetch then stores a fresh token for later delta syncs.
+        cloudKit.resetChangeToken()
+        let (allRemoteRecords, _) = try await cloudKit.fetchChanges()
+        let remoteTransactionRecords = allRemoteRecords.filter { $0.recordType == CloudKitService.transactionType }
+        let remoteCategoryRecords = allRemoteRecords.filter { $0.recordType == CloudKitService.categoryType }
+        let remoteFriendRecords = allRemoteRecords.filter { $0.recordType == CloudKitService.friendType }
+        let remoteReceiptItemRecords = allRemoteRecords.filter { $0.recordType == CloudKitService.receiptItemType }
 
         let remoteTransactions = remoteTransactionRecords.compactMap { cloudKit.transactionFromRecord($0) }
         let remoteCategories = remoteCategoryRecords.compactMap { cloudKit.categoryFromRecord($0) }
@@ -209,8 +225,10 @@ class SyncManager: ObservableObject {
             try await cloudKit.saveRecords(itemRecords)
         }
 
-        // 7. Reset change token for future delta syncs
-        cloudKit.resetChangeToken()
+        // 7. Drain the echo of the records we just pushed up (steps 4-6) so
+        //    the next delta sync starts clean. Do NOT reset the token here —
+        //    step 1 already established it with a full fetch; resetting would
+        //    re-pull the whole zone needlessly.
         _ = try? await cloudKit.fetchChanges()
 
         // 8. Reload stores
@@ -246,8 +264,9 @@ class SyncManager: ObservableObject {
             }
         } catch {
             print("Push transaction error: \(error)")
-            if action == .delete {
-                addPendingDelete(syncID: tx.syncID, key: pendingDeletesTxKey, type: CloudKitService.transactionType)
+            switch action {
+            case .delete: addPendingDelete(syncID: tx.syncID, key: pendingDeletesTxKey, type: CloudKitService.transactionType)
+            case .save:   queueFailedSave(syncID: tx.syncID, key: pendingSaveTxKey)
             }
         }
     }
@@ -265,8 +284,9 @@ class SyncManager: ObservableObject {
             }
         } catch {
             print("Push category error: \(error)")
-            if action == .delete {
-                addPendingDelete(syncID: cat.id.uuidString, key: pendingDeletesCatKey, type: CloudKitService.categoryType)
+            switch action {
+            case .delete: addPendingDelete(syncID: cat.id.uuidString, key: pendingDeletesCatKey, type: CloudKitService.categoryType)
+            case .save:   queueFailedSave(syncID: cat.id.uuidString, key: pendingSaveCatKey)
             }
         }
     }
@@ -278,6 +298,7 @@ class SyncManager: ObservableObject {
             try await cloudKit.saveRecords(records)
         } catch {
             print("Push batch error: \(error)")
+            for tx in transactions { queueFailedSave(syncID: tx.syncID, key: pendingSaveTxKey) }
         }
     }
 
@@ -288,6 +309,7 @@ class SyncManager: ObservableObject {
             try await cloudKit.saveRecords(records)
         } catch {
             print("Push category batch error: \(error)")
+            for cat in categories { queueFailedSave(syncID: cat.id.uuidString, key: pendingSaveCatKey) }
         }
     }
 
@@ -304,8 +326,9 @@ class SyncManager: ObservableObject {
             }
         } catch {
             print("Push friend error: \(error)")
-            if action == .delete {
-                addPendingDelete(syncID: friend.id, key: pendingDeletesFriendKey, type: CloudKitService.friendType)
+            switch action {
+            case .delete: addPendingDelete(syncID: friend.id, key: pendingDeletesFriendKey, type: CloudKitService.friendType)
+            case .save:   queueFailedSave(syncID: friend.id, key: pendingSaveFriendKey)
             }
         }
     }
@@ -326,8 +349,9 @@ class SyncManager: ObservableObject {
             }
         } catch {
             print("Push receipt item error: \(error)")
-            if action == .delete {
-                addPendingDelete(syncID: item.syncID, key: pendingDeletesItemKey, type: CloudKitService.receiptItemType)
+            switch action {
+            case .delete: addPendingDelete(syncID: item.syncID, key: pendingDeletesItemKey, type: CloudKitService.receiptItemType)
+            case .save:   queueFailedSave(syncID: item.syncID, key: pendingSaveItemKey)
             }
         }
     }
@@ -505,6 +529,9 @@ class SyncManager: ObservableObject {
         await checkAvailability()
         guard iCloudAvailable else { return }
         try? await pullChanges()
+        // Re-push anything whose upload previously failed, so a transient /
+        // offline failure self-heals on the next foreground sync.
+        await retryPendingSaves()
     }
 
     // MARK: - Merge Logic
@@ -731,6 +758,97 @@ class SyncManager: ObservableObject {
         if !pending.contains(syncID) {
             pending.append(syncID)
             UserDefaults.standard.set(pending, forKey: key)
+        }
+    }
+
+    // MARK: - Pending Saves (retry failed uploads — no silent data loss)
+
+    /// Queue a syncID whose CloudKit SAVE failed, and SURFACE the failure
+    /// (instead of swallowing it) so the user sees that a backup write didn't
+    /// land. Drained by `retryPendingSaves` on the next sync.
+    private func queueFailedSave(syncID: String, key: String) {
+        var pending = UserDefaults.standard.stringArray(forKey: key) ?? []
+        if !pending.contains(syncID) {
+            pending.append(syncID)
+            UserDefaults.standard.set(pending, forKey: key)
+        }
+        hasUnsyncedChanges = true
+        syncStatus = .error("Some changes haven't backed up to iCloud yet")
+    }
+
+    private var anyPendingSaves: Bool {
+        [pendingSaveTxKey, pendingSaveCatKey, pendingSaveFriendKey, pendingSaveItemKey]
+            .contains { !(UserDefaults.standard.stringArray(forKey: $0) ?? []).isEmpty }
+    }
+
+    /// Re-push records whose save previously failed, by re-reading the current
+    /// version from the local DB. Clears each queue on success. Mirrors
+    /// `retryPendingDeletes` so a transient / offline / schema failure
+    /// SELF-HEALS instead of stranding data only on this device.
+    private func retryPendingSaves() async {
+        let pendingTx = UserDefaults.standard.stringArray(forKey: pendingSaveTxKey) ?? []
+        if !pendingTx.isEmpty {
+            let want = Set(pendingTx)
+            let records = (await db.fetchAllTransactions())
+                .filter { want.contains($0.syncID) }
+                .map { cloudKit.transactionToRecord($0) }
+            await drainSave(records: records, key: pendingSaveTxKey)
+        }
+
+        let pendingCat = UserDefaults.standard.stringArray(forKey: pendingSaveCatKey) ?? []
+        if !pendingCat.isEmpty {
+            let want = Set(pendingCat)
+            let records = (await db.fetchAllCategories())
+                .filter { want.contains($0.id.uuidString) }
+                .map { cloudKit.categoryToRecord($0) }
+            await drainSave(records: records, key: pendingSaveCatKey)
+        }
+
+        let pendingFriend = UserDefaults.standard.stringArray(forKey: pendingSaveFriendKey) ?? []
+        if !pendingFriend.isEmpty {
+            let want = Set(pendingFriend)
+            let records = (await db.fetchAllFriends())
+                .filter { want.contains($0.id) }
+                .map { cloudKit.friendToRecord($0) }
+            await drainSave(records: records, key: pendingSaveFriendKey)
+        }
+
+        let pendingItem = UserDefaults.standard.stringArray(forKey: pendingSaveItemKey) ?? []
+        if !pendingItem.isEmpty {
+            let want = Set(pendingItem)
+            let (_, idToSyncID) = await loadTransactionIDMaps()
+            let records: [CKRecord] = (await db.fetchAllReceiptItems())
+                .filter { want.contains($0.syncID) }
+                .compactMap { item in
+                    guard let txID = item.transactionID, let parent = idToSyncID[txID] else { return nil }
+                    return cloudKit.receiptItemToRecord(item, transactionSyncID: parent)
+                }
+            await drainSave(records: records, key: pendingSaveItemKey)
+        }
+
+        // Once everything drained, clear the surfaced error.
+        if !anyPendingSaves {
+            hasUnsyncedChanges = false
+            if case .error = syncStatus {
+                markSynced()
+                syncStatus = .lastSynced(Date())
+            }
+        }
+    }
+
+    /// Push the re-read records for one pending-save queue; clear the queue on
+    /// success. An EMPTY record set means those rows were deleted locally
+    /// since the failure — nothing to push, so clear the queue too.
+    private func drainSave(records: [CKRecord], key: String) async {
+        guard !records.isEmpty else {
+            UserDefaults.standard.removeObject(forKey: key)
+            return
+        }
+        do {
+            try await cloudKit.saveRecords(records)
+            UserDefaults.standard.removeObject(forKey: key)
+        } catch {
+            print("Retry pending saves error [\(key)]: \(error)")
         }
     }
 

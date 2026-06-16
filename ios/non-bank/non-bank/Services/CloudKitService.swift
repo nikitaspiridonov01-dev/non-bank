@@ -403,6 +403,28 @@ final class CloudKitService {
 
     func fetchChanges() async throws -> (changed: [CKRecord], deletedIDs: [CKRecord.ID]) {
         guard let privateDB else { throw CloudKitSyncError.notAvailable }
+        // CKFetchRecordZoneChangesOperation returns AT MOST one batch per run
+        // plus a `moreComing` flag — it does NOT auto-paginate. Loop until the
+        // zone is fully drained, otherwise an account with more than one batch
+        // (~hundreds of records) would be silently truncated. Critical for the
+        // initial restore, which calls this after resetting the token to pull
+        // the ENTIRE zone. Each batch persists its server token, so a later run
+        // resumes where this left off.
+        var allChanged: [CKRecord] = []
+        var allDeleted: [CKRecord.ID] = []
+        while true {
+            let batch = try await fetchChangesBatch(privateDB: privateDB)
+            allChanged += batch.changed
+            allDeleted += batch.deletedIDs
+            if !batch.moreComing { break }
+        }
+        return (allChanged, allDeleted)
+    }
+
+    /// One pass of the zone-changes operation. Reads the current token from
+    /// `changeTokenKey`, fetches the next batch, persists the new token, and
+    /// reports `moreComing` so `fetchChanges()` can loop.
+    private func fetchChangesBatch(privateDB: CKDatabase) async throws -> (changed: [CKRecord], deletedIDs: [CKRecord.ID], moreComing: Bool) {
         let tokenData = UserDefaults.standard.data(forKey: changeTokenKey)
         let token: CKServerChangeToken? = tokenData.flatMap {
             try? NSKeyedUnarchiver.unarchivedObject(ofClass: CKServerChangeToken.self, from: $0)
@@ -410,6 +432,7 @@ final class CloudKitService {
 
         var changedRecords: [CKRecord] = []
         var deletedRecordIDs: [CKRecord.ID] = []
+        var moreComing = false
 
         let config = CKFetchRecordZoneChangesOperation.ZoneConfiguration()
         config.previousServerChangeToken = token
@@ -434,7 +457,8 @@ final class CloudKitService {
             operation.recordZoneFetchResultBlock = { [weak self] _, result in
                 guard let self else { return }
                 switch result {
-                case .success(let (serverChangeToken, _, _)):
+                case .success(let (serverChangeToken, _, more)):
+                    moreComing = more
                     if let data = try? NSKeyedArchiver.archivedData(withRootObject: serverChangeToken, requiringSecureCoding: true) {
                         UserDefaults.standard.set(data, forKey: self.changeTokenKey)
                     }
@@ -445,7 +469,7 @@ final class CloudKitService {
             operation.fetchRecordZoneChangesResultBlock = { result in
                 switch result {
                 case .success:
-                    continuation.resume(returning: (changedRecords, deletedRecordIDs))
+                    continuation.resume(returning: (changedRecords, deletedRecordIDs, moreComing))
                 case .failure(let error):
                     continuation.resume(throwing: error)
                 }

@@ -25,6 +25,10 @@ struct MainTabView: View {
     /// Transaction whose notification was tapped — drives the detail sheet
     /// that opens out of any tab.
     @State private var notificationOpenedTransaction: Transaction?
+    /// Guards the notification-open retry loop so overlapping triggers
+    /// (`pendingTransactionSyncID` + store-count changes) don't spawn
+    /// multiple concurrent resolve loops.
+    @State private var notificationResolveInFlight = false
     /// Transaction that was just created or matched from an incoming
     /// share link. Drives a detail sheet so the user lands directly on
     /// the imported (or already-imported) transaction after the share-
@@ -535,13 +539,50 @@ struct MainTabView: View {
     /// Resolves the transaction the user tapped on a notification and opens
     /// its detail sheet — split transactions get the debts-style card, others
     /// the standard home card.
+    /// True while ANY other MainTabView-level sheet / share-link routing is
+    /// up. SwiftUI presents one sheet at a time, so presenting the
+    /// notification card over one of these silently no-ops — we must wait for
+    /// a clear slot instead.
+    private var anyBlockingSheetPresented: Bool {
+        router.showTransactionEditor
+            || router.pendingSplitShareSyncID != nil
+            || shareLinkOpenedTransaction != nil
+            || shareLinkCoordinator.routingState != .idle
+    }
+
+    /// Open the tapped notification's transaction card — RELIABLY.
+    ///
+    /// Previous versions fired once and consumed the pending id immediately,
+    /// so the deep-link was silently lost whenever (a) the synced tx hadn't
+    /// finished pulling in yet, or (b) a competing sheet (editor / share
+    /// prompt / share-link / another card) was up and swallowed the present.
+    /// Instead we poll for a clear slot — tx exists AND no competing sheet —
+    /// and only consume the pending id once the card is actually presented.
+    /// Bounded so it never spins forever; the `onChange` triggers restart it.
     private func handlePendingNotification() {
-        guard let syncID = notificationCoordinator.pendingTransactionSyncID,
-              let tx = transactionStore.transactions.first(where: { $0.syncID == syncID })
-        else { return }
-        // Hop to the home tab so the underlying context matches the card.
-        router.selectedTab = 0
-        notificationOpenedTransaction = tx
-        notificationCoordinator.consumePendingTransaction()
+        guard notificationCoordinator.pendingTransactionSyncID != nil,
+              !notificationResolveInFlight else { return }
+        notificationResolveInFlight = true
+        Task { @MainActor in
+            defer { notificationResolveInFlight = false }
+            for _ in 0..<24 {                                   // ~6s @ 0.25s
+                guard let syncID = notificationCoordinator.pendingTransactionSyncID else { return }
+                if notificationOpenedTransaction == nil,
+                   !anyBlockingSheetPresented,
+                   let tx = transactionStore.transactions.first(where: { $0.syncID == syncID }) {
+                    // Hop to the home tab so the underlying context matches the
+                    // card, then let that selection change settle one runloop —
+                    // presenting in the same update as a TabView switch drops
+                    // the sheet.
+                    router.selectedTab = 0
+                    try? await Task.sleep(nanoseconds: 60_000_000)
+                    guard notificationOpenedTransaction == nil, !anyBlockingSheetPresented else { continue }
+                    notificationOpenedTransaction = tx
+                    notificationCoordinator.consumePendingTransaction()
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+        }
     }
 }

@@ -568,11 +568,18 @@ struct CreateTransactionModal: View {
         // animation window where the toolbar ✓ is still hit-testable.
 
         if editingTransaction != nil {
-            // Server-sync: a real edit bumps the monotonic edit version so
-            // paired friends apply it over their copy (and the version guard
-            // rejects any staler delivery). The rebuilt tx started at 0, so
-            // carry the existing row's version + 1.
-            tx = tx.settingEditVersion((editingTransaction?.editVersion ?? 0) + 1)
+            // Only the financially-meaningful fields — amount, currency, and
+            // the split structure (participants + their shares + mode) — are
+            // what a paired friend actually applies; cosmetic fields (title,
+            // note, category, emoji, date) stay local to each person. So bump
+            // the monotonic sync edit version + re-upload (which is what
+            // triggers the friend's push) ONLY when those synced fields
+            // changed. A cosmetic-only edit must NOT re-deliver or notify
+            // friends — it just saves locally.
+            let syncedChanged = syncRelevantChange(old: editingTransaction, new: tx)
+            if syncedChanged {
+                tx = tx.settingEditVersion((editingTransaction?.editVersion ?? 0) + 1)
+            }
             transactionStore.update(tx)
             // For an in-place edit we already know the row id, so save items
             // immediately if a fresh scan happened during this edit.
@@ -582,7 +589,9 @@ struct CreateTransactionModal: View {
                 }
             }
             trackTransactionSaved(tx, isEdit: true)
-            SyncEngine.shared.uploadSplit(tx)
+            if syncedChanged {
+                SyncEngine.shared.uploadSplit(tx)
+            }
             dismiss()
             return
         }
@@ -757,6 +766,19 @@ struct CreateTransactionModal: View {
             createdAt: Date()
         )
         recentSplitOptionsStore.record(option)
+    }
+
+    /// Whether an edit touched the fields a paired friend actually applies —
+    /// amount, currency, and the split structure (`SplitInfo`: participants,
+    /// each one's share, paid amounts, split mode). Cosmetic edits (title,
+    /// note, category, emoji, date) leave all three untouched and so must NOT
+    /// re-deliver to / notify friends. A brand-new transaction (`old == nil`)
+    /// always counts as a change.
+    private func syncRelevantChange(old: Transaction?, new: Transaction) -> Bool {
+        guard let old else { return true }
+        return old.amount != new.amount
+            || old.currency != new.currency
+            || old.splitInfo != new.splitInfo
     }
 
     /// Post-create hook: nudge the user to send the share link — but ONLY

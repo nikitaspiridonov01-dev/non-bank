@@ -60,9 +60,8 @@ enum AppMotion {
 //
 // Shared tuning for the Home-screen "Net total" count-up that plays
 // when the user creates or edits a transaction. Pulled out into its own
-// token so the rolling number and the `CounterHaptics` ramp stay in
-// lockstep — both read `BalanceCounterMotion.duration`, so changing the
-// spin-up length is a one-line edit that keeps haptic + visual synced.
+// token so the roll duration lives in one place — change the count-up
+// length with a one-line edit.
 enum BalanceCounterMotion {
 
     /// Total spin-up time for the count-up + ramping haptic (~0.75s).

@@ -1,9 +1,10 @@
 import Foundation
 import Combine
+import UIKit
 
 /// One-shot signal that a user-driven create/edit SAVE just changed the
 /// balance — the trigger for the Home-screen "Net total" count-up + the
-/// ramping `CounterHaptics`.
+/// success haptic.
 ///
 /// **Why a dedicated signal (vs. observing the balance directly):** the
 /// displayed total recomputes on lots of events that are NOT a save —
@@ -29,10 +30,11 @@ final class BalanceSavePulse: ObservableObject {
     private init() {}
 
     /// Call from the create/edit save path right after the store write.
-    /// Fires the ramping "counter spin-up" haptic and bumps `pulseID`
-    /// so the Home balance rolls to its new value in sync.
+    /// Fires the standard success haptic and bumps `pulseID` so the Home
+    /// balance rolls to its new value. (An earlier ramping "counter spin-up"
+    /// haptic was reverted — the plain success notification is preferred.)
     func fire() {
         pulseID &+= 1
-        CounterHaptics.shared.playRamp()
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 }

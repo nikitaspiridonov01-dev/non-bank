@@ -444,6 +444,20 @@ struct TransactionDetailView: View {
         return .standard
     }
 
+    /// Sub-app palette of the detail SCREEN itself — matches this view's
+    /// `presentationBackground` (reminder → warm-red, debts → split lavender,
+    /// otherwise neutral). Used for ON-PAGE glass like the Notes card so it
+    /// samples the same backdrop as the screen around it. Unlike
+    /// `receiptSheetContext`, it is keyed on the entry `source`, NOT on
+    /// whether the tx is a split — so a split opened from a neutral surface
+    /// (Home) keeps a neutral Notes card instead of a lavender one. (The items
+    /// SHEET still uses `receiptSheetContext`'s always-split recipe.)
+    private var pageCardContext: ColorContext {
+        if source.isReminder { return .reminders }
+        if source == .debts { return .split }
+        return .standard
+    }
+
     /// Roster of split participants for the read-only items sheet, keyed
     /// by assignment id (`Friend.id` / `ReceiptItem.selfParticipantID`).
     /// Non-empty only for a `byItems` split, so the items sheet shows the
@@ -714,9 +728,12 @@ struct TransactionDetailView: View {
                                 // Uniform under-fill (same shape) so the
                                 // glass tint stays constant as the notes
                                 // grow taller — no sibling here, so no
-                                // GlassEffectContainer is needed.
+                                // GlassEffectContainer is needed. Uses the
+                                // PAGE palette (not the split-biased
+                                // receiptSheetContext) so a split opened from a
+                                // neutral screen keeps a neutral card.
                                 .background(
-                                    receiptSheetContext.cardFill,
+                                    pageCardContext.cardFill,
                                     in: RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 )
                                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))

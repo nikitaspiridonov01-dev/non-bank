@@ -298,7 +298,7 @@ struct ReceiptItemsReadOnlySheet: View {
         // sits on top of this controlled fill rather than the live page
         // gradient.
         .background(
-            colorContext.cardFill,
+            colorContext.glassUnderFill,
             in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
         )
         // iOS-26 Liquid Glass — same modifier the transaction card
@@ -350,7 +350,7 @@ struct ReceiptItemsReadOnlySheet: View {
         // Uniform under-fill (same shape) so the totals card samples the
         // same constant backdrop as the item rows above.
         .background(
-            colorContext.cardFill,
+            colorContext.glassUnderFill,
             in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
         )
         // Same Liquid Glass family as the item rows above so the
@@ -501,7 +501,7 @@ struct PerItemClaimantsSheet: View {
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, AppSpacing.rowVertical)
                                 .background(
-                                    colorContext.cardFill,
+                                    colorContext.glassUnderFill,
                                     in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
                                 )
                                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
@@ -600,7 +600,7 @@ struct PerChargeDistributionSheet: View {
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, AppSpacing.rowVertical)
                                 .background(
-                                    colorContext.cardFill,
+                                    colorContext.glassUnderFill,
                                     in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
                                 )
                                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))

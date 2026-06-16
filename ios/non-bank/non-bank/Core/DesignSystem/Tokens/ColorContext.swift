@@ -117,6 +117,18 @@ extension ColorContext {
         }
     }
 
+    /// Under-fill for a glass row/card. The gradient-backed sub-app
+    /// surfaces (reminders / split) need a uniform fill so the per-row
+    /// `.glassEffect` doesn't sample a size-dependent slice of the live
+    /// gradient. The FLAT `.standard` surface does not — there, plain glass
+    /// (exactly like the transaction card's items preview) reads cleaner
+    /// than the soft-beige `backgroundElevated` panel, which looked murky in
+    /// light mode. So `.standard` returns `.clear` (glass shows the flat page
+    /// through); reminders / split keep their warm `cardFill`.
+    var glassUnderFill: Color {
+        self == .standard ? .clear : cardFill
+    }
+
     /// Matching `PixelTint` so animated illustrations on this
     /// context's screens automatically theme to it.
     var pixelTint: PixelTint {

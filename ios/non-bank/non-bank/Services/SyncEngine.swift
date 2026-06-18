@@ -248,11 +248,20 @@ final class SyncEngine {
             }
 
             let myIndex = payload.f.firstIndex(where: { $0.id == myID })
-            let nonSharerIndices = payload.f.indices.filter { payload.f[$0].id != payload.s }
-            guard let index = myIndex ?? (nonSharerIndices.count == 1 ? nonSharerIndices.first : nil) else {
-                // Genuinely ambiguous (3+ participants and we aren't id-matched)
-                // — can't pick "us" headlessly. Leave un-acked for the manual
-                // link flow (which has the picker); it TTLs out server-side.
+            // Phantom candidates (`cn != true`): the only participants we
+            // could legitimately be once an id-match fails — connected
+            // friends were addressed by their REAL userID, so if we were one
+            // we'd have id-matched above. Same invariant the picker-side
+            // `ShareIntentClassifier` uses. For legacy payloads (`cn == nil`)
+            // every participant is a candidate, so this degrades to the
+            // historical "single non-sharer" behavior (payload.f excludes the
+            // sharer by construction).
+            let phantomIndices = payload.f.indices.filter { payload.f[$0].cn != true }
+            guard let index = myIndex ?? (phantomIndices.count == 1 ? phantomIndices.first : nil) else {
+                // Genuinely ambiguous (multiple phantom candidates and we
+                // aren't id-matched) — can't pick "us" headlessly. Leave
+                // un-acked for the manual link flow (which has the picker);
+                // it TTLs out server-side.
                 continue
             }
 

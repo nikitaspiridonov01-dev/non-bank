@@ -347,7 +347,7 @@ struct MainTabView: View {
         //    transaction's detail sheet, then reset.
         .onChange(of: shareLinkCoordinator.routingState) { state in
             switch state {
-            case .showingPicker(let payload, let isUpdate, let existingID, let autoPickIndex)
+            case .showingPicker(let payload, let isUpdate, let existingID, let autoPickIndex, _)
                 where autoPickIndex != nil:
                 Task {
                     await shareLinkCoordinator.pickedParticipant(
@@ -382,10 +382,19 @@ struct MainTabView: View {
         // a derived Bool binding on the routing state so dismiss-from-
         // system (drag-to-close) routes back through `reset()`.
         .sheet(isPresented: shareLinkPickerBinding) {
-            if case .showingPicker(let payload, let isUpdate, let existingID, _) = shareLinkCoordinator.routingState {
+            if case .showingPicker(let payload, let isUpdate, let existingID, _, let candidateIndices) = shareLinkCoordinator.routingState {
                 WhoAreYouPickerView(
                     payload: payload,
                     isForUpdate: isUpdate,
+                    // The candidates the receiver may legitimately be (phantom
+                    // participants). Empty on the update re-show path → the
+                    // picker shows all participants (see `confirmedUpdate`).
+                    candidateIndices: candidateIndices,
+                    // Pre-fetch the encrypted receipt items (already in flight
+                    // from `handle(url:)`) so a byItems split can show each
+                    // candidate's assigned items BEFORE the receiver taps.
+                    // `nil` → picker falls back to showing the share amount.
+                    fetchItems: { await shareLinkCoordinator.awaitFetchedItemsForPicker() },
                     onPick: { index in
                         Task {
                             await shareLinkCoordinator.pickedParticipant(
@@ -481,7 +490,7 @@ struct MainTabView: View {
     private var shareLinkPickerBinding: Binding<Bool> {
         Binding(
             get: {
-                if case .showingPicker(_, _, _, let autoIdx) = shareLinkCoordinator.routingState,
+                if case .showingPicker(_, _, _, let autoIdx, _) = shareLinkCoordinator.routingState,
                    autoIdx == nil { return true }
                 return false
             },

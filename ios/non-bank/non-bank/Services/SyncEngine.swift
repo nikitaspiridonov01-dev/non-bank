@@ -279,21 +279,43 @@ final class SyncEngine {
         friendStore: FriendStore,
         transactionStore: TransactionStore
     ) async -> Bool {
-        for friend in friendStore.friends {
+        // Candidate phantom ids to try as the handshake key: our friends' ids
+        // PLUS every split-participant id across transactions. The recipient
+        // encrypted with the id WE assigned them (payload.f[index].id =
+        // FriendShare.friendID). That's normally also a Friend record, but a
+        // participant added ad-hoc to a split might live only on the
+        // transaction — include those ids too so the match never misses.
+        var candidateIDs: [String] = friendStore.friends.map(\.id)
+        var seen = Set(candidateIDs)
+        for tx in transactionStore.transactions {
+            for share in tx.splitInfo?.friends ?? [] where !seen.contains(share.friendID) {
+                seen.insert(share.friendID)
+                candidateIDs.append(share.friendID)
+            }
+        }
+        for candidateID in candidateIDs {
             guard let handshake = SyncDeliveryCrypto.tryDecryptHandshake(
-                base64: delivery.payload, keyA: myID, keyB: friend.id
+                base64: delivery.payload, keyA: myID, keyB: candidateID
             ) else { continue }
-            // Matched: `friend` is the phantom; `handshake.rid` is their real id.
-            if friend.id != handshake.rid {
-                await friendStore.upgradePhantom(phantomID: friend.id, realID: handshake.rid)
-                await transactionStore.upgradePhantomFriendID(from: friend.id, to: handshake.rid)
+            // Matched: `candidateID` is the phantom; `handshake.rid` is real.
+            if candidateID == handshake.rid {
+                friendStore.markConnected(id: candidateID)
+            } else if friendStore.friend(byID: candidateID) != nil {
+                await friendStore.upgradePhantom(phantomID: candidateID, realID: handshake.rid)
+                await transactionStore.upgradePhantomFriendID(from: candidateID, to: handshake.rid)
             } else {
-                friendStore.markConnected(id: friend.id)
+                // Phantom existed only as a split participant, not a Friend
+                // record — create the connected friend under the REAL id, then
+                // rewrite the transactions' participant id to it.
+                let trimmed = handshake.n?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let name = (trimmed?.isEmpty == false) ? trimmed! : "Friend"
+                await friendStore.add(Friend(id: handshake.rid, name: name, isConnected: true))
+                await transactionStore.upgradePhantomFriendID(from: candidateID, to: handshake.rid)
             }
             return true
         }
-        // No matching friend (maybe they aren't in our list yet) — leave it
-        // un-acked so a later pull can retry once the friend exists.
+        // No matching candidate (the friend/participant isn't on this device
+        // yet) — leave it un-acked so a later pull retries once it exists.
         return false
     }
 

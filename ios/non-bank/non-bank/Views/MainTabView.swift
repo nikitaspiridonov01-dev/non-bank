@@ -526,6 +526,13 @@ struct MainTabView: View {
                 // on time — no need for a duplicate in-foreground notification
                 // when catching up spawns.
                 transactionStore.processRecurringSpawns()
+                // Foreground sync cadence. Pull/apply runs on scene-activation
+                // too, but that doesn't fire while the app simply STAYS open —
+                // which is exactly when a sharer is waiting for a friend who
+                // just opened the link to pair back (the pairing handshake has
+                // no push). Polling here picks up that handshake (and any
+                // delivery) within ~60s without a manual background/reopen.
+                await SyncEngine.shared.pullAndApply()
             }
         }
     }

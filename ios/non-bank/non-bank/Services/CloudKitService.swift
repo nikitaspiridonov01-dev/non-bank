@@ -132,11 +132,16 @@ final class CloudKitService {
         // InsightsSettings for the global toggle, which is synced
         // separately via NSUbiquitousKeyValueStore).
         record["excludedFromInsights"] = (tx.excludedFromInsights ? 1 : 0) as CKRecordValue
-        // Monotonic split-sync version guard. CloudKit (own-device sync)
-        // must carry this so a transaction round-tripped through iCloud
-        // keeps its editVersion instead of resetting to 0 and breaking
-        // SyncEngine.pullAndApply's version comparison.
-        record["editVersion"] = tx.editVersion as CKRecordValue
+        // NOTE: we deliberately do NOT write `editVersion` to the CKRecord.
+        // CloudKit PRODUCTION does not auto-add fields, so writing a field
+        // that isn't in the deployed production schema makes the ENTIRE record
+        // save fail (silently, on TestFlight/App Store builds) — which is what
+        // stopped all transactions from reaching iCloud. editVersion is only
+        // needed by the server-mediated friend-sync guard; for own-device
+        // CloudKit backup it can safely default to 0 on restore (see
+        // transactionFromRecord + the max() conflict merge). If we ever want
+        // it backed up, add `editVersion` to the production schema FIRST, then
+        // re-introduce the write.
 
         return record
     }

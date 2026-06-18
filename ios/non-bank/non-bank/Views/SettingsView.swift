@@ -202,6 +202,28 @@ struct SettingsView: View {
                                 .font(.caption)
                         }
                     }
+                    // Manual restore + on-device diagnostic. Re-runs the full
+                    // iCloud pull (+ additive merge) so the user can recover
+                    // data / re-test without reinstalling, and SEE the result
+                    // (how many records came down, or the exact error) instead
+                    // of a silent "nothing happened".
+                    if syncManager.isSyncEnabled {
+                        Button {
+                            Task { await syncManager.enableSync() }
+                        } label: {
+                            Label("Restore from iCloud now", systemImage: "arrow.clockwise.icloud")
+                        }
+                        if let diag = syncManager.lastDiagnostic {
+                            Text(diag)
+                                .font(.caption)
+                                .foregroundColor(AppColors.textSecondary)
+                        }
+                        if case .error(let msg) = syncManager.syncStatus {
+                            Text(msg)
+                                .font(.caption)
+                                .foregroundColor(AppColors.danger)
+                        }
+                    }
                 } header: {
                     Text("Sync")
                 } footer: {

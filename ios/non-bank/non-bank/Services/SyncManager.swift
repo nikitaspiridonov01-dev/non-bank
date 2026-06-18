@@ -29,6 +29,10 @@ class SyncManager: ObservableObject {
     /// True while at least one local change failed to upload to iCloud and is
     /// queued for retry. Surfaced so a backup gap is never silent.
     @Published private(set) var hasUnsyncedChanges: Bool = false
+    /// Human-readable result of the last restore/sync attempt — e.g.
+    /// "Pulled 12 records from iCloud (9 transactions)" or an error. Surfaced
+    /// in Settings so a silent "nothing happened" becomes observable.
+    @Published private(set) var lastDiagnostic: String?
 
     /// Timestamp of the last successful sync, persisted so the Settings
     /// UI can show a STABLE "Last synced …" date that survives across
@@ -111,6 +115,7 @@ class SyncManager: ObservableObject {
             syncStatus = .lastSynced(Date())
         } catch {
             print("Enable sync error: \(error)")
+            lastDiagnostic = "iCloud restore failed: \(error.localizedDescription)"
             syncStatus = .error(error.localizedDescription)
         }
     }
@@ -148,6 +153,9 @@ class SyncManager: ObservableObject {
         let remoteCategoryRecords = allRemoteRecords.filter { $0.recordType == CloudKitService.categoryType }
         let remoteFriendRecords = allRemoteRecords.filter { $0.recordType == CloudKitService.friendType }
         let remoteReceiptItemRecords = allRemoteRecords.filter { $0.recordType == CloudKitService.receiptItemType }
+        lastDiagnostic = "Pulled \(allRemoteRecords.count) from iCloud — "
+            + "\(remoteTransactionRecords.count) tx, \(remoteReceiptItemRecords.count) items, "
+            + "\(remoteCategoryRecords.count) cat, \(remoteFriendRecords.count) friends"
 
         let remoteTransactions = remoteTransactionRecords.compactMap { cloudKit.transactionFromRecord($0) }
         let remoteCategories = remoteCategoryRecords.compactMap { cloudKit.categoryFromRecord($0) }

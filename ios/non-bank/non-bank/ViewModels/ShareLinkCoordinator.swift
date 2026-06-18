@@ -39,15 +39,24 @@ final class ShareLinkCoordinator: ObservableObject {
         case idle
         /// Receiver needs (or doesn't need) the picker. The
         /// `autoPickIndex` carries the inferred participant index when
-        /// the classifier identified the receiver by ID — the UI layer
-        /// then skips rendering the picker and commits directly. When
-        /// `nil`, the picker is shown for real (multi-participant case
-        /// without ID match).
+        /// the classifier identified the receiver by ID (or by being the
+        /// lone phantom) — the UI layer then skips rendering the picker
+        /// and commits directly. When `nil`, the picker is shown for real.
+        ///
+        /// `candidateIndices` are the ONLY `payload.f[]` indices the
+        /// picker may offer (the phantom participants the receiver could
+        /// legitimately be — see `ShareIntent.createWithPicker`). Empty
+        /// for the auto-pick path (picker isn't rendered) and for the
+        /// update-path re-show, where the picker falls back to all
+        /// participants (the receiver already owns a local copy, so a
+        /// mis-pick there can't corrupt the SHARER's data the way a
+        /// fresh create can).
         case showingPicker(
             payload: SharedTransactionPayload,
             isForUpdate: Bool,
             existingID: Int?,
-            autoPickIndex: Int?
+            autoPickIndex: Int?,
+            candidateIndices: [Int]
         )
         /// Same `syncID` already on device but the sharer changed the
         /// content. UI shows confirmation alert. `knownParticipantIndex`
@@ -204,6 +213,20 @@ final class ShareLinkCoordinator: ObservableObject {
         }
     }
 
+    /// Await the in-flight share-items fetch and return the decrypted
+    /// items (or `nil` when the server has none / decrypt failed). Used
+    /// by the "Who are you?" picker to show each candidate's byItems
+    /// breakdown BEFORE the receiver taps — so they can identify
+    /// themselves by the items assigned to them, not just by name.
+    ///
+    /// Returns the SAME task the import path (`pickedParticipant`) awaits,
+    /// so reading items here doesn't consume or race them — both callers
+    /// observe the one resolved value. Safe to call when no fetch is in
+    /// flight (returns `nil`).
+    func awaitFetchedItemsForPicker() async -> [ReceiptItem]? {
+        await itemsFetchTask?.value ?? nil
+    }
+
     /// Decoded but not-yet-classified payload. The view layer reads this
     /// once stores are ready and calls `startRouting(_:in:)`. Cleared
     /// once routing transitions out of `.idle`.
@@ -237,22 +260,27 @@ final class ShareLinkCoordinator: ObservableObject {
         analytics.track(.shareLinkOpened(outcome: outcome))
         switch intent {
         case .createAuto(let idx):
-            // Receiver is unambiguous (single-participant or matched by
-            // ID). Transition to `.showingPicker` with `autoPickIndex`
-            // set — the View layer detects this and commits directly,
-            // never rendering the picker UI.
+            // Receiver is unambiguous (single-participant, matched by ID,
+            // or the lone phantom). Transition to `.showingPicker` with
+            // `autoPickIndex` set — the View layer detects this and commits
+            // directly, never rendering the picker UI.
             routingState = .showingPicker(
                 payload: payload,
                 isForUpdate: false,
                 existingID: nil,
-                autoPickIndex: idx
+                autoPickIndex: idx,
+                candidateIndices: []
             )
-        case .createWithPicker:
+        case .createWithPicker(let candidateIndices):
+            // Ambiguous among the phantom candidates. Carry the candidate
+            // index set so the picker offers ONLY those participants — a
+            // connected friend can never be shown (or picked).
             routingState = .showingPicker(
                 payload: payload,
                 isForUpdate: false,
                 existingID: nil,
-                autoPickIndex: nil
+                autoPickIndex: nil,
+                candidateIndices: candidateIndices
             )
         case .identical(let id):
             // Translate the classifier's int id to syncID — the rest
@@ -495,11 +523,16 @@ final class ShareLinkCoordinator: ObservableObject {
                 receiptItemStore: receiptItemStore
             )
         } else {
+            // Update re-show: the receiver already owns a local copy, so
+            // mis-identifying here can't corrupt the SHARER's data the way a
+            // fresh create can. Offer all participants (empty candidate set
+            // = "no phantom filter") to preserve the prior update behavior.
             routingState = .showingPicker(
                 payload: payload,
                 isForUpdate: true,
                 existingID: existingID,
-                autoPickIndex: nil
+                autoPickIndex: nil,
+                candidateIndices: []
             )
         }
     }
@@ -613,8 +646,8 @@ extension ShareLinkCoordinator.RoutingState: Equatable {
         switch (lhs, rhs) {
         case (.idle, .idle):
             return true
-        case let (.showingPicker(lp, lu, le, la), .showingPicker(rp, ru, re, ra)):
-            return lp == rp && lu == ru && le == re && la == ra
+        case let (.showingPicker(lp, lu, le, la, lc), .showingPicker(rp, ru, re, ra, rc)):
+            return lp == rp && lu == ru && le == re && la == ra && lc == rc
         case let (.showingUpdateAlert(lp, le, lk), .showingUpdateAlert(rp, re, rk)):
             return lp == rp && le == re && lk == rk
         case let (.identical(l), .identical(r)):

@@ -127,6 +127,36 @@ struct SharedTransactionPayload: Codable, Equatable {
         /// (`FriendShare.paidAmount`). Usually 0 — the sharer often pays
         /// for everyone.
         let pa: Double
+        /// "Connected": was this participant a CONNECTED/real-user friend
+        /// on the sharer's side at share time (`Friend.isConnected`)?
+        ///
+        /// Drives the recipient-identity invariant in
+        /// `ShareIntentClassifier`: a participant the sharer addressed by
+        /// a REAL userID is `cn == true`; a phantom / ad-hoc person the
+        /// sharer addressed by a generated id is `cn == false`. If the
+        /// receiver can't match any participant by their own userID, they
+        /// MUST be one of the phantoms — so the picker shows only
+        /// `cn != true` candidates and never lets the receiver mis-pick a
+        /// connected friend (which would corrupt the sharer's synced data).
+        ///
+        /// OPTIONAL on purpose: links emitted before this field existed
+        /// decode with `cn == nil`, which the classifier treats the same
+        /// as `false` (`cn != true`) — so OLD links naturally fall back to
+        /// "every participant is a candidate" = the original behavior.
+        let cn: Bool?
+
+        // Explicit memberwise init so the `cn:` argument can default to
+        // `nil`. Without this, every existing `Participant(...)` call site
+        // (encoder, tests, fixtures) would have to pass `cn`. Defaulting
+        // here keeps them all building unchanged; the encoder passes the
+        // real value.
+        init(id: String, n: String, sh: Double, pa: Double, cn: Bool? = nil) {
+            self.id = id
+            self.n = n
+            self.sh = sh
+            self.pa = pa
+            self.cn = cn
+        }
     }
 
     // Custom memberwise init — Swift's synthesized one doesn't support

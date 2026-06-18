@@ -53,6 +53,8 @@ final class ShareIntentClassifierTests: XCTestCase {
     }
 
     func testClassify_multipleParticipants_noIDMatch_isCreateWithPicker() {
+        // Fixtures carry no `cn` field (legacy `nil`), so every participant
+        // is a phantom candidate → picker shows all three (original behavior).
         let payload = makePayload(participantCount: 3)
         let intent = ShareIntentClassifier.classify(
             payload: payload,
@@ -60,7 +62,60 @@ final class ShareIntentClassifierTests: XCTestCase {
             existingTransactions: [],
             checksumOf: { _ in nil }
         )
-        XCTAssertEqual(intent, .createWithPicker)
+        XCTAssertEqual(intent, .createWithPicker(candidateIndices: [0, 1, 2]))
+    }
+
+    // MARK: - Phantom-candidate filtering (the new recipient-identity fix)
+
+    func testClassify_oneConnectedTwoPhantoms_noIDMatch_picksOnlyPhantoms() {
+        // Sharer's split: 1 connected friend (cn==true, addressed by real id)
+        // + 2 phantoms. Receiver matches none by id → must be a phantom.
+        // Picker must offer ONLY the two phantom indices (1, 2), never the
+        // connected friend (index 0).
+        let participants: [SharedTransactionPayload.Participant] = [
+            .init(id: "connected-real-AAAA", n: "Connected", sh: 30, pa: 0, cn: true),
+            .init(id: "phantom-1-XXXX", n: "Phantom One", sh: 30, pa: 0, cn: false),
+            .init(id: "phantom-2-YYYY", n: "Phantom Two", sh: 30, pa: 0, cn: false)
+        ]
+        let payload = SharedTransactionPayload(
+            v: 1, id: "tx-mixed", s: "sharer-A1B2",
+            ta: 90, pa: 90, ms: 30, c: "EUR", d: 1_700_000_000, k: "exp",
+            t: "Test", cn: "Food", ce: "🍕", sm: nil, sn: nil,
+            f: participants
+        )
+        let intent = ShareIntentClassifier.classify(
+            payload: payload,
+            receiverID: "unrelated-Z9Z9",
+            existingTransactions: [],
+            checksumOf: { _ in nil }
+        )
+        XCTAssertEqual(intent, .createWithPicker(candidateIndices: [1, 2]))
+    }
+
+    func testClassify_threeConnectedOnePhantom_noIDMatch_autoIDsTheLonePhantom() {
+        // The motivating bug: 3 already-connected friends + 1 new person.
+        // Receiver can't match by id (sharer used a phantom id for them) →
+        // exactly one phantom → auto-identify it. No picker, no chance to
+        // pick a wrong connected friend.
+        let participants: [SharedTransactionPayload.Participant] = [
+            .init(id: "conn-1", n: "A", sh: 25, pa: 0, cn: true),
+            .init(id: "conn-2", n: "B", sh: 25, pa: 0, cn: true),
+            .init(id: "conn-3", n: "C", sh: 25, pa: 0, cn: true),
+            .init(id: "phantom-new", n: "New Person", sh: 25, pa: 0, cn: false)
+        ]
+        let payload = SharedTransactionPayload(
+            v: 1, id: "tx-lone-phantom", s: "sharer-A1B2",
+            ta: 100, pa: 100, ms: 25, c: "EUR", d: 1_700_000_000, k: "exp",
+            t: "Test", cn: "Food", ce: "🍕", sm: nil, sn: nil,
+            f: participants
+        )
+        let intent = ShareIntentClassifier.classify(
+            payload: payload,
+            receiverID: "unrelated-Z9Z9",
+            existingTransactions: [],
+            checksumOf: { _ in nil }
+        )
+        XCTAssertEqual(intent, .createAuto(participantIndex: 3))
     }
 
     // MARK: - Receiver-by-ID auto-resolve (the new optimization)
@@ -114,7 +169,8 @@ final class ShareIntentClassifierTests: XCTestCase {
             existingTransactions: [],
             checksumOf: { _ in nil }
         )
-        XCTAssertEqual(intent, .createWithPicker)
+        // No `cn` on these fixtures → all three are legacy phantom candidates.
+        XCTAssertEqual(intent, .createWithPicker(candidateIndices: [0, 1, 2]))
     }
 
     // MARK: - Re-import paths

@@ -162,11 +162,20 @@ enum SharedTransactionLink {
             // Better than throwing — receivers can rename later, and
             // throwing on legacy data would block the share entirely.
             let displayName = friendsByID[share.friendID]?.name ?? share.friendID
+            // `cn` ("connected"): is this participant a connected/real-user
+            // friend on the sharer's side? Drives the recipient-identity
+            // invariant in `ShareIntentClassifier` — connected participants
+            // were addressed by their real userID and can never legitimately
+            // be the receiver once an id-match fails, so they're excluded
+            // from the picker's candidate set. A friend with no record (ad-hoc
+            // participant) or an unconnected friend is a phantom → `false`.
+            let isConnected = friendsByID[share.friendID]?.isConnected ?? false
             return SharedTransactionPayload.Participant(
                 id: share.friendID,
                 n: displayName,
                 sh: share.share,
-                pa: share.paidAmount
+                pa: share.paidAmount,
+                cn: isConnected
             )
         }
 

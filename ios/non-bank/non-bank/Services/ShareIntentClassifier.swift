@@ -28,10 +28,19 @@ nonisolated enum ShareIntent: Equatable {
     case createAuto(participantIndex: Int)
 
     /// No prior import for this `syncID`, the payload has multiple
-    /// participants AND no `id` matched the receiver — we can't know
-    /// which one is them. UI shows the "Who are you?" picker; the
-    /// picked index then feeds into `ReceivedTransactionMapper`.
-    case createWithPicker
+    /// PHANTOM candidates AND no `id` matched the receiver — we can't
+    /// know which one is them. UI shows the "Who are you?" picker.
+    ///
+    /// `candidateIndices` are indices into `payload.f[]` of the only
+    /// participants the receiver could legitimately be: the phantom
+    /// (`cn != true`) ones. Connected participants (`cn == true`) were
+    /// addressed by their real userID — if the receiver were one of
+    /// them they'd have matched by id and we'd never be here — so they
+    /// are NEVER offered as a choice (picking a connected friend would
+    /// corrupt the sharer's synced data). The picked row maps back to
+    /// the original `payload.f[]` index via this array, which then feeds
+    /// `ReceivedTransactionMapper`.
+    case createWithPicker(candidateIndices: [Int])
 
     /// We already imported a transaction with this `syncID` and the
     /// stored checksum matches the new payload bit-for-bit. Nothing to
@@ -135,13 +144,43 @@ enum ShareIntentClassifier {
         // unambiguous — either:
         //   - we matched them by ID (knownIndex set, any participant count), or
         //   - exactly one participant exists (knownIndex unused, must be 0)
-        // Otherwise fall back to the picker.
         if let idx = knownIndex {
             return .createAuto(participantIndex: idx)
         }
         if payload.f.count == 1 {
             return .createAuto(participantIndex: 0)
         }
-        return .createWithPicker
+
+        // The receiver did NOT match any participant by their real userID
+        // (`knownIndex == nil`). Recipient-identity invariant: the sharer
+        // addressed every CONNECTED friend by their real userID, so if the
+        // receiver were one of those connected participants they'd have
+        // matched above. Therefore the receiver can ONLY be one of the
+        // PHANTOM participants — the ones the sharer addressed by a
+        // generated id. Restrict the candidate set to those.
+        //
+        // `cn != true` selects phantoms (`cn == false`) AND legacy payloads
+        // (`cn == nil`, emitted before this field existed). For an old link
+        // every participant is `cn == nil`, so every index becomes a
+        // candidate → this naturally degrades to the original "show all"
+        // behavior, preserving backward compatibility.
+        let candidateIndices = payload.f.indices.filter { payload.f[$0].cn != true }
+
+        // Exactly one phantom → it MUST be the receiver (everyone else is a
+        // connected friend who can't be them). Auto-identify safely, no
+        // picker needed. This is the core fix: a new person in a split with
+        // already-connected friends is now pinned down automatically.
+        if candidateIndices.count == 1 {
+            return .createAuto(participantIndex: candidateIndices[0])
+        }
+
+        // Multiple phantoms (or, for legacy links, multiple participants):
+        // genuinely ambiguous. Show the picker, but carry ONLY the phantom
+        // candidates so a connected friend can never be picked. Edge case:
+        // if every participant were somehow connected, `candidateIndices`
+        // is empty and the picker shows nothing — but that can't happen
+        // legitimately here (an unmatched receiver implies at least one
+        // phantom), and an empty picker is still safe (no wrong pick).
+        return .createWithPicker(candidateIndices: candidateIndices)
     }
 }

@@ -105,7 +105,7 @@ If the receipt genuinely shows only weight + unit price with NO printed line tot
 
 # Multi-line item names & indented add-ons — bind each name to ITS OWN amount
 
-Restaurant bills (e.g. "ГОСТЕВОЙ СЧЕТ" / guest checks) often print a main dish, then one or more INDENTED lines beneath it. Decide each indented line independently by ONE test — does it have its OWN amount in the right-hand amount column?
+Restaurant / café / bar bills in ANY language or script (guest checks — EN "Guest check", RU "ГОСТЕВОЙ СЧЕТ", DE "Bewirtungsbeleg", FR "Addition", IT "Conto", ES "Cuenta", JA "御会計", and every other equivalent) often print a main dish, then one or more INDENTED lines beneath it. This rule is purely STRUCTURAL: it keys on LAYOUT — indentation, and whether the line carries its own amount in the right-hand column — NOT on any language-specific keyword. Apply it to EVERY receipt of this shape regardless of language, script, or currency. Decide each indented line independently by ONE test — does it have its OWN amount in the right-hand amount column?
 
 - **NO amount of its own → it is a NAME CONTINUATION.** Append its text to the name of the item DIRECTLY ABOVE. Do NOT emit a separate item, do NOT give it a \`total\`. The combined name keeps the amount that was already on the line above.
 - **HAS its own amount → it is a SEPARATE item (a priced add-on / modifier).** Emit it as its own item: \`name\` = ONLY that indented line's own text; \`total\` = the amount on THAT line. Do NOT prepend the parent dish's name, and do NOT append it to the dish above.

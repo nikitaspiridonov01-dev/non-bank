@@ -103,6 +103,41 @@ For most weighted items \`total ≠ unit_price\`. If the number you picked happe
 
 If the receipt genuinely shows only weight + unit price with NO printed line total, fall back to \`total = quantity × unit-price\`. This is a last resort, only when no rightmost-column number exists.
 
+# Multi-line item names & indented add-ons — bind each name to ITS OWN amount
+
+Restaurant bills (e.g. "ГОСТЕВОЙ СЧЕТ" / guest checks) often print a main dish, then one or more INDENTED lines beneath it. Decide each indented line independently by ONE test — does it have its OWN amount in the right-hand amount column?
+
+- **NO amount of its own → it is a NAME CONTINUATION.** Append its text to the name of the item DIRECTLY ABOVE. Do NOT emit a separate item, do NOT give it a \`total\`. The combined name keeps the amount that was already on the line above.
+- **HAS its own amount → it is a SEPARATE item (a priced add-on / modifier).** Emit it as its own item: \`name\` = ONLY that indented line's own text; \`total\` = the amount on THAT line. Do NOT prepend the parent dish's name, and do NOT append it to the dish above.
+
+Hard rules:
+- A \`name\` and its \`total\` MUST come from the SAME printed row. Never carry a running dish-name down onto a later priced line.
+- Stop appending continuations the moment you hit a line that has its own amount, or a new non-indented (left-aligned) dish line.
+- The number of emitted items = the number of lines that carry their own amount (continuation lines carry none and add zero items).
+- A POSITIVE indented amount is a separate ADD-ON item — NOT a per-item discount and NOT a continuation. Do NOT apply the "Per-item discounts — COLLAPSE" rule below to it.
+
+Worked example (RSD restaurant bill; right column = amount):
+
+  Printed on receipt                 amount     →  items
+  ------------------                 ------        -----
+  Lego Breakfast            qty 1     590,00       name: "Lego Breakfast style - scramble", total: 590.00
+     style - scramble                 (none)         (continuation — folded into the line above, NOT its own item)
+     Salmon                           220,00       name: "Salmon", total: 220.00   (own amount → separate item)
+  Sirniki 3pcs              qty 1     850,00       name: "Sirniki 3pcs Lemon curd free", total: 850.00
+     Lemon curd free                  (none)         (continuation — folded in)
+  Cherry espresso Tonic     qty 1     470,00       name: "Cherry espresso Tonic", total: 470.00
+  Lego Breakfast            qty 1     590,00       name: "Lego Breakfast style - scramble", total: 590.00
+     style - scramble                 (none)         (continuation)
+     Guakomole                        180,00       name: "Guakomole", total: 180.00   (own amount → separate item)
+     Salmon                           220,00       name: "Salmon", total: 220.00      (own amount → separate item)
+
+  → 7 items: 590, 220, 850, 470, 590, 180, 220 (sum 3120 = printed ИТОГО К ОПЛАТЕ 3 120,00). ✅
+
+Anti-patterns (do NOT do these):
+- ❌ "Lego Breakfast style - scramble Salmon" = 590 — glued the priced add-on's NAME onto the dish; Salmon is its OWN item at 220.
+- ❌ "Sirniki 3pcs Lemon curd free" = 220 — gave Sirniki's name to Salmon's amount; the name drifted off its row. Each name stays on the row of its own amount.
+- ❌ Folding "Salmon 220,00" into the dish above (like a per-item discount) — a POSITIVE indented amount is a separate ADD-ON item, not a discount and not a continuation.
+
 # Items — EXTRACT as NEGATIVE totals (deductions)
 
 This rule covers BILL-WIDE discounts only (voucher / coupon / loyalty card / "%-off everything" applied after the subtotal). Per-item discounts have a separate rule — see the "Per-item discounts" section below.
@@ -300,12 +335,13 @@ Set \`language\` to the ISO-639-1 code (two-letter lowercase: \`en\`, \`ru\`, \`
 
 # Pre-emit sanity check (do this silently before writing the JSON)
 
-Before producing the JSON, re-scan your items list for two specific failure modes:
+Before producing the JSON, re-scan your items list for three specific failure modes:
 
 1. **Weighted items with the wrong number in \`total\`.** Walk through every item whose row contains \`/кг\`, \`/kg\`, \`/100г\`, \`/100g\`, \`/L\`, \`/л\`, \`/oz\`, \`/lb\`, \`×\`, \`@\`, \`per\`, or \`шт\`. For each, check: does the value you put in \`total\` look like the per-unit rate from the receipt, or like the actual line total in the rightmost column? If it equals a per-kg / per-100g / per-litre rate while quantity ≠ 1, REPLACE it with the rightmost number on that row (or the line below) before emitting.
 2. **Edge items dropped.** Walk the items array against the receipt top-to-bottom. Did you skip the FIRST few items at the top of the receipt, or the LAST few before the subtotal? Long receipts often have items running close to the page edges. Add anything you missed.
+3. **Name/amount alignment on indented bills.** For any receipt with indented sub-lines, verify each emitted name sits on the SAME row as its amount, that you appended ONLY amount-less continuation lines to the name above, and that EVERY indented line with its own amount became its own item with only its own text as the name. The item count must equal the count of amount-bearing lines on the receipt.
 
-Only after both passes, emit the JSON.
+Only after all passes, emit the JSON.
 
 # Final reminder
 

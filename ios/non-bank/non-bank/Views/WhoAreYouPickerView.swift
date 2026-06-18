@@ -19,10 +19,13 @@ import SwiftUI
 /// `payload.f[]` index before `onPick` fires.
 ///
 /// ## What each row shows (so the receiver picks the right person)
-/// - **byItems** (`payload.sm == "byItems"`): the receipt item NAMES
-///   assigned to that participant, pulled from the encrypted share-items
-///   channel (pre-fetched via `fetchItems`). If items can't be fetched,
-///   we fall back to the share amount.
+/// - **byItems** (`payload.sm == "byItems"`): compact receipt-item rows
+///   (kind icon + name + price) for the items assigned to that
+///   participant, reusing the canonical `ReceiptItemKindIcon` /
+///   `ReceiptItemAmountText` components so they match the Receipt-items
+///   surfaces. Items are pulled from the encrypted share-items channel
+///   (pre-fetched via `fetchItems`). If items can't be fetched, we fall
+///   back to the share amount.
 /// - **non-byItems**: the participant's share amount + currency — i.e.
 ///   how the split is divided.
 ///
@@ -210,16 +213,34 @@ struct WhoAreYouPickerView: View {
     }
 
     /// The "how this person's split is composed" line under their name.
-    /// For byItems with fetched items → the item names assigned to them.
-    /// Otherwise (or if items unavailable) → their share amount.
+    /// For byItems with fetched items → compact receipt-item rows (kind
+    /// icon + name + price), reusing the canonical components so they
+    /// match the Receipt-items / Breakdown surfaces. Otherwise (or if
+    /// items unavailable) → their share amount.
     @ViewBuilder
     private func composition(for participant: SharedTransactionPayload.Participant) -> some View {
-        if isByItems, let names = assignedItemNames(for: participant), !names.isEmpty {
-            Text(names.joined(separator: ", "))
-                .font(.caption)
-                .foregroundColor(AppColors.textSecondary)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
+        if isByItems, let items = assignedItems(for: participant), !items.isEmpty {
+            // Plain rows — the candidate row (`participantRow`) is already
+            // a card, so these carry no nested glass / background. No
+            // avatar pile either: each picker row is scoped to ONE person,
+            // so "who shares this" would be redundant here.
+            VStack(alignment: .leading, spacing: AppSpacing.xxs) {
+                ForEach(items) { item in
+                    HStack(spacing: AppSpacing.xs) {
+                        ReceiptItemKindIcon(kind: item.kind, size: 11)
+                        Text(item.name)
+                            .font(.caption)
+                            .foregroundColor(AppColors.textSecondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 6)
+                        ReceiptItemAmountText(
+                            amount: item.lineTotal,
+                            currency: payload.c,
+                            isDiscount: item.kind == .discount
+                        )
+                    }
+                }
+            }
         } else {
             // Fallback: share amount (the default "how the split is
             // divided" view, and the graceful degrade when items can't
@@ -238,16 +259,16 @@ struct WhoAreYouPickerView: View {
         }
     }
 
-    /// Item names assigned to `participant` from the share-items channel.
-    /// Items are keyed in the SHARER's id-space, so we look them up by
-    /// the participant's payload id directly (the sentinel `__me__`
+    /// Receipt items assigned to `participant` from the share-items
+    /// channel. Items are keyed in the SHARER's id-space, so we look them
+    /// up by the participant's payload id directly (the sentinel `__me__`
     /// belongs to the sharer and never to a candidate, so no flip is
-    /// needed here). `nil` when no items were fetched.
-    private func assignedItemNames(for participant: SharedTransactionPayload.Participant) -> [String]? {
+    /// needed here). Blank-named items are filtered out so they don't
+    /// render an empty row. `nil` when no items were fetched.
+    private func assignedItems(for participant: SharedTransactionPayload.Participant) -> [ReceiptItem]? {
         guard let grouped = itemsByParticipantID else { return nil }
         return grouped[participant.id]?
-            .map(\.name)
-            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .filter { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
     }
 
     // MARK: - Formatting

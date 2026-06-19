@@ -267,6 +267,13 @@ struct MainTabView: View {
                 guard let router, router.pendingSplitShareSyncID == nil else { return }
                 router.promptSplitShare(syncID: syncID)
             }
+            // Sharer-side pairing toast: when WE newly connect a friend (via
+            // their reciprocal handshake or the self-heal path), reuse the
+            // `pairingToast` channel already mounted below. Invoked on the
+            // main actor by SyncEngine.
+            SyncEngine.shared.onPaired = { name in
+                shareLinkCoordinator.pairingToast = "You're now synced with \(name) — shared expenses will sync automatically."
+            }
             Task { await SyncEngine.shared.pullAndApply() }
             requestNotificationPermission()
             startSpawnTimer()

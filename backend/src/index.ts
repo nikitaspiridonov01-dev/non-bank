@@ -32,7 +32,7 @@ import {
   registerDeviceToken,
   getDeviceTokens,
 } from "./sync.ts";
-import { apnsConfigFromEnv, sendPush } from "./apns.ts";
+import { apnsConfigFromEnv, sendPush, sendPairingPush } from "./apns.ts";
 import { handleTestProviders } from "./test_providers.ts";
 import {
   issueChallenge,
@@ -508,6 +508,11 @@ async function handleSyncUpload(req: Request, env: Env, ctx: ExecutionContext): 
     // "updated" without the server ever reading the (encrypted) content.
     const isEdit = body.version >= 1;
     ctx.waitUntil(sendDeliveryPush(env, recipientId, txSyncId, isEdit, nowSec));
+  } else if (applied && body.op === "pair") {
+    // A friend just completed the reciprocal pairing handshake addressed to
+    // this recipient (the sharer). Nudge them with a visible push so the
+    // handshake applies instantly instead of on the next 60s foreground poll.
+    ctx.waitUntil(sendPairingPush(env, body.recipient_id, nowSec));
   }
 
   logEvent(env, "info", { route: "/v1/sync/upload", applied, op: body.op });

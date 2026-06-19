@@ -7,6 +7,9 @@
 // open. Best-effort throughout: if APNs isn't configured or a send fails,
 // sync still works via pull.
 
+import { getDeviceTokens } from "./sync.ts";
+import type { Env } from "./index.ts";
+
 export interface ApnsConfig {
   keyP8: string;    // PEM contents of the APNs auth key (.p8)
   keyId: string;    // APNs Key ID (10 chars)
@@ -115,5 +118,32 @@ export async function sendPush(
     return res.status === 200;
   } catch {
     return false;
+  }
+}
+
+/// Nudge the SHARER side that a friend just completed the reciprocal pairing
+/// handshake (an `op="pair"` delivery addressed to them). Mirrors
+/// sendDeliveryPush: same token fetch + per-token visible alert + config
+/// guard. Zero-knowledge — the server never learns the friend's name, so the
+/// copy is generic. Best-effort: no push configured / send fails → the
+/// handshake still applies on the next foreground pull.
+export async function sendPairingPush(
+  env: Env,
+  recipientId: string,
+  nowSec: number,
+): Promise<void> {
+  const config = apnsConfigFromEnv(env);
+  if (!config) return; // push not configured — pull still applies the handshake
+  const tokens = await getDeviceTokens(env.DB, recipientId);
+  if (tokens.length === 0) return;
+  const alert = {
+    title: "You're now connected",
+    body: "You're now connected — shared expenses will sync automatically.",
+  };
+  // No tx_sync_id to deep-link; just a marker so the app can pull the inbox
+  // and apply the handshake on tap/foreground.
+  const data = { type: "pair" };
+  for (const t of tokens) {
+    await sendPush(config, t.token, t.env, alert, nowSec, data);
   }
 }

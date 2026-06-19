@@ -47,6 +47,12 @@ final class NotificationCoordinator: NSObject, ObservableObject, UNUserNotificat
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        // A push arriving while the app is foreground doesn't trigger the
+        // tap path or a scenePhase transition, so neither inbox pull fires.
+        // Pull here too so a foreground push (e.g. the reciprocal pairing
+        // handshake nudge) applies immediately. Idempotent no-op fetch
+        // otherwise.
+        Task { await SyncEngine.shared.pullAndApply() }
         completionHandler([.banner, .sound, .badge])
     }
 }

@@ -35,6 +35,14 @@ final class SyncEngine {
     /// so this fires in a context where a share prompt is appropriate.
     var onUploadFailure: ((String) -> Void)?
 
+    /// Invoked on the main actor with a connected friend's display name when
+    /// the SHARER side NEWLY connects a friend — via a reciprocal pairing
+    /// handshake (`applyPairHandshake`) or the self-heal path
+    /// (`selfHealPairing`). Wired in `MainTabView` to surface the "you're now
+    /// synced" toast. The recipient's own import toast (`ShareLinkCoordinator`)
+    /// is unaffected.
+    var onPaired: ((String) -> Void)?
+
     /// Re-entrancy guard so overlapping foregrounds don't double-pull.
     private var isPulling = false
 
@@ -359,6 +367,12 @@ final class SyncEngine {
                 await friendStore.add(Friend(id: handshake.rid, name: name, isConnected: true))
                 await transactionStore.upgradePhantomFriendID(from: candidateID, to: handshake.rid)
             }
+            // Newly connected the friend (any branch above) — surface the
+            // sharer-side "you're now synced" toast. Prefer the handshake's
+            // name, else the friend's stored name, else a generic fallback.
+            let pairedName = (handshake.n?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+                ?? friendStore.friend(byID: handshake.rid)?.name ?? "your friend"
+            await MainActor.run { self.onPaired?(pairedName) }
             return true
         }
         // No matching candidate (the friend/participant isn't on this device
@@ -417,6 +431,11 @@ final class SyncEngine {
             await friendStore.add(Friend(id: senderRealID, name: name, isConnected: true))
         }
         await transactionStore.upgradePhantomFriendID(from: phantomID, to: senderRealID)
+        // Reaching here means we DID newly connect (the early-returns above
+        // cover the already-connected / no-op cases) — surface the sharer-side
+        // "you're now synced" toast. Prefer the sender's name, else fallback.
+        let pairedName = (senderName?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? "your friend"
+        await MainActor.run { self.onPaired?(pairedName) }
     }
 
     /// Headless apply — the non-UI sibling of

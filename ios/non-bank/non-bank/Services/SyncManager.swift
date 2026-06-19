@@ -536,10 +536,26 @@ class SyncManager: ObservableObject {
         guard Self.isCloudKitEnabled, isSyncEnabled else { return }
         await checkAvailability()
         guard iCloudAvailable else { return }
-        try? await pullChanges()
+        // Automatic restore: if we have sync ON but no local transactions yet
+        // (fresh install / data loss), pull the ENTIRE zone, not just deltas —
+        // this replaces the old manual "Restore from iCloud" button. Once data
+        // exists locally we fall back to the cheap delta pull.
+        if await isLocalStoreEmpty() {
+            try? await performInitialSync()
+            markSynced()
+        } else {
+            try? await pullChanges()
+        }
         // Re-push anything whose upload previously failed, so a transient /
         // offline failure self-heals on the next foreground sync.
         await retryPendingSaves()
+    }
+
+    /// True when there are no local transactions — the trigger for a full
+    /// automatic restore on launch. Categories are intentionally ignored
+    /// (the app seeds defaults, so they're never empty).
+    private func isLocalStoreEmpty() async -> Bool {
+        await db.fetchAllTransactions().isEmpty
     }
 
     // MARK: - Merge Logic

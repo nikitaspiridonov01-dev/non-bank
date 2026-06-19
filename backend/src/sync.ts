@@ -133,20 +133,24 @@ export async function recordDelivery(
     op: "upsert" | "delete" | "pair";
     payload: string;
     checksum: string | null;
+    senderId: string | null;
   },
   nowSec: number,
 ): Promise<{ applied: boolean }> {
   const result = await db
     .prepare(
       `INSERT INTO pending_deliveries
-         (recipient_id, tx_sync_id, version, op, payload, checksum,
+         (recipient_id, tx_sync_id, version, op, payload, checksum, sender_id,
           created_at, updated_at, expires_at, acked_at, delete_after)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?7 + ${DELIVERY_TTL_SECONDS}, NULL, NULL)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8, ?7, ?7, ?7 + ${DELIVERY_TTL_SECONDS}, NULL, NULL)
        ON CONFLICT(recipient_id, tx_sync_id) DO UPDATE SET
          version      = excluded.version,
          op           = excluded.op,
          payload      = excluded.payload,
          checksum     = excluded.checksum,
+         -- Keep a known sender sticky: a later edit from an old client that
+         -- omits sender_id must not erase the self-heal hint a newer client set.
+         sender_id    = COALESCE(excluded.sender_id, pending_deliveries.sender_id),
          updated_at   = excluded.updated_at,
          expires_at   = excluded.expires_at,
          acked_at     = NULL,
@@ -161,6 +165,7 @@ export async function recordDelivery(
       d.payload,
       d.checksum,
       nowSec,
+      d.senderId,
     )
     .run();
   return { applied: (result.meta?.changes ?? 0) > 0 };
@@ -172,6 +177,7 @@ export interface InboxDelivery {
   op: string;
   payload: string;
   checksum: string | null;
+  sender_id: string | null;
 }
 
 /// Fetch one recipient's un-acked, non-expired inbox. Idempotent: no TTL
@@ -184,7 +190,7 @@ export async function fetchInbox(
 ): Promise<InboxDelivery[]> {
   const res = await db
     .prepare(
-      `SELECT tx_sync_id, version, op, payload, checksum
+      `SELECT tx_sync_id, version, op, payload, checksum, sender_id
          FROM pending_deliveries
         WHERE recipient_id = ?1 AND acked_at IS NULL AND expires_at > ?2
         ORDER BY updated_at ASC`,

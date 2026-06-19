@@ -94,7 +94,8 @@ final class SyncEngine {
                 else { continue }
                 Task.detached {
                     let ok = await SyncDeliveryService.upload(
-                        pairHMAC: pairHMAC, recipientID: recipientID, txSyncID: syncID,
+                        pairHMAC: pairHMAC, recipientID: recipientID, senderID: myID,
+                        txSyncID: syncID,
                         version: version, op: "upsert", payloadCiphertext: cipher, checksum: checksum
                     )
                     if !ok {
@@ -161,7 +162,8 @@ final class SyncEngine {
             let recipientID = recipient.id
             Task.detached {
                 await SyncDeliveryService.upload(
-                    pairHMAC: pairHMAC, recipientID: recipientID, txSyncID: syncID,
+                    pairHMAC: pairHMAC, recipientID: recipientID, senderID: myID,
+                    txSyncID: syncID,
                     // A high version keeps the tombstone monotonic vs the
                     // last edit the recipient saw; the server still guards
                     // with `>` so a replayed older op can't resurrect it.
@@ -211,33 +213,57 @@ final class SyncEngine {
                 continue
             }
 
+            // Decrypt. Prefer the envelope sender id (cleartext, new in the
+            // 0009 migration): it lets us derive the pairwise key for a sender
+            // we still hold only as an un-upgraded phantom — the basis for the
+            // self-heal below. Fall back to trying each connected friend's key
+            // (legacy deliveries / senders that predate the sender_id field).
             var payload: SharedTransactionPayload?
-            for friend in pairedFriends {
-                if let decoded = SyncDeliveryCrypto.tryDecrypt(
-                    base64: delivery.payload, myID: myID, candidatePeerID: friend.id
-                ) {
-                    payload = decoded
-                    break
+            var decryptedPeerID: String?
+            if let senderID = delivery.sender_id, !senderID.isEmpty,
+               let decoded = SyncDeliveryCrypto.tryDecrypt(
+                   base64: delivery.payload, myID: myID, candidatePeerID: senderID
+               ) {
+                payload = decoded
+                decryptedPeerID = senderID
+            } else {
+                for friend in pairedFriends {
+                    if let decoded = SyncDeliveryCrypto.tryDecrypt(
+                        base64: delivery.payload, myID: myID, candidatePeerID: friend.id
+                    ) {
+                        payload = decoded
+                        decryptedPeerID = friend.id
+                        break
+                    }
                 }
             }
-            // Couldn't decrypt with any paired friend's key — likely the
-            // sender was removed locally. Leave it un-acked; it TTLs out
-            // server-side. (Don't ack what we didn't apply.)
+            // Couldn't decrypt with the sender id or any paired friend's key —
+            // likely the sender was removed locally. Leave it un-acked; it TTLs
+            // out server-side. (Don't ack what we didn't apply.)
             guard let payload else { continue }
+
+            let existing = transactionStore.transactions.first { $0.syncID == delivery.tx_sync_id }
+
+            // SELF-HEALING PAIRING: decrypting via the envelope sender id proves
+            // the sender's real user id. If we still hold them as an un-upgraded
+            // phantom on this split, connect them NOW (before the version guard,
+            // so even an idempotent re-pull heals) — so our uploads start
+            // reaching them and future deliveries match/decrypt by real id. This
+            // makes pairing converge from ordinary traffic instead of depending
+            // on the single fire-and-forget reciprocal pair handshake landing.
+            if let peerID = decryptedPeerID {
+                await selfHealPairing(
+                    senderRealID: peerID, senderName: payload.sn, localTx: existing,
+                    friendStore: friendStore, transactionStore: transactionStore
+                )
+            }
 
             // Sync context: WE are the recipient (this inbox is ours), so we
             // resolve our own participant index directly rather than via the
-            // picker-oriented `ShareIntentClassifier`. The classifier returns
-            // `.createWithPicker` (which a headless pull can only SKIP)
-            // whenever the sharer addressed us by a phantom id instead of our
-            // real userID — and that silent skip is exactly why pushed
-            // deliveries never applied (they only landed via the manual web
-            // link, which has the picker). Here we instead match ourselves by
-            // real id, or — in an unambiguous 2-person split — as the single
-            // non-sharer participant. Update-vs-create is decided by whether we
-            // already hold this syncID, so an edit UPDATES instead of creating
-            // a duplicate.
-            let existing = transactionStore.transactions.first { $0.syncID == delivery.tx_sync_id }
+            // picker-oriented `ShareIntentClassifier`. We match ourselves by
+            // real id, or — in an unambiguous split — as the single non-sharer
+            // participant. Update-vs-create is decided by whether we already
+            // hold this syncID, so an edit UPDATES instead of duplicating.
 
             // Idempotent re-pull / stale-edit guard: we already hold this
             // version (or newer — e.g. we edited locally) → just ack so the
@@ -257,9 +283,21 @@ final class SyncEngine {
             // historical "single non-sharer" behavior (payload.f excludes the
             // sharer by construction).
             let phantomIndices = payload.f.indices.filter { payload.f[$0].cn != true }
-            guard let index = myIndex ?? (phantomIndices.count == 1 ? phantomIndices.first : nil) else {
-                // Genuinely ambiguous (multiple phantom candidates and we
-                // aren't id-matched) — can't pick "us" headlessly. Leave
+            // Resolve "us": real-id match → the single phantom candidate → and,
+            // as a final fallback, the sole non-sharer participant. `payload.f`
+            // excludes the sharer, so a 2-person split has exactly one entry;
+            // this last fallback restores the pre-`cn` behavior that a 2-person
+            // headless apply must ALWAYS work even after we've marked the peer
+            // connected — at which point its payloads carry `cn == true` (so
+            // `phantomIndices` empties) while we may still address it by a
+            // phantom id (so `myIndex` is nil). Without it a legitimate 2-person
+            // upsert is silently skipped (the cn-guard regression).
+            let resolvedIndex = myIndex
+                ?? (phantomIndices.count == 1 ? phantomIndices.first : nil)
+                ?? (payload.f.count == 1 ? payload.f.indices.first : nil)
+            guard let index = resolvedIndex else {
+                // Genuinely ambiguous (3+ participants, no id-match, multiple
+                // phantom candidates) — can't pick "us" headlessly. Leave
                 // un-acked for the manual link flow (which has the picker);
                 // it TTLs out server-side.
                 continue
@@ -326,6 +364,59 @@ final class SyncEngine {
         // No matching candidate (the friend/participant isn't on this device
         // yet) — leave it un-acked so a later pull retries once it exists.
         return false
+    }
+
+    /// Self-healing pairing. Decrypting a delivery via its cleartext envelope
+    /// sender id proves `senderRealID` is the sender's real user id. If we still
+    /// hold that sender as an un-upgraded phantom on this split, connect them:
+    /// upgrade the phantom Friend to the real id + mark connected, and migrate
+    /// the transaction's participant id — so OUR uploads reach them and future
+    /// deliveries match/decrypt by real id. Only acts in the UNAMBIGUOUS case
+    /// (exactly one un-connected participant on our local copy — the common
+    /// 2-person split); multi-phantom splits wait for the explicit pair
+    /// handshake to avoid mapping the sender to the wrong phantom.
+    private func selfHealPairing(
+        senderRealID: String,
+        senderName: String?,
+        localTx: Transaction?,
+        friendStore: FriendStore,
+        transactionStore: TransactionStore
+    ) async {
+        let myID = UserIDService.currentID()
+        guard !senderRealID.isEmpty, senderRealID != myID else { return }
+        // Already connected under their real id → nothing to heal.
+        if friendStore.friends.first(where: { $0.id == senderRealID })?.isConnected == true { return }
+        guard let tx = localTx, let participants = tx.splitInfo?.friends else { return }
+
+        // SAFETY: only self-heal a GENUINELY 2-person split — exactly one
+        // non-owner participant, which therefore MUST be the sender. In a
+        // 3+-person split the envelope sender id alone can't tell us which
+        // participant is the sender, and mis-mapping would rewrite the WRONG
+        // participant's id (silently corrupting the split + debt math). Those
+        // defer to the explicit pair handshake, which carries the exact phantom
+        // id. (`splitInfo.friends` is the non-owner side: our own copy of a
+        // 2-person split holds exactly the one peer.)
+        guard participants.count == 1 else { return }
+        let phantomID = participants[0].friendID
+        // The lone participant is already the sender's real id (or us) → no
+        // phantom to upgrade. Also require it be un-connected to act.
+        guard phantomID != senderRealID, phantomID != myID,
+              friendStore.friends.first(where: { $0.id == phantomID })?.isConnected != true
+        else { return }
+
+        // Connect the sender. Upgrade the phantom Friend if it exists; else
+        // connect an already-present real-id record, or add a fresh one —
+        // never a bare insert that could collide on the primary key.
+        if friendStore.friend(byID: phantomID) != nil {
+            await friendStore.upgradePhantom(phantomID: phantomID, realID: senderRealID)
+        } else if friendStore.friend(byID: senderRealID) != nil {
+            friendStore.markConnected(id: senderRealID)
+        } else {
+            let trimmed = senderName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = (trimmed?.isEmpty == false) ? trimmed! : "Friend"
+            await friendStore.add(Friend(id: senderRealID, name: name, isConnected: true))
+        }
+        await transactionStore.upgradePhantomFriendID(from: phantomID, to: senderRealID)
     }
 
     /// Headless apply — the non-UI sibling of

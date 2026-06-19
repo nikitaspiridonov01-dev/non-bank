@@ -1,0 +1,16 @@
+-- Add the sender's user id to each delivery as a cleartext envelope field.
+--
+-- Why: the recipient derives the pairwise decryption key from the SENDER's
+-- real user id. Until now the inbox row never carried it, so a recipient who
+-- only held the sender as an un-upgraded "phantom" friend (the sharer side of
+-- a fresh pairing) could not derive the key and silently skipped every
+-- delivery — pairing only ever completed via a single, fragile, fire-and-forget
+-- reciprocal handshake. With the sender id present, the recipient can decrypt
+-- any delivery from a known sender, learn their real id, and self-heal the
+-- pairing (connect the phantom) from ordinary traffic instead of depending on
+-- that one handshake landing.
+--
+-- Nullable for backward compatibility: rows written before this column existed
+-- (and clients that don't send it yet) read back NULL, and the recipient falls
+-- back to trying each connected friend's key as before.
+ALTER TABLE pending_deliveries ADD COLUMN sender_id TEXT;

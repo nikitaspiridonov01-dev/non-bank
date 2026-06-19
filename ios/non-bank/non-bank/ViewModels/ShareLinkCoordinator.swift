@@ -597,7 +597,7 @@ final class ShareLinkCoordinator: ObservableObject {
                ) {
                 let pairHMAC = SyncPairing.pairHMAC(myID, sharerID)
                 await SyncDeliveryService.upload(
-                    pairHMAC: pairHMAC, recipientID: sharerID,
+                    pairHMAC: pairHMAC, recipientID: sharerID, senderID: myID,
                     txSyncID: "pair:" + pairHMAC, version: 1, op: "pair",
                     payloadCiphertext: cipher, checksum: nil
                 )

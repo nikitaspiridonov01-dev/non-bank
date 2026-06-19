@@ -22,6 +22,12 @@ enum SyncDeliveryService {
         let op: String
         let payload: String
         let checksum: String?
+        /// Sender's real user id (cleartext envelope field, new in the
+        /// 0009 migration). The recipient derives the pairwise decryption
+        /// key from this, so it can decrypt — and self-heal pairing from —
+        /// a delivery even when it only holds the sender as an un-upgraded
+        /// phantom. `nil` for legacy rows / older senders.
+        let sender_id: String?
     }
 
     private static func syncEndpoint(_ leaf: String) -> URL {
@@ -56,6 +62,7 @@ enum SyncDeliveryService {
         let op: String
         let payload: String
         let checksum: String?
+        let sender_id: String
     }
 
     /// POST /v1/sync/upload — push one addressed, encrypted delivery to a
@@ -67,6 +74,7 @@ enum SyncDeliveryService {
     static func upload(
         pairHMAC: String,
         recipientID: String,
+        senderID: String,
         txSyncID: String,
         version: Int,
         op: String,
@@ -78,7 +86,8 @@ enum SyncDeliveryService {
         await attest(&req)
         let body = UploadBody(
             pair_hmac: pairHMAC, recipient_id: recipientID, tx_sync_id: txSyncID,
-            version: version, op: op, payload: payloadCiphertext, checksum: checksum
+            version: version, op: op, payload: payloadCiphertext, checksum: checksum,
+            sender_id: senderID
         )
         guard let httpBody = try? JSONEncoder().encode(body) else { return false }
         req.httpBody = httpBody

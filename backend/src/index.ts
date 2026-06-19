@@ -465,6 +465,7 @@ async function handleSyncUpload(req: Request, env: Env, ctx: ExecutionContext): 
   let body: {
     pair_hmac?: unknown; recipient_id?: unknown; tx_sync_id?: unknown;
     version?: unknown; op?: unknown; payload?: unknown; checksum?: unknown;
+    sender_id?: unknown;
   };
   try { body = await req.json(); } catch {
     return jsonResponse({ error: "bad_request", detail: "invalid JSON" }, 400);
@@ -478,6 +479,11 @@ async function handleSyncUpload(req: Request, env: Env, ctx: ExecutionContext): 
   if (body.op === "upsert" && payload.length === 0) return jsonResponse({ error: "bad_request", detail: "payload required for upsert" }, 400);
   if (payload.length > MAX_DELIVERY_PAYLOAD_BYTES * 2) return jsonResponse({ error: "payload_too_large", detail: `max ${MAX_DELIVERY_PAYLOAD_BYTES} bytes` }, 413);
   const checksum = typeof body.checksum === "string" ? body.checksum : null;
+  // Cleartext envelope field: the sender's real user id. Lets the recipient
+  // derive the pairwise key + self-heal pairing from this delivery (see
+  // 0009_delivery_sender migration). Lenient: stored NULL when absent/invalid
+  // so older clients keep working.
+  const senderId = isValidUserId(body.sender_id) ? body.sender_id : null;
 
   if (!(await isPairingActive(env.DB, body.pair_hmac))) {
     return jsonResponse({ error: "pairing_inactive", detail: "no active pairing" }, 409);
@@ -485,7 +491,7 @@ async function handleSyncUpload(req: Request, env: Env, ctx: ExecutionContext): 
 
   const { applied } = await recordDelivery(env.DB, {
     recipientId: body.recipient_id, txSyncId: body.tx_sync_id,
-    version: body.version, op: body.op, payload, checksum,
+    version: body.version, op: body.op, payload, checksum, senderId,
   }, nowSec);
 
   // Phase 3: nudge the recipient with an APNs push (only for a freshly

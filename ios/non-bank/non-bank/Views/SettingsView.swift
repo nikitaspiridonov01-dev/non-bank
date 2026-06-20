@@ -192,24 +192,40 @@ struct SettingsView: View {
                     // so a stale date doesn't linger after the user
                     // turns sync off (that toggle is a deliberate
                     // action, not the automatic flicker we fixed).
-                    if syncManager.isSyncEnabled, let synced = syncManager.lastSyncedDate {
+                    // ALWAYS-VISIBLE status (the date never just disappears now):
+                    // a real "Last synced" date once a sync lands, else the live
+                    // phase ("Syncing…" / "Not synced yet"). Restore is automatic
+                    // (syncIfEnabled does a full zone pull on launch when the
+                    // local store is empty), so there's no manual button.
+                    if syncManager.isSyncEnabled {
                         HStack {
                             Text("Last synced")
                                 .foregroundColor(AppColors.textSecondary)
                             Spacer()
-                            Text(synced.formatted(date: .abbreviated, time: .shortened))
+                            Text({
+                                if let synced = syncManager.lastSyncedDate {
+                                    return synced.formatted(date: .abbreviated, time: .shortened)
+                                }
+                                if case .syncing = syncManager.syncStatus { return "Syncing…" }
+                                return "Not synced yet"
+                            }())
                                 .foregroundColor(AppColors.textSecondary)
                                 .font(.caption)
                         }
-                    }
-                    // Restore is automatic: SyncManager.syncIfEnabled() does a
-                    // full zone pull on launch whenever the local store is empty
-                    // (fresh install / data loss), so no manual button is needed.
-                    // Only a hard sync error is surfaced here.
-                    if syncManager.isSyncEnabled, case .error(let msg) = syncManager.syncStatus {
-                        Text(msg)
-                            .font(.caption)
-                            .foregroundColor(AppColors.danger)
+                        // What the last full sync pulled/merged from iCloud —
+                        // restores the diagnostic that makes a failed restore
+                        // visible ("Pulled 0 …" = the zone is empty / nothing was
+                        // backed up, vs a real count = data came down).
+                        if let diag = syncManager.lastDiagnostic {
+                            Text(diag)
+                                .font(.caption)
+                                .foregroundColor(AppColors.textTertiary)
+                        }
+                        if case .error(let msg) = syncManager.syncStatus {
+                            Text(msg)
+                                .font(.caption)
+                                .foregroundColor(AppColors.danger)
+                        }
                     }
                 } header: {
                     Text("Sync")

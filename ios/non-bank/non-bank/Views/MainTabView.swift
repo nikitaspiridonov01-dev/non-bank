@@ -315,7 +315,10 @@ struct MainTabView: View {
         // creates a first connection AND the server confirms the pairing
         // (set in ShareLinkCoordinator.recordPairingBestEffort). Mounted
         // here so it survives sheet/tab changes; auto-dismisses.
-        .toast(message: $shareLinkCoordinator.pairingToast)
+        // Longer than the default 4s: the pairing/"now synced" copy is a full
+        // sentence, so give the reader time to actually read it before it
+        // auto-dismisses.
+        .toast(message: $shareLinkCoordinator.pairingToast, duration: 7)
         // ─── Share-link routing ─────────────────────────────────────
         // `.onOpenURL` on the app root fires very early — typically
         // while `RootView` is still on the splash screen (1.5 s) and

@@ -115,8 +115,10 @@ class SyncManager: ObservableObject {
             syncStatus = .lastSynced(Date())
         } catch {
             print("Enable sync error: \(error)")
-            lastDiagnostic = "iCloud restore failed: \(error.localizedDescription)"
-            syncStatus = .error(error.localizedDescription)
+            if !noteCloudKitError(error) {
+                lastDiagnostic = "iCloud restore failed: \(error.localizedDescription)"
+                syncStatus = .error(error.localizedDescription)
+            }
         }
     }
 
@@ -259,6 +261,19 @@ class SyncManager: ObservableObject {
 
     // MARK: - Push (after local change)
 
+    /// Surface a full-iCloud failure LOUDLY. A `quotaExceeded` save otherwise
+    /// just queues for a retry that can never succeed — so nothing ever backs
+    /// up and the user has no idea why ("iCloud sync does nothing"). Returns
+    /// true when it handled the error, so callers can skip a generic message.
+    @discardableResult
+    private func noteCloudKitError(_ error: Error) -> Bool {
+        guard let ck = error as? CKError, ck.code == .quotaExceeded else { return false }
+        let msg = "iCloud storage is full — free up space in Settings → iCloud to keep backing up."
+        lastDiagnostic = msg
+        syncStatus = .error(msg)
+        return true
+    }
+
     func pushTransaction(_ tx: Transaction, action: SyncAction) async {
         guard Self.isCloudKitEnabled, isSyncEnabled else { return }
         do {
@@ -272,6 +287,7 @@ class SyncManager: ObservableObject {
             }
         } catch {
             print("Push transaction error: \(error)")
+            noteCloudKitError(error)
             switch action {
             case .delete: addPendingDelete(syncID: tx.syncID, key: pendingDeletesTxKey, type: CloudKitService.transactionType)
             case .save:   queueFailedSave(syncID: tx.syncID, key: pendingSaveTxKey)

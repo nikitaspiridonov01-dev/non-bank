@@ -172,10 +172,14 @@ final class SyncEngine {
                 await SyncDeliveryService.upload(
                     pairHMAC: pairHMAC, recipientID: recipientID, senderID: myID,
                     txSyncID: syncID,
-                    // A high version keeps the tombstone monotonic vs the
-                    // last edit the recipient saw; the server still guards
-                    // with `>` so a replayed older op can't resurrect it.
-                    version: Int.max, op: "delete", payloadCiphertext: "", checksum: nil
+                    // A high version keeps the tombstone monotonic vs the last
+                    // edit the recipient saw; the server still guards with `>`
+                    // so a replayed older op can't resurrect it. MUST be
+                    // JSON-safe: `Int.max` overflowed `Int` on the recipient's
+                    // decode and poisoned the whole inbox — see
+                    // `SyncDeliveryService.tombstoneVersion`.
+                    version: SyncDeliveryService.tombstoneVersion,
+                    op: "delete", payloadCiphertext: "", checksum: nil
                 )
             }
         }

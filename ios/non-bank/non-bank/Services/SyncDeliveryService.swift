@@ -101,7 +101,38 @@ enum SyncDeliveryService {
 
     // MARK: - Inbox pull (recipient)
 
-    private struct InboxResponse: Decodable { let deliveries: [InboxDelivery] }
+    /// Tombstone version for `delete` deliveries. Must beat any real
+    /// `editVersion` (small monotonic counters) so a delete always wins the
+    /// server's version guard — but it MUST stay within the JS/JSON
+    /// safe-integer range (2^53-1 = 9_007_199_254_740_991). `Int.max`
+    /// (9.22e18) does NOT: the Worker round-trips it through a JS `number` as
+    /// `9223372036854776000`, which OVERFLOWS Swift's `Int` on decode and made
+    /// the ENTIRE inbox response fail to decode — silently poisoning all sync
+    /// (every pull returned []). 9e12 is astronomically above real edit
+    /// counters yet safely below 2^53.
+    static let tombstoneVersion = 9_000_000_000_000
+
+    /// Wraps a single delivery so ONE malformed element (e.g. a legacy
+    /// `Int.max`-versioned tombstone from a not-yet-updated client) is skipped
+    /// instead of failing the whole array decode — the root cause of the inbox
+    /// poisoning above. A bad row → `value == nil` → dropped; the rest apply.
+    private struct FailableDelivery: Decodable {
+        let value: InboxDelivery?
+        init(from decoder: Decoder) throws {
+            value = try? InboxDelivery(from: decoder)
+        }
+    }
+
+    private struct InboxResponse: Decodable {
+        let deliveries: [InboxDelivery]
+        enum CodingKeys: String, CodingKey { case deliveries }
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            deliveries = try container
+                .decode([FailableDelivery].self, forKey: .deliveries)
+                .compactMap(\.value)
+        }
+    }
 
     /// GET /v1/sync/inbox?recipient_id=… — pull un-acked deliveries.
     /// Returns [] on any failure (offline / non-2xx) so the caller simply

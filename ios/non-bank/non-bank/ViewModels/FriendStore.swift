@@ -102,12 +102,12 @@ class FriendStore: ObservableObject {
     /// record's primary key and mark it `isConnected = true` so the
     /// avatar switches from B&W (phantom) to colour (verified).
     ///
-    /// If a Friend with `realID` already exists separately in the
-    /// store, we leave both records alone — merging two named
-    /// Friends could throw away user-set data and is best left to a
-    /// future explicit "merge contacts" UX. We do still mark the
-    /// existing real-ID Friend as connected, since the round-trip
-    /// proved them to be a real user.
+    /// If a Friend with `realID` already exists separately in the store
+    /// (e.g. the headless mapper just added the sharer as a connected
+    /// real-id friend), we MERGE: keep the real-id record (adopting the
+    /// phantom's user-chosen name + groups, marked connected) and delete
+    /// the phantom, so the user doesn't end up with a grey duplicate
+    /// beside the colour one.
     ///
     /// Note: SQLite Friend table has `id` as PRIMARY KEY, so we INSERT
     /// new + DELETE old rather than UPDATE-ing in place.
@@ -117,18 +117,25 @@ class FriendStore: ObservableObject {
             return
         }
         if let existingReal = friends.first(where: { $0.id == realID }) {
-            // Real ID already exists — don't merge; just flag both as
-            // connected so avatars colour up.
-            if !existingReal.isConnected {
-                let updated = Friend(
-                    id: existingReal.id,
-                    name: existingReal.name,
-                    groups: existingReal.groups,
-                    splitMode: existingReal.splitMode,
-                    isConnected: true
-                )
-                update(updated)
-            }
+            // Real id already exists — typically because applyHeadless's mapper
+            // just added the sharer as a connected real-id friend right before
+            // this upgrade runs. MERGE rather than leave a grey duplicate: keep
+            // the real-id record, adopt the phantom's user-chosen name + merged
+            // groups, mark connected — then DROP the phantom. The caller
+            // migrates transaction participant ids via upgradePhantomFriendID,
+            // so nothing still points at the deleted phantom.
+            let mergedGroups = Array(Set(existingReal.groups + phantom.groups)).sorted()
+            let trimmedPhantomName = phantom.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            update(Friend(
+                id: existingReal.id,
+                name: trimmedPhantomName.isEmpty ? existingReal.name : phantom.name,
+                groups: mergedGroups,
+                splitMode: existingReal.splitMode,
+                isConnected: true
+            ))
+            await repo.delete(id: phantomID)
+            await syncManager?.pushFriend(phantom, action: .delete)
+            await load()
             return
         }
         // Insert a new row with the real ID, copy across name/groups/

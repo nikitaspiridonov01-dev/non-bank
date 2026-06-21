@@ -33,9 +33,14 @@ struct TransactionRowView: View {
         )
     }
 
-    /// Hidden = excluded from insights. The row fades when hidden; this
-    /// opacity is the only inline indicator of the hidden state in the list.
+    /// Hidden = excluded from insights. The row's emoji, title, icons and
+    /// amount fade when hidden (this opacity is the only inline indicator); the
+    /// amount subtitle ("Your share of …") deliberately stays at FULL opacity
+    /// so it doesn't blend into the background and become unreadable.
     private var isHidden: Bool { transaction.excludedFromInsights }
+
+    /// Opacity for the dimmable row elements (everything except the subtitle).
+    private var dimmed: Double { isHidden ? 0.4 : 1 }
 
     /// Amount rendered on the right side of the row. In include-potential
     /// mode for split transactions this is `myShare` (the user's real
@@ -77,6 +82,7 @@ struct TransactionRowView: View {
                         Text(emoji)
                             .font(AppFonts.emojiMedium)
                             .frame(width: AppSizes.emojiFrame, height: AppSizes.emojiFrame)
+                            .opacity(dimmed)
 
                         VStack(alignment: .leading, spacing: AppSpacing.xxs) {
                             Text(transaction.title)
@@ -105,6 +111,7 @@ struct TransactionRowView: View {
                             }
                         }
                         .layoutPriority(0)
+                        .opacity(dimmed)
 
                         Spacer(minLength: 8)
 
@@ -122,6 +129,7 @@ struct TransactionRowView: View {
                                 isIncome: transaction.isIncome,
                                 currency: transaction.currency
                             )
+                            .opacity(dimmed)
                             if let subtitle = amountSubtitle {
                                 // Sized two steps below the row
                                 // description (`caption` / 14pt) so it
@@ -158,7 +166,6 @@ struct TransactionRowView: View {
                         .padding(.leading, AppSizes.dividerLeading)
                 }
             }
-            .opacity(isHidden ? 0.4 : 1)
             .background(AppColors.backgroundPrimary)
         }
         .frame(maxWidth: .infinity)

@@ -1033,6 +1033,10 @@ const PAGE_STYLES = `
   }
   .amount-dec { font-size: 22px; font-weight: 500; color: var(--text-secondary); }
   .amount-currency { font-size: 17px; color: var(--text-secondary); }
+  /* Whole-number amounts render an EMPTY decimal span; left in the flex flow
+     it keeps a flex gap slot on each side, opening a phantom space before the
+     currency (505 then a wide gap then RSD). Collapse it so it sits tight. */
+  .amount-dec:empty, .split-amount .dec:empty, .sheet-amount .dec:empty { display: none; }
   .settled-row { font-size: 15px; color: var(--text-secondary); }
 
   /* Two-tone split card */
@@ -1063,7 +1067,7 @@ const PAGE_STYLES = `
   }
   .split-section .split-amount .int { font-size: 32px; font-weight: 700; }
   .split-section .split-amount .dec { font-size: 20px; color: rgba(255,255,255,0.85); }
-  .split-section .split-amount .cur { font-size: 13px; color: rgba(255,255,255,0.85); margin-left: 4px; }
+  .split-section .split-amount .cur { font-size: 13px; color: rgba(255,255,255,0.85); }
   .split-section .split-label {
     display: inline-flex;
     align-items: center;
@@ -1350,7 +1354,7 @@ const PAGE_STYLES = `
   }
   .sheet-header-ios .sheet-amount .int { font-size: 32px; font-weight: 700; }
   .sheet-header-ios .sheet-amount .dec { font-size: 22px; color: var(--text-secondary); }
-  .sheet-header-ios .sheet-amount .cur { font-size: 17px; color: var(--text-secondary); margin-left: 4px; }
+  .sheet-header-ios .sheet-amount .cur { font-size: 17px; color: var(--text-secondary); }
   .sheet-header-ios .sheet-caption { font-size: 13px; color: var(--text-secondary); }
   .sheet-header-ios .sheet-mode-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
   .sheet-header-ios .sheet-mode-pill {

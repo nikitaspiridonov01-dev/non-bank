@@ -267,12 +267,12 @@ struct MainTabView: View {
                 guard let router, router.pendingSplitShareSyncID == nil else { return }
                 router.promptSplitShare(syncID: syncID)
             }
-            // Sharer-side pairing toast: when WE newly connect a friend (via
-            // their reciprocal handshake or the self-heal path), reuse the
-            // `pairingToast` channel already mounted below. Invoked on the
-            // main actor by SyncEngine.
+            // Sharer-side pairing notification: when WE newly connect a friend
+            // (via their reciprocal handshake or the self-heal path), post the
+            // same local "now synced" notification the recipient side posts.
+            // Invoked on the main actor by SyncEngine.
             SyncEngine.shared.onPaired = { name in
-                shareLinkCoordinator.pairingToast = "You're now synced with \(name) — shared expenses will sync automatically."
+                NotificationService.postPaired(body: "You're now synced with \(name) — shared expenses will sync automatically.")
             }
             Task { await SyncEngine.shared.pullAndApply() }
             requestNotificationPermission()
@@ -311,14 +311,18 @@ struct MainTabView: View {
                 spawnTimer = nil
             }
         }
-        // "New friend added" toast — fires when an inbound share link
-        // creates a first connection AND the server confirms the pairing
-        // (set in ShareLinkCoordinator.recordPairingBestEffort). Mounted
-        // here so it survives sheet/tab changes; auto-dismisses.
-        // Longer than the default 4s: the pairing/"now synced" copy is a full
-        // sentence, so give the reader time to actually read it before it
-        // auto-dismisses.
-        .toast(message: $shareLinkCoordinator.pairingToast, duration: 7)
+        // Pairing notification tapped from the background → open Friends.
+        // `NotificationCoordinator.pendingOpenFriends` flips true; switch to
+        // the Profile tab and ask SettingsView to push FriendsView (via
+        // `router.openFriends`, bound to its NavigationLink). Consume the
+        // coordinator flag so re-foregrounding doesn't re-trigger. The
+        // foreground-tap case never sets the flag (handled in the coordinator).
+        .onChange(of: notificationCoordinator.pendingOpenFriends) { shouldOpen in
+            guard shouldOpen else { return }
+            router.selectedTab = 1
+            router.openFriends = true
+            notificationCoordinator.consumePendingOpenFriends()
+        }
         // ─── Share-link routing ─────────────────────────────────────
         // `.onOpenURL` on the app root fires very early — typically
         // while `RootView` is still on the splash screen (1.5 s) and

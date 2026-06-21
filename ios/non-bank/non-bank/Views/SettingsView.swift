@@ -145,7 +145,12 @@ struct SettingsView: View {
                             Image(systemName: "tag").foregroundColor(.accentColor)
                         }
                     }
-                    NavigationLink {
+                    // `isActive` (not a plain push) so the "friends are now
+                    // synced" notification can deep-link straight here: tapping
+                    // it from the background sets `router.openFriends`, which
+                    // programmatically activates this link. SwiftUI clears the
+                    // binding when the user pops back, so it won't re-push.
+                    NavigationLink(isActive: $router.openFriends) {
                         FriendsView()
                             .environmentObject(friendStore)
                     } label: {

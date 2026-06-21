@@ -36,6 +36,35 @@ enum NotificationService {
 
     // MARK: - Public API
 
+    /// `userInfo["type"]` marker carried by the pairing notification so the
+    /// tap handler (`NotificationCoordinator`) can route it to the Friends
+    /// screen instead of the transaction-card path.
+    static let userInfoTypeKey = "type"
+    /// Value of `userInfoTypeKey` for the "friends are now synced" alert.
+    static let pairedType = "paired"
+
+    /// Posts an immediate local notification announcing that two friends just
+    /// got synced. Replaces the old in-app pairing toast — fires on BOTH sides
+    /// (recipient pairing + sharer handshake) with the same copy. Tapping it
+    /// from the background opens the Friends screen (see NotificationCoordinator).
+    static func postPaired(body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "non-bank"
+        content.body = body
+        content.sound = .default
+        content.userInfo = [userInfoTypeKey: pairedType]
+        // Tiny delay so the request is delivered as a notification even when
+        // the app is foreground at post time (zero-interval triggers are
+        // rejected by the system).
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+        let request = UNNotificationRequest(
+            identifier: "paired-\(UUID().uuidString)",
+            content: content,
+            trigger: trigger
+        )
+        add([request])
+    }
+
     /// Cancels any pending notifications for `transaction` and schedules a
     /// fresh set if the transaction is future-dated or recurring.
     static func schedule(for transaction: Transaction) {

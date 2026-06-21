@@ -13,6 +13,13 @@ final class NavigationRouter: ObservableObject {
     @Published var selectedTab: Int = 0
     @Published var hideTabBar: Bool = false
 
+    /// Drives a programmatic push of `FriendsView` inside the Profile tab's
+    /// `SettingsView` navigation stack. Set true (alongside `selectedTab = 1`)
+    /// when the user taps the "friends are now synced" local notification from
+    /// the background; the Friends `NavigationLink(isActive:)` binds to this
+    /// and clears it on pop, so re-entering Settings doesn't re-push.
+    @Published var openFriends: Bool = false
+
     // MARK: - Create / Edit Transaction Sheet
 
     @Published var showTransactionEditor: Bool = false

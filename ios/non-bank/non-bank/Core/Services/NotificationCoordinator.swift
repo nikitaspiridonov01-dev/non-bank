@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import UserNotifications
+import UIKit
 
 /// Bridges the system notification center into SwiftUI state.
 ///
@@ -14,8 +15,18 @@ final class NotificationCoordinator: NSObject, ObservableObject, UNUserNotificat
     /// `nil` once the UI has consumed the event.
     @MainActor @Published var pendingTransactionSyncID: String?
 
+    /// Set true when the "friends are now synced" notification is tapped from
+    /// the BACKGROUND — drives a switch to the Profile tab + a push of
+    /// `FriendsView`. Reset by the UI once it has navigated. A foreground tap
+    /// leaves this untouched (just dismisses the banner).
+    @MainActor @Published var pendingOpenFriends = false
+
     @MainActor func consumePendingTransaction() {
         pendingTransactionSyncID = nil
+    }
+
+    @MainActor func consumePendingOpenFriends() {
+        pendingOpenFriends = false
     }
 
     // MARK: - UNUserNotificationCenterDelegate
@@ -26,6 +37,23 @@ final class NotificationCoordinator: NSObject, ObservableObject, UNUserNotificat
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let userInfo = response.notification.request.content.userInfo
+
+        // Pairing ("friends are now synced") notification: route to the
+        // Friends screen, but only when tapped from the background. A
+        // foreground tap just dismisses the banner. `applicationState` is
+        // read here (delegate runs on the main thread) so we capture it at
+        // tap time, before any async hop.
+        if userInfo[NotificationService.userInfoTypeKey] as? String == NotificationService.pairedType {
+            let isForeground = UIApplication.shared.applicationState == .active
+            if !isForeground {
+                Task { @MainActor [weak self] in
+                    self?.pendingOpenFriends = true
+                }
+            }
+            completionHandler()
+            return
+        }
+
         let syncID = userInfo[NotificationService.userInfoSyncIDKey] as? String
         Task { @MainActor [weak self] in
             self?.pendingTransactionSyncID = syncID

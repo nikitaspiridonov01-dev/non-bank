@@ -90,11 +90,10 @@ final class ShareLinkCoordinator: ObservableObject {
 
     @Published var routingState: RoutingState = .idle
 
-    /// One-shot message for the "new friend added" toast, set when an
-    /// inbound link both creates a brand-new connection AND the server
-    /// confirms the pairing (so we never claim a pairing the server
-    /// rejected). The UI (MainTabView) shows a transient toast and clears
-    /// this back to nil. Nil on repeat opens / already-connected friends.
+    /// Deprecated. The "new friend added" signal is now delivered as a local
+    /// notification (`NotificationService.postPaired`), not an in-app toast, so
+    /// nothing reads this property anymore. Kept to avoid churning unrelated
+    /// call sites; safe to remove in a dedicated cleanup.
     @Published var pairingToast: String?
 
     /// Diagnostic — last URL we tried to process. Useful for #if DEBUG
@@ -573,9 +572,9 @@ final class ShareLinkCoordinator: ObservableObject {
         myPhantomID: String?
     ) {
         guard !sharerID.isEmpty else { return }
-        // @MainActor so the post-await `pairingToast` assignment lands on the
-        // main thread (after `recordPairing`'s nonisolated network hop) — a
-        // background @Published write can fail to drive the SwiftUI toast.
+        // @MainActor so the post-await pairing-notification post lands on the
+        // main thread (after `recordPairing`'s nonisolated network hop),
+        // consistent with the other UI-facing writes in this task.
         Task { @MainActor [weak self] in
             let myID = UserIDService.currentID()
             let confirmed = await SyncPairing.recordPairing(myID: myID, sharerID: sharerID)
@@ -607,7 +606,7 @@ final class ShareLinkCoordinator: ObservableObject {
             if announceNewFriend {
                 let trimmed = sharerName?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let name = (trimmed?.isEmpty == false) ? trimmed! : "Your friend"
-                self?.pairingToast = "\(name) is now a friend — your shared expenses will sync automatically."
+                NotificationService.postPaired(body: "\(name) is now a friend — your shared expenses will sync automatically.")
             }
         }
     }

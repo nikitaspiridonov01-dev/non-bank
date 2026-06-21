@@ -272,7 +272,7 @@ struct MainTabView: View {
             // same local "now synced" notification the recipient side posts.
             // Invoked on the main actor by SyncEngine.
             SyncEngine.shared.onPaired = { name in
-                NotificationService.postPaired(body: "You're now synced with \(name) — shared expenses will sync automatically.")
+                NotificationService.postPaired(title: "You're now synced with \(name)", body: "Shared expenses will sync automatically.")
             }
             Task { await SyncEngine.shared.pullAndApply() }
             requestNotificationPermission()

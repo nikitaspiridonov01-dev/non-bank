@@ -33,6 +33,10 @@ struct TransactionRowView: View {
         )
     }
 
+    /// Hidden = excluded from insights. The row fades when hidden; this
+    /// opacity is the only inline indicator of the hidden state in the list.
+    private var isHidden: Bool { transaction.excludedFromInsights }
+
     /// Amount rendered on the right side of the row. In include-potential
     /// mode for split transactions this is `myShare` (the user's real
     /// share); in legacy mode it's the stored `amount` (== `paidByMe`).
@@ -154,6 +158,7 @@ struct TransactionRowView: View {
                         .padding(.leading, AppSizes.dividerLeading)
                 }
             }
+            .opacity(isHidden ? 0.4 : 1)
             .background(AppColors.backgroundPrimary)
         }
         .frame(maxWidth: .infinity)

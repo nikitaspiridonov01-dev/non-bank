@@ -237,9 +237,10 @@ final class ShareLinkCoordinator: ObservableObject {
     /// list and transitions the state machine. Called by the View layer
     /// when `pendingPayload` flips non-nil and stores are loaded.
     func startRouting(_ payload: SharedTransactionPayload, in existingTransactions: [Transaction]) {
+        let receiverID = UserIDService.currentID()
         let intent = ShareIntentClassifier.classify(
             payload: payload,
-            receiverID: UserIDService.currentID(),
+            receiverID: receiverID,
             existingTransactions: existingTransactions,
             checksumOf: { $0.payloadChecksum }
         )
@@ -289,6 +290,30 @@ final class ShareLinkCoordinator: ObservableObject {
             // rotates (Replace-reminder flow).
             let syncID = existingTransactions.first(where: { $0.id == id })?.syncID ?? ""
             routingState = .identical(syncID: syncID)
+            // Opening a friend's link is an explicit "sync with this person"
+            // signal even when there's nothing new to import. Without
+            // re-asserting the pairing here, a RE-SHARE of an already-imported
+            // split emits ZERO pairing traffic: a pairing the sharer's
+            // friend-removal revoked stays 'revoked' (their next upload 409s),
+            // and the reciprocal handshake is never re-sent — so the sharer
+            // gets no pairing push and we stay grey on their device. This was
+            // the whole "re-pair after delete does nothing" bug.
+            // `recordPairingBestEffort` re-activates the pair and re-sends the
+            // handshake (whose sender_id envelope lets the sharer recover us);
+            // it no-ops on self-shares (sharerID == our id).
+            if payload.s != receiverID {
+                let myIdx = ShareIntentClassifier.unambiguousReceiverIndex(
+                    payload: payload, receiverID: receiverID
+                )
+                recordPairingBestEffort(
+                    sharerID: payload.s,
+                    sharerName: payload.sn,
+                    announceNewFriend: false,
+                    myPhantomID: myIdx.flatMap {
+                        payload.f.indices.contains($0) ? payload.f[$0].id : nil
+                    }
+                )
+            }
         case .updatePrompt(let id, let knownIdx):
             routingState = .showingUpdateAlert(
                 payload: payload,
@@ -606,7 +631,7 @@ final class ShareLinkCoordinator: ObservableObject {
             if announceNewFriend {
                 let trimmed = sharerName?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let name = (trimmed?.isEmpty == false) ? trimmed! : "Your friend"
-                NotificationService.postPaired(body: "\(name) is now a friend — your shared expenses will sync automatically.")
+                NotificationService.postPaired(title: "\(name) is now a friend", body: "Your shared expenses will sync automatically.")
             }
         }
     }

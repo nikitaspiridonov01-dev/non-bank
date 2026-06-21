@@ -21,6 +21,7 @@ import {
   isValidOp,
   getKeyUserId,
   isPairingActive,
+  upsertPairing,
   recordDelivery,
   fetchInbox,
   ackDeliveries,
@@ -485,7 +486,16 @@ async function handleSyncUpload(req: Request, env: Env, ctx: ExecutionContext): 
   // so older clients keep working.
   const senderId = isValidUserId(body.sender_id) ? body.sender_id : null;
 
-  if (!(await isPairingActive(env.DB, body.pair_hmac))) {
+  // A pair handshake is itself the act of (re)establishing a pairing, so let
+  // it re-activate a row the other side's friend-removal had revoked — instead
+  // of being rejected by the very gate it exists to clear. This is what
+  // stranded re-pairing after a delete: the op="pair" upload 409'd on the
+  // still-revoked row, so the handshake was never recorded and no pairing push
+  // ever fired. For every other op an inactive pairing still means "stop", so
+  // revocation keeps working.
+  if (body.op === "pair") {
+    await upsertPairing(env.DB, body.pair_hmac, nowSec);
+  } else if (!(await isPairingActive(env.DB, body.pair_hmac))) {
     return jsonResponse({ error: "pairing_inactive", detail: "no active pairing" }, 409);
   }
 

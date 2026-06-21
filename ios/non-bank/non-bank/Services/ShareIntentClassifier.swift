@@ -183,4 +183,20 @@ enum ShareIntentClassifier {
         // phantom), and an empty picker is still safe (no wrong pick).
         return .createWithPicker(candidateIndices: candidateIndices)
     }
+
+    /// The participant index the receiver maps to when it can be pinned down
+    /// WITHOUT a picker — mirrors the `createAuto` logic in `classify`: a
+    /// real-id match first, then a single-participant split, then the lone
+    /// phantom. Returns nil when genuinely ambiguous. Used by the re-share
+    /// (`.identical`) path to recover `payload.f[idx].id` — the phantom id the
+    /// sharer assigned us — so it can re-send the pairing handshake.
+    static func unambiguousReceiverIndex(
+        payload: SharedTransactionPayload,
+        receiverID: String
+    ) -> Int? {
+        if let known = payload.f.firstIndex(where: { $0.id == receiverID }) { return known }
+        if payload.f.count == 1 { return 0 }
+        let phantoms = payload.f.indices.filter { payload.f[$0].cn != true }
+        return phantoms.count == 1 ? phantoms.first : nil
+    }
 }

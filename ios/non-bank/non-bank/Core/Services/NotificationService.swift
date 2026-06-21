@@ -47,9 +47,9 @@ enum NotificationService {
     /// got synced. Replaces the old in-app pairing toast — fires on BOTH sides
     /// (recipient pairing + sharer handshake) with the same copy. Tapping it
     /// from the background opens the Friends screen (see NotificationCoordinator).
-    static func postPaired(body: String) {
+    static func postPaired(title: String, body: String) {
         let content = UNMutableNotificationContent()
-        content.title = "non-bank"
+        content.title = title
         content.body = body
         content.sound = .default
         content.userInfo = [userInfoTypeKey: pairedType]

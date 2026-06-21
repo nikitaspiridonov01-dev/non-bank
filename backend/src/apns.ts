@@ -138,7 +138,7 @@ export async function sendPairingPush(
   if (tokens.length === 0) return;
   const alert = {
     title: "You're now connected",
-    body: "You're now connected — shared expenses will sync automatically.",
+    body: "Shared expenses will sync automatically.",
   };
   // No tx_sync_id to deep-link; just a marker so the app can pull the inbox
   // and apply the handshake on tap/foreground.

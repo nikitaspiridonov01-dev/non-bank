@@ -393,8 +393,13 @@ final class SyncEngine {
             // Newly connected the friend (any branch above) — surface the
             // sharer-side "you're now synced" toast. Prefer the handshake's
             // name, else the friend's stored name, else a generic fallback.
-            let pairedName = (handshake.n?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
-                ?? friendStore.friend(byID: handshake.rid)?.name ?? "your friend"
+            // Name priority: the name WE gave this friend in our own list
+            // (preserved by `upgradePhantom`) → the name they set for themselves
+            // (carried in the handshake) → "Friend".
+            let pairedName = (friendStore.friend(byID: handshake.rid)?.name)
+                    .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+                ?? (handshake.n?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+                ?? "Friend"
             await MainActor.run { self.onPaired?(pairedName) }
             return true
         }
@@ -457,7 +462,12 @@ final class SyncEngine {
         // Reaching here means we DID newly connect (the early-returns above
         // cover the already-connected / no-op cases) — surface the sharer-side
         // "you're now synced" toast. Prefer the sender's name, else fallback.
-        let pairedName = (senderName?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? "your friend"
+        // Same priority as applyPairHandshake: our name for them → their
+        // self-name → "Friend".
+        let pairedName = (friendStore.friend(byID: senderRealID)?.name)
+                .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+            ?? (senderName?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+            ?? "Friend"
         await MainActor.run { self.onPaired?(pairedName) }
     }
 

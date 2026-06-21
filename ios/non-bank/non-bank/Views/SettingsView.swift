@@ -212,15 +212,9 @@ struct SettingsView: View {
                                 .foregroundColor(AppColors.textSecondary)
                                 .font(.caption)
                         }
-                        // What the last full sync pulled/merged from iCloud —
-                        // restores the diagnostic that makes a failed restore
-                        // visible ("Pulled 0 …" = the zone is empty / nothing was
-                        // backed up, vs a real count = data came down).
-                        if let diag = syncManager.lastDiagnostic {
-                            Text(diag)
-                                .font(.caption)
-                                .foregroundColor(AppColors.textTertiary)
-                        }
+                        // A hard sync error (e.g. "iCloud storage is full …")
+                        // still surfaces here; the verbose "Pulled N …" line was
+                        // removed at the user's request.
                         if case .error(let msg) = syncManager.syncStatus {
                             Text(msg)
                                 .font(.caption)

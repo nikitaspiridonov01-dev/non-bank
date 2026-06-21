@@ -124,6 +124,12 @@ struct DatePickerModal: View {
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .tint(.accentColor)
+                // The long ".none" label ("Does not repeat") got compressed on
+                // narrower devices (iPhone 12), wrapping to two lines which the
+                // .firstTextBaseline HStack then dropped below the "Repeat"
+                // label. Pin the picker to its intrinsic width so its label
+                // always stays on one line and the row never reflows.
+                .fixedSize(horizontal: true, vertical: false)
             }
             if let detail = repeatDetailDescription {
                 Text(detail)

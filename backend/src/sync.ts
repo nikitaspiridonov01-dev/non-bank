@@ -155,7 +155,16 @@ export async function recordDelivery(
          expires_at   = excluded.expires_at,
          acked_at     = NULL,
          delete_after = NULL
-       WHERE excluded.version > pending_deliveries.version`,
+       -- A pair handshake is a "here's my current real id" message: the latest
+       -- one is always the truth and its version is a constant (1), so it must
+       -- NOT be version-guarded. Otherwise a single stale, unacked handshake
+       -- (e.g. an old sender_id-less client, or one the recipient could never
+       -- decrypt) permanently BLOCKS every future re-pair for that pair —
+       -- incoming 1 > stored 1 is false, so the fresh handshake (carrying the
+       -- correct sender_id) is dropped and the recipient keeps pulling the
+       -- undecryptable old one. Always overwrite for op='pair'.
+       WHERE excluded.version > pending_deliveries.version
+          OR excluded.op = 'pair'`,
     )
     .bind(
       d.recipientId,

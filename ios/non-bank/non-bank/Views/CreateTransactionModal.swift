@@ -504,16 +504,15 @@ struct CreateTransactionModal: View {
     }
 
     private func commitTransaction() {
-        // When editing a recurring parent, show a confirmation first — we
-        // replace the parent instead of updating it so past auto-created
-        // children stay while the new schedule starts from now.
-        //
-        // We carry the existing `syncID` forward (`syncID: existing.syncID`)
-        // so any open sheets bound to the OLD transaction can resolve
-        // to the new replacement on lookup — without this the split-
-        // breakdown card stacked over the reminder renders empty after
-        // the user confirms Replace, because both `id` and `syncID` would
-        // rotate at once.
+        // When editing a recurring parent, confirm via the alert first, then
+        // update the parent IN PLACE (see `confirmRecurringReplacement`). This
+        // used to be a delete + re-add "replace", but those were two unordered
+        // fire-and-forget Tasks that raced on the SQLite queue AND the delete
+        // fired a dominant sync tombstone — so the reminder could vanish on the
+        // editing device and wipe a paired friend's copy. We build the
+        // replacement carrying the existing `syncID` so the confirm handler can
+        // re-stamp it onto the same row (same id + syncID) — open sheets bound
+        // to the reminder keep resolving after the edit.
         if let existing = editingTransaction, existing.isRecurringParent {
             guard var replacement = vm.buildTransaction(
                 editingId: nil,
@@ -593,6 +592,12 @@ struct CreateTransactionModal: View {
                 SyncEngine.shared.uploadSplit(tx)
             }
             dismiss()
+            // Editing a split that STILL has unpaired (grey) friends should
+            // offer the share sheet too — not just on create — so the user can
+            // pair them on the spot. `promptShareIfSplit` self-guards on
+            // `hasUnpairedSplitParticipant`, so a fully-paired split stays
+            // silent (its synced edit already auto-uploaded above).
+            promptShareIfSplit(tx)
             return
         }
 
@@ -820,15 +825,33 @@ struct CreateTransactionModal: View {
             isSaving = false
             return
         }
-        transactionStore.delete(id: existing.id)
-        transactionStore.add(replacement)
-        // Replace-reminder is a recurring-edit special case: the user
-        // intentionally rotates the row. Track as an edit so reminder
-        // churn doesn't inflate the "creates" funnel.
-        trackTransactionSaved(replacement, isEdit: true)
+        // In-place update (same syncID AND same row id) — NOT delete+add. The
+        // old delete+add fired two unordered Tasks that raced: because the
+        // replacement reuses the syncID, `add` folded into an UPDATE on the old
+        // row id, which the concurrent `delete` then removed → the reminder
+        // VANISHED from the editing device. And `delete` fired a dominant
+        // (version 9e12) tombstone that wiped the friend's copy with no way for
+        // a later upsert to win. Mirror the regular edit branch instead: bump
+        // the edit version + re-upload only when a synced field actually
+        // changed, so cosmetic edits stay local and friends just converge.
+        var updated = replacement.withID(existing.id)
+        let syncedChanged = syncRelevantChange(old: existing, new: updated)
+        if syncedChanged {
+            updated = updated.settingEditVersion(existing.editVersion + 1)
+        }
+        transactionStore.update(updated)
+        // Track as an edit so reminder churn doesn't inflate the "creates" funnel.
+        trackTransactionSaved(updated, isEdit: true)
+        if syncedChanged {
+            SyncEngine.shared.uploadSplit(updated)
+        }
         pendingRecurringReplacement = nil
         showRecurringReplaceAlert = false
         dismiss()
+        // Offer the share sheet if the split still has unpaired (grey) friends
+        // (self-gated; no-op when everyone is paired) — same as the create/edit
+        // paths, so a shared recurring reminder can be paired right after edit.
+        promptShareIfSplit(updated)
     }
 
     // MARK: - Receipt Scan Flow Handlers

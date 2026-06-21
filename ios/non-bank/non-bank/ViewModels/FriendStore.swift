@@ -161,6 +161,16 @@ class FriendStore: ObservableObject {
         update(Friend(id: f.id, name: f.name, groups: f.groups, splitMode: f.splitMode, isConnected: true))
     }
 
+    /// Mark an existing friend NOT connected (grey their avatar) WITHOUT an id
+    /// change — used when an upload to them is rejected with `pairing_inactive`
+    /// (they revoked the pairing by removing us as a friend), so the local
+    /// "synced" indicator stops lying. They flow back to the unpaired-share
+    /// path on the next edit instead of silently 409-ing every time.
+    func markDisconnected(id: String) {
+        guard let f = friends.first(where: { $0.id == id }), f.isConnected else { return }
+        update(Friend(id: f.id, name: f.name, groups: f.groups, splitMode: f.splitMode, isConnected: false))
+    }
+
     /// All distinct group names from existing friends.
     var allGroups: [String] {
         Array(Set(friends.flatMap { $0.groups })).sorted()

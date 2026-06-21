@@ -101,14 +101,27 @@ final class SyncEngine {
                 guard let cipher = try? SyncDeliveryCrypto.encrypt(payload, myID: myID, peerID: recipientID)
                 else { continue }
                 Task.detached {
-                    let ok = await SyncDeliveryService.upload(
+                    switch await SyncDeliveryService.upload(
                         pairHMAC: pairHMAC, recipientID: recipientID, senderID: myID,
                         txSyncID: syncID,
                         version: version, op: "upsert", payloadCiphertext: cipher, checksum: checksum
-                    )
-                    if !ok {
-                        // Offline / server error reaching a paired friend — let
-                        // the UI offer the manual share link as a fallback.
+                    ) {
+                    case .ok:
+                        break
+                    case .pairingInactive:
+                        // The recipient REVOKED this pairing (removed us as a
+                        // friend), so the server rejects our delivery. Grey them
+                        // locally so the "synced" indicator stops lying, then
+                        // offer the manual share link so the user can re-share +
+                        // re-pair. Next edit takes the clean unpaired path
+                        // (no more silent 409s).
+                        await MainActor.run {
+                            friendStore.markDisconnected(id: recipientID)
+                            SyncEngine.shared.onUploadFailure?(syncID)
+                        }
+                    case .failed:
+                        // Transient (offline / 5xx) — keep the pairing; just
+                        // offer the manual share link as a fallback.
                         await MainActor.run { SyncEngine.shared.onUploadFailure?(syncID) }
                     }
                 }
@@ -376,6 +389,13 @@ final class SyncEngine {
                 base64: delivery.payload, keyA: myID, keyB: candidateID
             ) else { continue }
             // Matched: `candidateID` is the phantom; `handshake.rid` is real.
+            // Was this person ALREADY a connected friend? Then they just
+            // re-opened our link while still paired (e.g. tapped it by
+            // accident) — nothing actually changes, so we ack the no-op
+            // handshake but must NOT fire the "you're now synced" toast. A
+            // genuine re-pair after a delete leaves them un-connected here, so
+            // it still notifies.
+            let alreadyConnected = friendStore.friend(byID: handshake.rid)?.isConnected == true
             if candidateID == handshake.rid {
                 friendStore.markConnected(id: candidateID)
             } else if friendStore.friend(byID: candidateID) != nil {
@@ -390,17 +410,17 @@ final class SyncEngine {
                 await friendStore.add(Friend(id: handshake.rid, name: name, isConnected: true))
                 await transactionStore.upgradePhantomFriendID(from: candidateID, to: handshake.rid)
             }
-            // Newly connected the friend (any branch above) — surface the
-            // sharer-side "you're now synced" toast. Prefer the handshake's
-            // name, else the friend's stored name, else a generic fallback.
-            // Name priority: the name WE gave this friend in our own list
-            // (preserved by `upgradePhantom`) → the name they set for themselves
-            // (carried in the handshake) → "Friend".
-            let pairedName = (friendStore.friend(byID: handshake.rid)?.name)
-                    .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
-                ?? (handshake.n?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
-                ?? "Friend"
-            await MainActor.run { self.onPaired?(pairedName) }
+            if !alreadyConnected {
+                // Genuine (re)connection — surface the sharer-side "you're now
+                // synced" toast. Name priority: the name WE gave this friend in
+                // our own list (preserved by `upgradePhantom`) → the name they
+                // set for themselves (carried in the handshake) → "Friend".
+                let pairedName = (friendStore.friend(byID: handshake.rid)?.name)
+                        .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+                    ?? (handshake.n?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+                    ?? "Friend"
+                await MainActor.run { self.onPaired?(pairedName) }
+            }
             return true
         }
         // No matching candidate (the friend/participant isn't on this device

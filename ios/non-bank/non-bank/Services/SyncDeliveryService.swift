@@ -65,11 +65,15 @@ enum SyncDeliveryService {
         let sender_id: String
     }
 
+    /// Outcome of a delivery upload. `.pairingInactive` (HTTP 409) means the
+    /// recipient REVOKED the pairing (removed us as a friend) — permanent, so
+    /// the caller greys them; `.failed` is transient (offline / 5xx) and may
+    /// recover, so it only offers the share fallback.
+    enum UploadOutcome { case ok, pairingInactive, failed }
+
     /// POST /v1/sync/upload — push one addressed, encrypted delivery to a
-    /// paired recipient. Returns true only on a 2xx (so the caller can mark
-    /// the delivery as sent and skip re-upload). A 409 (`pairing_inactive`,
-    /// e.g. the friend revoked) returns false — correct, the friend should
-    /// stop receiving.
+    /// paired recipient. `.ok` only on a 2xx; a 409 `pairing_inactive` →
+    /// `.pairingInactive`; anything else → `.failed`.
     @discardableResult
     static func upload(
         pairHMAC: String,
@@ -80,7 +84,7 @@ enum SyncDeliveryService {
         op: String,
         payloadCiphertext: String,
         checksum: String?
-    ) async -> Bool {
+    ) async -> UploadOutcome {
         var req = URLRequest(url: syncEndpoint("upload"))
         req.httpMethod = "POST"
         await attest(&req)
@@ -89,13 +93,16 @@ enum SyncDeliveryService {
             version: version, op: op, payload: payloadCiphertext, checksum: checksum,
             sender_id: senderID
         )
-        guard let httpBody = try? JSONEncoder().encode(body) else { return false }
+        guard let httpBody = try? JSONEncoder().encode(body) else { return .failed }
         req.httpBody = httpBody
         do {
             let (_, response) = try await URLSession.shared.data(for: req)
-            return isOK(response)
+            if let http = response as? HTTPURLResponse, http.statusCode == 409 {
+                return .pairingInactive
+            }
+            return isOK(response) ? .ok : .failed
         } catch {
-            return false
+            return .failed
         }
     }
 

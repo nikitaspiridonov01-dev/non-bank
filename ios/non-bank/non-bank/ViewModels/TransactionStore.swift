@@ -96,6 +96,15 @@ class TransactionStore: ObservableObject {
     /// row's autoincrement id before updating; otherwise the
     /// `UPDATE … WHERE id = ?` would target nothing.
     private func insertOrUpdateBySyncID(_ transaction: Transaction) async {
+        // Defense-in-depth against the cold-start load race: if the in-memory
+        // snapshot hasn't loaded from disk yet, a syncID that ALREADY exists on
+        // disk would look absent here and we'd fork a duplicate row. Load once
+        // and re-check before committing an insert. Guarded by `!hasLoadedOnce`
+        // so the steady-state path stays a single in-memory read.
+        if !hasLoadedOnce,
+           transactions.first(where: { $0.syncID == transaction.syncID }) == nil {
+            await load()
+        }
         if let existing = transactions.first(where: { $0.syncID == transaction.syncID }) {
             let reconciled = transaction.id == existing.id
                 ? transaction

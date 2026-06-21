@@ -196,6 +196,20 @@ final class SyncEngine {
         isPulling = true
         defer { isPulling = false }
 
+        // Wait for the local store's initial load before any update-vs-create
+        // decision. On a COLD LAUNCH (e.g. tapping an edit's push) this pull can
+        // otherwise run while TransactionStore.init's load() is still in flight,
+        // so `transactions` is empty → an incoming EDIT finds no existing row by
+        // syncID (line ~"existing = …") and is applied as a NEW transaction →
+        // a DUPLICATE on the recipient. The manual link-import path already gates
+        // on this exact flag (MainTabView's `while !hasLoadedOnce`); the headless
+        // pull was missing it. Bounded (~5s) so a never-loading store can't hang.
+        var loadWaits = 0
+        while !transactionStore.hasLoadedOnce, loadWaits < 100 {
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+            loadWaits += 1
+        }
+
         let myID = UserIDService.currentID()
         let deliveries = await SyncDeliveryService.fetchInbox(recipientID: myID)
         guard !deliveries.isEmpty else { return }

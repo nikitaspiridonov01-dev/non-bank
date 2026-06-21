@@ -32,7 +32,7 @@ import {
   registerDeviceToken,
   getDeviceTokens,
 } from "./sync.ts";
-import { apnsConfigFromEnv, sendPush } from "./apns.ts";
+import { apnsConfigFromEnv, sendPush, sendPairingPush } from "./apns.ts";
 import { handleTestProviders } from "./test_providers.ts";
 import {
   issueChallenge,
@@ -517,13 +517,16 @@ async function handleSyncUpload(req: Request, env: Env, ctx: ExecutionContext): 
     // "updated" without the server ever reading the (encrypted) content.
     const isEdit = body.version >= 1;
     ctx.waitUntil(sendDeliveryPush(env, recipientId, txSyncId, isEdit, nowSec));
+  } else if (applied && body.op === "pair") {
+    // A friend just completed the reciprocal pairing handshake. Wake the
+    // sharer's app with a SILENT background push (no visible alert) so it pulls
+    // + posts its OWN local "you're now synced with <name>" notification
+    // immediately, even from the background. The visible/named push is the
+    // app's job — a generic server alert here used to double up with it
+    // ("You're now connected" + "You're now synced with X"). One named
+    // notification per friend.
+    ctx.waitUntil(sendPairingPush(env, body.recipient_id, nowSec));
   }
-  // NB: no server push for op="pair". The sharer's app surfaces a single LOCAL
-  // "You're now synced with <name>" notification — with the name the SHARER
-  // gave that friend — when it applies the handshake on its next pull, one per
-  // friend. A generic server push here only doubled it up (the user saw
-  // "You're now connected" AND "You're now synced with X" back to back).
-  // `sendPairingPush` in apns.ts is now unused.
 
   logEvent(env, "info", { route: "/v1/sync/upload", applied, op: body.op });
   return jsonResponse({ ok: true, applied }, 200);

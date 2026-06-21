@@ -53,4 +53,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         print("[Push] registerForRemoteNotifications failed: \(error.localizedDescription)")
         #endif
     }
+
+    /// Silent (content-available) background push — e.g. a friend just paired
+    /// and the server woke us with `{type: "pair"}`. Pull + apply in the
+    /// background so the LOCAL "you're now synced with <name>" notification
+    /// fires immediately instead of waiting for the next foreground. Same pull
+    /// the foreground/tap paths run (`NotificationCoordinator`). Best-effort:
+    /// iOS throttles background pushes; if skipped, it applies on next launch.
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        Task {
+            await SyncEngine.shared.pullAndApply()
+            completionHandler(.newData)
+        }
+    }
 }

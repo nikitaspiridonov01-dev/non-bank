@@ -121,12 +121,46 @@ export async function sendPush(
   }
 }
 
-/// Nudge the SHARER side that a friend just completed the reciprocal pairing
-/// handshake (an `op="pair"` delivery addressed to them). Mirrors
-/// sendDeliveryPush: same token fetch + per-token visible alert + config
-/// guard. Zero-knowledge — the server never learns the friend's name, so the
-/// copy is generic. Best-effort: no push configured / send fails → the
-/// handshake still applies on the next foreground pull.
+/// Send one SILENT (content-available) background push — no alert/sound, it
+/// just wakes the app to fetch. Background pushes MUST use apns-push-type
+/// "background" + apns-priority 5 (Apple rejects priority 10 for these).
+/// Best-effort: any error → false.
+export async function sendBackgroundPush(
+  config: ApnsConfig,
+  deviceToken: string,
+  apnsEnv: string,
+  nowSec: number,
+  data?: Record<string, unknown>,
+): Promise<boolean> {
+  try {
+    const jwt = await providerJWT(config, nowSec);
+    const host = apnsEnv === "sandbox"
+      ? "api.sandbox.push.apple.com"
+      : "api.push.apple.com";
+    const res = await fetch(`https://${host}/3/device/${deviceToken}`, {
+      method: "POST",
+      headers: {
+        authorization: `bearer ${jwt}`,
+        "apns-topic": config.bundleId,
+        "apns-push-type": "background",
+        "apns-priority": "5",
+      },
+      body: JSON.stringify({ aps: { "content-available": 1 }, ...(data ?? {}) }),
+    });
+    return res.status === 200;
+  } catch {
+    return false;
+  }
+}
+
+/// Wake the SHARER's app when a friend completes the reciprocal pairing
+/// handshake (an `op="pair"` delivery addressed to them) via a SILENT
+/// background push. There is deliberately NO visible alert here: the app pulls
+/// the handshake and posts its OWN local "you're now synced with <name>"
+/// notification (the server is zero-knowledge and can't put the friend's name
+/// in a push). Costs one device-token read per pairing event (rare) and no
+/// writes. Best-effort + iOS-throttled like any background push — if dropped,
+/// the handshake still applies on the next foreground pull.
 export async function sendPairingPush(
   env: Env,
   recipientId: string,
@@ -136,14 +170,9 @@ export async function sendPairingPush(
   if (!config) return; // push not configured — pull still applies the handshake
   const tokens = await getDeviceTokens(env.DB, recipientId);
   if (tokens.length === 0) return;
-  const alert = {
-    title: "You're now connected",
-    body: "Shared expenses will sync automatically.",
-  };
-  // No tx_sync_id to deep-link; just a marker so the app can pull the inbox
-  // and apply the handshake on tap/foreground.
+  // Marker so the app knows this background wake is a pairing nudge (it pulls).
   const data = { type: "pair" };
   for (const t of tokens) {
-    await sendPush(config, t.token, t.env, alert, nowSec, data);
+    await sendBackgroundPush(config, t.token, t.env, nowSec, data);
   }
 }

@@ -21,7 +21,6 @@ import {
   isValidOp,
   getKeyUserId,
   isPairingActive,
-  upsertPairing,
   recordDelivery,
   fetchInbox,
   ackDeliveries,

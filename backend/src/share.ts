@@ -88,6 +88,7 @@ interface SharedParticipant {
   n: string;
   sh: number;
   pa: number;
+  cn?: boolean; // connected: true = sharer had this friend paired (confirmed device)
 }
 
 // Recurring rule payload — mirrors iOS `SharedRecurring`. Only the
@@ -270,6 +271,10 @@ interface Person {
   paid: number;
   share: number;
   isSharer: boolean;
+  /// Confirmed = a verified device: the sharer themselves, or a friend the
+  /// sharer had already paired (`cn === true`). Confirmed avatars render in
+  /// colour; everyone else is grayscale (matches the iOS import picker).
+  confirmed: boolean;
 }
 
 interface SimplifiedTransfer {
@@ -376,15 +381,23 @@ function renderSharePage(
   const recurringLabel = payload.r ? formatRecurring(payload.r) : null;
 
   const people: Person[] = [
-    { id: payload.s, name: sharerName, paid: payload.pa, share: payload.ms, isSharer: true },
+    { id: payload.s, name: sharerName, paid: payload.pa, share: payload.ms, isSharer: true, confirmed: true },
     ...payload.f.map((p) => ({
       id: p.id,
       name: (p.n ?? "").trim() || "Friend",
       paid: p.pa,
       share: p.sh,
       isSharer: false,
+      // Colour only friends the sharer had already paired (a confirmed
+      // device). Phantom / ad-hoc participants stay grayscale.
+      confirmed: p.cn === true,
     })),
   ];
+
+  // Avatars render in colour only for confirmed people (sharer + paired
+  // friends); everyone else is grayscale. Used by the debt rows, which work
+  // off ids rather than the Person objects.
+  const confirmedIds = new Set(people.filter((p) => p.confirmed).map((p) => p.id));
 
   // For 2-person splits the recipient is unambiguously the only
   // friend. Skip the picker; preset their identity. For 3+-person
@@ -404,7 +417,7 @@ function renderSharePage(
   const transfers = simplifyDebts(people);
   const debtListHTML = transfers.length === 0
     ? `<div class="debt-row balanced"><div class="avatar settled">✓</div><div class="debt-text">Everyone is settled up</div></div>`
-    : transfers.map((t) => debtRowHTML(t, payload.c)).join("\n");
+    : transfers.map((t) => debtRowHTML(t, payload.c, confirmedIds)).join("\n");
 
   // Pixel-cat avatars — same algorithm the iOS app uses, ported in
   // `pixelCat.ts`. Generated as inline SVG so the page renders without
@@ -643,6 +656,7 @@ ${PAGE_STYLES}
       <div class="modal-header">
         <h2>Who are you?</h2>
         <p>Pick yourself so the math shows from your point of view. We remember your choice on this device only.</p>
+        <p>These names were set by ${escapeHTML(sharerName)}.</p>
       </div>
       <div class="picker-list">
         ${identityPickerRowsHTML}
@@ -707,7 +721,7 @@ ${PAGE_STYLES}
           <span class="sheet-mode-pill">${escapeHTML(splitModeLabel)}</span>
           <span class="sheet-mode-text">between ${sharerCount} ${sharerCount === 1 ? "person" : "people"}</span>
         </div>
-        <p class="sheet-caption">Each person's share of the purchase.</p>
+        <p class="sheet-caption">Each person's share of the purchase. Names were set by ${escapeHTML(sharerName)}.</p>
       </div>
       <div class="modal-list">
         ${sharesRowsHTML || `<div class="empty-row">No participants</div>`}
@@ -784,7 +798,7 @@ function renderPeopleAvatars(people: Person[]): string {
   const visible = people.slice(0, 4);
   const overflow = Math.max(0, people.length - visible.length);
   const visibleHTML = visible
-    .map((p) => `<div class="a">${pixelCatSVG(p.id, 32)}</div>`)
+    .map((p) => `<div class="a">${pixelCatSVG(p.id, 32, !p.confirmed)}</div>`)
     .join("");
   const overflowHTML = overflow > 0
     ? `<div class="a overflow"><span>+${overflow}</span></div>`
@@ -792,10 +806,10 @@ function renderPeopleAvatars(people: Person[]): string {
   return `<div class="avatars">${visibleHTML}${overflowHTML}</div>`;
 }
 
-function debtRowHTML(transfer: SimplifiedTransfer, currency: string): string {
+function debtRowHTML(transfer: SimplifiedTransfer, currency: string, confirmedIds: Set<string>): string {
   return `
     <div class="debt-row">
-      <div class="avatar">${pixelCatSVG(transfer.fromId, 32)}</div>
+      <div class="avatar">${pixelCatSVG(transfer.fromId, 32, !confirmedIds.has(transfer.fromId))}</div>
       <div class="debt-text"><b>${escapeHTML(transfer.fromName)}</b> lent <b>${escapeHTML(transfer.toName)}</b></div>
       <div class="debt-amount">
         <span>${escapeHTML(formatAmountInteger(transfer.amount))}${escapeHTML(formatAmountDecimal(transfer.amount))}</span>
@@ -807,7 +821,7 @@ function debtRowHTML(transfer: SimplifiedTransfer, currency: string): string {
 function sheetParticipantRow(person: Person, value: number, currency: string): string {
   return `
     <div class="sheet-row">
-      <div class="sheet-avatar">${pixelCatSVG(person.id, 36)}</div>
+      <div class="sheet-avatar">${pixelCatSVG(person.id, 36, !person.confirmed)}</div>
       <div class="sheet-name">${escapeHTML(person.name)}${person.isSharer ? "<span class='sharer-tag'>shared this</span>" : ""}</div>
       <div class="sheet-value">${escapeHTML(formatAmount(value, currency))}</div>
     </div>`;
@@ -816,7 +830,7 @@ function sheetParticipantRow(person: Person, value: number, currency: string): s
 function identityPickerRowHTML(person: Person): string {
   return `
     <button type="button" class="picker-row" data-pick-id="${escapeAttr(person.id)}">
-      <div class="picker-avatar">${pixelCatSVG(person.id, 40)}</div>
+      <div class="picker-avatar">${pixelCatSVG(person.id, 40, !person.confirmed)}</div>
       <div class="picker-name">${escapeHTML(person.name)}</div>
       <span class="picker-arrow" aria-hidden="true">→</span>
     </button>`;
@@ -1677,7 +1691,7 @@ function buildViewerIndex(people: Person[]): Record<string, { name: string; svg:
   const index: Record<string, { name: string; svg: string }> = {};
   for (const p of people) {
     if (p.isSharer) continue; // Sharer can't be the viewer.
-    index[p.id] = { name: p.name, svg: pixelCatSVG(p.id, 22) };
+    index[p.id] = { name: p.name, svg: pixelCatSVG(p.id, 22, !p.confirmed) };
   }
   return index;
 }

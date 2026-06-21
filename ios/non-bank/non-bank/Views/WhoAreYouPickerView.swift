@@ -4,9 +4,9 @@ import SwiftUI
 
 /// Shown when an incoming share-transaction has more than one PHANTOM
 /// candidate on the sharer's side and we can't infer which one is the
-/// receiver. The user taps a row to identify themselves; the
-/// coordinator commits the imported transaction with that participant
-/// flipped to "you".
+/// receiver. The user taps a row to open that person's detail, then
+/// Confirm identifies themselves; the coordinator commits the imported
+/// transaction with that participant flipped to "you".
 ///
 /// ## Recipient-identity safety
 /// The picker only ever lists the participants in `candidateIndices` —
@@ -18,16 +18,13 @@ import SwiftUI
 /// corrupt the sharer's synced data. Rows map back to the ORIGINAL
 /// `payload.f[]` index before `onPick` fires.
 ///
-/// ## What each row shows (so the receiver picks the right person)
-/// - **byItems** (`payload.sm == "byItems"`): compact receipt-item rows
-///   (kind icon + name + price) for the items assigned to that
-///   participant, reusing the canonical `ReceiptItemKindIcon` /
-///   `ReceiptItemAmountText` components so they match the Receipt-items
-///   surfaces. Items are pulled from the encrypted share-items channel
-///   (pre-fetched via `fetchItems`). If items can't be fetched, we fall
-///   back to the share amount.
-/// - **non-byItems**: the participant's share amount + currency — i.e.
-///   how the split is divided.
+/// ## What each row shows
+/// Avatar (GRAYSCALE — these candidates are unconfirmed, the gray cat is
+/// the "not paired yet" cue), the participant's name, the item count for
+/// a receipt (byItems) split, and that person's total. Tapping a row
+/// pushes a per-person detail (their items + total) where Confirm
+/// finalizes "I am this person" and saves. The sharer — whose device IS
+/// confirmed — appears in the header with a COLORED avatar + their name.
 ///
 /// Also reused as the update-confirmation step: when the receiver
 /// already has a transaction with the same `syncID` and accepts the
@@ -60,8 +57,8 @@ struct WhoAreYouPickerView: View {
     /// splits. `nil` until loaded / when no items are available.
     @State private var itemsByParticipantID: [String: [ReceiptItem]]?
 
-    /// Is this a receipt (byItems) split? Drives whether we show item
-    /// names vs. the share amount.
+    /// Is this a receipt (byItems) split? Drives whether we show an item
+    /// count and the per-item detail.
     private var isByItems: Bool {
         payload.sm == SplitMode.byItems.rawValue
     }
@@ -71,6 +68,12 @@ struct WhoAreYouPickerView: View {
     /// phantom candidates); when empty (update re-show) we show all.
     private var rowIndices: [Int] {
         candidateIndices.isEmpty ? Array(payload.f.indices) : candidateIndices
+    }
+
+    /// Sharer's display name, falling back to "Friend" when unset —
+    /// mirrors `ReceivedTransactionMapper`'s fallback.
+    private var sharerName: String {
+        (payload.sn?.isEmpty == false) ? payload.sn! : "Friend"
     }
 
     var body: some View {
@@ -84,18 +87,23 @@ struct WhoAreYouPickerView: View {
                         .padding(.horizontal, AppSpacing.xl)
                         .padding(.top, AppSpacing.sm)
 
-                    Text(subtitleText)
-                        .font(AppFonts.metaRegular)
-                        .foregroundColor(AppColors.textSecondary)
-                        .padding(.horizontal, AppSpacing.xl)
+                    VStack(alignment: .leading, spacing: AppSpacing.xxs) {
+                        Text(subtitleText)
+                            .font(AppFonts.metaRegular)
+                            .foregroundColor(AppColors.textSecondary)
+                        // Make it explicit that the labels in the list were
+                        // chosen by whoever shared the split — they're not
+                        // self-assigned, so a stranger's name is expected.
+                        Text("These names were set by \(sharerName).")
+                            .font(AppFonts.metaRegular)
+                            .foregroundColor(AppColors.textTertiary)
+                    }
+                    .padding(.horizontal, AppSpacing.xl)
 
                     VStack(spacing: AppSpacing.sm) {
                         ForEach(rowIndices, id: \.self) { index in
                             if payload.f.indices.contains(index) {
-                                Button {
-                                    onPick(index)
-                                    dismiss()
-                                } label: {
+                                NavigationLink(value: index) {
                                     participantRow(payload.f[index])
                                 }
                                 .buttonStyle(.plain)
@@ -111,6 +119,13 @@ struct WhoAreYouPickerView: View {
             .background(AppColors.backgroundPrimary)
             .navigationTitle(isForUpdate ? "Update transaction" : "Imported split")
             .navigationBarTitleDisplayMode(.inline)
+            // Lazy destination so the detail reads the items that finished
+            // loading AFTER the rows were first laid out.
+            .navigationDestination(for: Int.self) { index in
+                if payload.f.indices.contains(index) {
+                    detailView(for: index)
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -120,9 +135,8 @@ struct WhoAreYouPickerView: View {
                 }
             }
             // Pre-fetch + group the encrypted receipt items for byItems
-            // splits so each row can show the items assigned to that
-            // person BEFORE the receiver taps. Non-byItems splits skip
-            // the fetch entirely (rows show the share amount instead).
+            // splits so the row counts and the per-person detail are ready.
+            // Non-byItems splits skip the fetch entirely.
             .task {
                 guard isByItems else { return }
                 let items = await fetchItems()
@@ -137,13 +151,12 @@ struct WhoAreYouPickerView: View {
         }
     }
 
-    /// Helper copy under the question. Spells out the "tap your name"
-    /// guidance and, for byItems, hints that the items help identify.
+    /// Helper copy under the question.
     private var subtitleText: String {
         if isByItems {
-            return "Tap your name. The items below show what each person ordered."
+            return "Tap your name to see what that person ordered, then confirm."
         }
-        return "Tap your name. The other people stay as they were."
+        return "Tap your name to confirm. The other people stay as they were."
     }
 
     // MARK: - Header
@@ -159,19 +172,18 @@ struct WhoAreYouPickerView: View {
                     .lineLimit(2)
                 Spacer(minLength: 0)
             }
-            HStack(spacing: 6) {
-                Image(systemName: "person.fill")
-                    .font(AppFonts.captionSmallStrong)
-                    .foregroundColor(AppColors.textSecondary)
-                Text("From a friend")
+            HStack(spacing: 8) {
+                // The sharer's device is confirmed, so their avatar stays in
+                // COLOR and we show their name instead of a generic
+                // "From a friend".
+                PixelCatView(id: payload.s, size: 22, blackAndWhite: false)
+                    .clipShape(Circle())
+                Text(sharerName)
                     .font(AppFonts.metaRegular)
                     .foregroundColor(AppColors.textSecondary)
-                Spacer()
-                Text(formatAmount(payload.ta))
-                    .font(.system(size: 18, weight: .bold))
-                Text(payload.c)
-                    .font(AppFonts.metaRegular)
-                    .foregroundColor(AppColors.textSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                amountLabel(payload.ta, size: 18, weight: .bold)
             }
         }
         .padding(14)
@@ -183,23 +195,44 @@ struct WhoAreYouPickerView: View {
         .padding(.top, AppSpacing.lg)
     }
 
+    /// Amount + currency sharing a text baseline. They used to sit directly
+    /// in a center-aligned HStack with very different font sizes, so the
+    /// small currency code floated at the vertical centre of the big bold
+    /// amount instead of resting on its baseline.
+    @ViewBuilder
+    private func amountLabel(_ value: Double, size: CGFloat, weight: Font.Weight) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(formatAmount(value))
+                .font(.system(size: size, weight: weight))
+            Text(payload.c)
+                .font(AppFonts.metaRegular)
+                .foregroundColor(AppColors.textSecondary)
+        }
+    }
+
     // MARK: - Participant row
 
     @ViewBuilder
     private func participantRow(_ participant: SharedTransactionPayload.Participant) -> some View {
         HStack(spacing: AppSpacing.md) {
-            PixelCatView(id: participant.id, size: 40, blackAndWhite: false)
+            // Grayscale: these candidates are unconfirmed (the receiver hasn't
+            // paired them). A confirmed friend (cn == true) would keep colour,
+            // but the picker never lists confirmed friends anyway.
+            PixelCatView(id: participant.id, size: 40, blackAndWhite: participant.cn != true)
                 .clipShape(Circle())
             VStack(alignment: .leading, spacing: AppSpacing.xxs) {
                 Text(participant.n)
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(AppColors.textPrimary)
                     .lineLimit(1)
-                // What to identify by: the items this person ordered
-                // (byItems, when we have them) or their share amount.
-                composition(for: participant)
+                if let count = receiptItemCount(for: participant) {
+                    Text("\(count) item\(count == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundColor(AppColors.textTertiary)
+                }
             }
             Spacer(minLength: 8)
+            amountLabel(participant.sh, size: 15, weight: .semibold)
             Image(systemName: "chevron.right")
                 .font(AppFonts.footnote)
                 .foregroundColor(AppColors.textTertiary)
@@ -212,59 +245,40 @@ struct WhoAreYouPickerView: View {
         )
     }
 
-    /// The "how this person's split is composed" line under their name.
-    /// For byItems with fetched items → compact receipt-item rows (kind
-    /// icon + name + price), reusing the canonical components so they
-    /// match the Receipt-items / Breakdown surfaces. Otherwise (or if
-    /// items unavailable) → their share amount.
+    // MARK: - Detail
+
     @ViewBuilder
-    private func composition(for participant: SharedTransactionPayload.Participant) -> some View {
-        if isByItems, let items = assignedItems(for: participant), !items.isEmpty {
-            // Plain rows — the candidate row (`participantRow`) is already
-            // a card, so these carry no nested glass / background. No
-            // avatar pile either: each picker row is scoped to ONE person,
-            // so "who shares this" would be redundant here.
-            VStack(alignment: .leading, spacing: AppSpacing.xxs) {
-                ForEach(items) { item in
-                    HStack(spacing: AppSpacing.xs) {
-                        ReceiptItemKindIcon(kind: item.kind, size: 11)
-                        Text(item.name)
-                            .font(.caption)
-                            .foregroundColor(AppColors.textSecondary)
-                            .lineLimit(1)
-                        Spacer(minLength: 6)
-                        ReceiptItemAmountText(
-                            amount: item.lineTotal,
-                            currency: payload.c,
-                            isDiscount: item.kind == .discount
-                        )
-                    }
-                }
+    private func detailView(for index: Int) -> some View {
+        let participant = payload.f[index]
+        ImportParticipantDetailView(
+            participantName: participant.n,
+            participantID: participant.id,
+            isConfirmed: participant.cn == true,
+            items: assignedItems(for: participant) ?? [],
+            total: participant.sh,
+            currency: payload.c,
+            onConfirm: {
+                // Finalize "I am this participant" + save the import. The
+                // coordinator's state change tears the sheet down, but we also
+                // dismiss the picker explicitly so it closes instantly.
+                onPick(index)
+                dismiss()
             }
-        } else {
-            // Fallback: share amount (the default "how the split is
-            // divided" view, and the graceful degrade when items can't
-            // be fetched for a byItems split).
-            HStack(spacing: AppSpacing.xs) {
-                Text("Share:")
-                    .font(.caption)
-                    .foregroundColor(AppColors.textTertiary)
-                Text(formatAmount(participant.sh))
-                    .font(.caption.monospacedDigit())
-                    .foregroundColor(AppColors.textSecondary)
-                Text(payload.c)
-                    .font(.caption)
-                    .foregroundColor(AppColors.textTertiary)
-            }
-        }
+        )
     }
 
-    /// Receipt items assigned to `participant` from the share-items
-    /// channel. Items are keyed in the SHARER's id-space, so we look them
-    /// up by the participant's payload id directly (the sentinel `__me__`
-    /// belongs to the sharer and never to a candidate, so no flip is
-    /// needed here). Blank-named items are filtered out so they don't
-    /// render an empty row. `nil` when no items were fetched.
+    // MARK: - Items lookup
+
+    /// Item count to show on a row, or nil to hide it (non-receipt split, or
+    /// no items fetched yet).
+    private func receiptItemCount(for participant: SharedTransactionPayload.Participant) -> Int? {
+        guard isByItems, let items = assignedItems(for: participant), !items.isEmpty else { return nil }
+        return items.count
+    }
+
+    /// Receipt items assigned to `participant` from the share-items channel.
+    /// Items are keyed in the SHARER's id-space, so we look them up by the
+    /// participant's payload id directly. Blank-named items are filtered out.
     private func assignedItems(for participant: SharedTransactionPayload.Participant) -> [ReceiptItem]? {
         guard let grouped = itemsByParticipantID else { return nil }
         return grouped[participant.id]?
@@ -272,6 +286,111 @@ struct WhoAreYouPickerView: View {
     }
 
     // MARK: - Formatting
+
+    private func formatAmount(_ value: Double) -> String {
+        let rounded = (value * 100).rounded() / 100
+        if rounded == rounded.rounded() {
+            return String(Int(rounded))
+        }
+        return String(format: "%.2f", rounded)
+    }
+}
+
+// MARK: - Import Participant Detail
+
+/// Pushed when the receiver taps a candidate on `WhoAreYouPickerView`.
+/// Shows that person's receipt items + total (mirrors the split-flow
+/// "{name}'s items" screen) and, in the toolbar, **Cancel** (back to the
+/// list, nothing committed) + **Confirm** (finalize "I am this person" and
+/// save the import).
+private struct ImportParticipantDetailView: View {
+    let participantName: String
+    let participantID: String
+    let isConfirmed: Bool
+    let items: [ReceiptItem]
+    let total: Double
+    let currency: String
+    let onConfirm: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: AppSpacing.lg) {
+                VStack(spacing: AppSpacing.sm) {
+                    PixelCatView(id: participantID, size: 64, blackAndWhite: !isConfirmed)
+                        .clipShape(Circle())
+                    Text(participantName)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(AppColors.textPrimary)
+                    Text("Confirm this is you to import the split.")
+                        .font(AppFonts.metaRegular)
+                        .foregroundColor(AppColors.textTertiary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.top, AppSpacing.lg)
+                .padding(.horizontal, AppSpacing.xl)
+
+                if !items.isEmpty {
+                    VStack(spacing: AppSpacing.xs) {
+                        ForEach(items) { item in
+                            HStack(spacing: AppSpacing.sm) {
+                                ReceiptItemKindIcon(kind: item.kind, size: 13)
+                                Text(item.name)
+                                    .font(.subheadline)
+                                    .foregroundColor(AppColors.textPrimary)
+                                    .lineLimit(1)
+                                Spacer(minLength: 8)
+                                ReceiptItemAmountText(
+                                    amount: item.lineTotal,
+                                    currency: currency,
+                                    isDiscount: item.kind == .discount
+                                )
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, AppSpacing.rowVertical)
+                            .background(
+                                RoundedRectangle(cornerRadius: AppRadius.large)
+                                    .fill(AppColors.backgroundElevated)
+                            )
+                        }
+                    }
+                    .padding(.horizontal, AppSpacing.pageHorizontal)
+                }
+
+                // Authoritative per-person total (the share the sharer set).
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Total")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(AppColors.textPrimary)
+                    Spacer()
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(formatAmount(total))
+                            .font(.system(size: 18, weight: .bold))
+                        Text(currency)
+                            .font(AppFonts.metaRegular)
+                            .foregroundColor(AppColors.textSecondary)
+                    }
+                }
+                .padding(.horizontal, AppSpacing.pageHorizontal + 14)
+
+                Spacer().frame(height: 24)
+            }
+        }
+        .background(AppColors.backgroundPrimary)
+        .navigationTitle(participantName)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Confirm") { onConfirm() }
+                    .fontWeight(.semibold)
+            }
+        }
+    }
 
     private func formatAmount(_ value: Double) -> String {
         let rounded = (value * 100).rounded() / 100

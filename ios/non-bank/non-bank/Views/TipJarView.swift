@@ -153,6 +153,9 @@ struct TipJarView: View {
             analytics.recordFeatureUseIfFirst(.tipJar)
         }
         .onDisappear {
+            // Restore the bar on ANY exit (back, swipe, tab switch) — not only
+            // when SettingsView re-appears.
+            router.hideTabBar = false
             fireworksDismissTask?.cancel()
             // Fire dismissal only if no purchase resolved THIS visit
             // (neither a success nor a deferred Ask-to-Buy). We track a

@@ -85,6 +85,8 @@ struct FriendsView: View {
         // user pops back to the Settings root — same convention as
         // Import / Export Transactions.
         .onAppear { router.hideTabBar = true }
+        // Restore the bar on ANY exit, not only when SettingsView re-appears.
+        .onDisappear { router.hideTabBar = false }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(action: { sheetFriend = .create }) {

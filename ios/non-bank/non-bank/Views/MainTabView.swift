@@ -290,6 +290,11 @@ struct MainTabView: View {
         // NEW value — `lastTrackedTab` carries the FROM side across
         // ticks without depending on iOS-17-only onChange overloads.
         .onChange(of: router.selectedTab) { newTab in
+            // Safety net: the tab bar must always be visible on Home. Only the
+            // Settings sub-screens (Friends/Export/Import/TipJar) hide it (and
+            // now restore it on disappear) — so if the flag ever leaks, landing
+            // on Home forces it back rather than leaving the bar gone.
+            if newTab == 0 { router.hideTabBar = false }
             let from: AnalyticsTab = lastTrackedTab == 0 ? .home : .profile
             let to: AnalyticsTab = newTab == 0 ? .home : .profile
             guard from != to else { return }

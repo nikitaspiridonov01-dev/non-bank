@@ -215,6 +215,10 @@ struct ExportTransactionsView: View {
         .navigationTitle("Export Transactions")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { router.hideTabBar = true }
+        // Restore the bar on ANY exit (back, swipe, tab switch) — relying only
+        // on SettingsView.onAppear to reset it leaked the bar when the user
+        // left by another path.
+        .onDisappear { router.hideTabBar = false }
         .sheet(item: $exportFileURL) { item in
             ShareSheet(activityItems: [item.url])
                 .presentationDetents([.medium, .large])

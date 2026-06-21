@@ -259,6 +259,8 @@ struct ImportTransactionsView: View {
         .navigationTitle("Import Transactions")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { router.hideTabBar = true }
+        // Restore the bar on ANY exit, not only when SettingsView re-appears.
+        .onDisappear { router.hideTabBar = false }
         .fileImporter(
             isPresented: $showFilePicker,
             // Three accepted entry-points: JSON (native envelope or

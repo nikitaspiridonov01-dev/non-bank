@@ -331,53 +331,22 @@ private struct ImportParticipantDetailView: View {
                 .padding(.top, AppSpacing.lg)
                 .padding(.horizontal, AppSpacing.xl)
 
-                if !items.isEmpty {
-                    VStack(spacing: AppSpacing.xs) {
-                        ForEach(items) { item in
-                            HStack(spacing: AppSpacing.sm) {
-                                ReceiptItemKindIcon(kind: item.kind, size: 13)
-                                Text(item.name)
-                                    .font(.subheadline)
-                                    .foregroundColor(AppColors.textPrimary)
-                                    .lineLimit(1)
-                                Spacer(minLength: 8)
-                                ReceiptItemAmountText(
-                                    amount: item.lineTotal,
-                                    currency: currency,
-                                    isDiscount: item.kind == .discount
-                                )
-                            }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, AppSpacing.rowVertical)
-                            .background(
-                                RoundedRectangle(cornerRadius: AppRadius.large)
-                                    .fill(AppColors.backgroundElevated)
-                            )
-                        }
+                // Items + Total — the SAME glass rows as the split-flow
+                // "{name}'s items" screen (ParticipantBreakdownSheet): split
+                // card fill + glass + ReceiptItemAmountText, so both screens
+                // read identically.
+                VStack(spacing: AppSpacing.sm) {
+                    ForEach(items) { item in
+                        itemRow(item)
                     }
-                    .padding(.horizontal, AppSpacing.pageHorizontal)
+                    totalRow
                 }
-
-                // Authoritative per-person total (the share the sharer set).
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Total")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(AppColors.textPrimary)
-                    Spacer()
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(formatAmount(total))
-                            .font(.system(size: 18, weight: .bold))
-                        Text(currency)
-                            .font(AppFonts.metaRegular)
-                            .foregroundColor(AppColors.textSecondary)
-                    }
-                }
-                .padding(.horizontal, AppSpacing.pageHorizontal + 14)
+                .padding(.horizontal, AppSpacing.pageHorizontal)
 
                 Spacer().frame(height: 24)
             }
         }
-        .background(AppColors.backgroundPrimary)
+        .background(SplitDetailPageBackground().ignoresSafeArea())
         .navigationTitle(participantName)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
@@ -392,11 +361,42 @@ private struct ImportParticipantDetailView: View {
         }
     }
 
-    private func formatAmount(_ value: Double) -> String {
-        let rounded = (value * 100).rounded() / 100
-        if rounded == rounded.rounded() {
-            return String(Int(rounded))
+    // Mirrors ParticipantBreakdownSheet.itemRow / .totalRow (ShareDistributionView)
+    // so the import detail and the split-flow "{name}'s items" screen are
+    // visually identical.
+    private func itemRow(_ item: ReceiptItem) -> some View {
+        HStack(spacing: AppSpacing.md) {
+            ReceiptItemKindIcon(kind: item.kind)
+            Text(item.name)
+                .font(AppFonts.body)
+                .foregroundColor(AppColors.textPrimary)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            ReceiptItemAmountText(amount: item.lineTotal, currency: currency, isDiscount: item.kind == .discount)
         }
-        return String(format: "%.2f", rounded)
+        .padding(.horizontal, 14)
+        .padding(.vertical, AppSpacing.rowVertical)
+        .background(
+            AppColors.splitCardFill,
+            in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+        )
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+    }
+
+    private var totalRow: some View {
+        HStack {
+            Text("Total")
+                .font(AppFonts.bodyEmphasized)
+                .foregroundColor(AppColors.textPrimary)
+            Spacer()
+            ReceiptItemAmountText(amount: total, currency: currency, isDiscount: total < 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, AppSpacing.md)
+        .background(
+            AppColors.splitCardFill,
+            in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+        )
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
     }
 }

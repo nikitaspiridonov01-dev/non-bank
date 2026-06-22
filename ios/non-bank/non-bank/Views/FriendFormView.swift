@@ -338,7 +338,14 @@ struct FriendFormView: View {
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
             groups: groups,
             splitMode: selectedSplitMode,
-            lastModified: Date()
+            lastModified: Date(),
+            // Editing a friend (rename / group / split mode) is purely cosmetic
+            // and must PRESERVE their paired state. Rebuilding the Friend without
+            // this dropped `isConnected` back to its `false` default — which
+            // greyed a synced friend and broke delivery (uploadSplit only sends
+            // to connected friends). New friends (existingFriend == nil) stay
+            // unpaired, as before.
+            isConnected: existingFriend?.isConnected ?? false
         )
         onSave(friend)
         dismiss()

@@ -255,6 +255,80 @@ class SQLiteService: DatabaseProtocol {
             exec("DROP TABLE friends;")
             exec("ALTER TABLE friends_new RENAME TO friends;")
         }
+
+        // --- Durable de-dup guard on synced transactions ---
+        // `sync_id` is the stable cross-device identity of a synced
+        // transaction. Dedup historically lived ONLY in app code
+        // (`TransactionStore.insertOrUpdateBySyncID` + the SyncEngine
+        // existing-by-syncID lookup); with no DB constraint, any timing race
+        // that bypassed the in-memory snapshot could fork a second row for
+        // the same `sync_id`. This migration adds the DB-level backstop:
+        // collapse any rows that already duplicated a non-empty `sync_id`,
+        // then enforce uniqueness going forward with a partial UNIQUE index.
+        // Gated on the index not yet existing, so the one-time collapse runs
+        // only on the upgrading launch and the whole block is a no-op every
+        // launch after. It is also self-idempotent if it ever does re-run:
+        // both collapses do nothing once there are no dups/orphans, and the
+        // index uses IF NOT EXISTS.
+        if !indexExists("idx_transactions_sync_id") {
+            // (a) Collapse existing duplicate forks that share a non-empty
+            // `sync_id`, keeping the AUTHORITATIVE row and deleting the rest.
+            // Authoritative = the NEWEST edit, matching the rest of the sync
+            // model (last-write-wins / monotonic `edit_version`): within each
+            // group, keep the maximum by (edit_version, last_modified, id) and
+            // delete every row that has a strictly-greater sibling.
+            //
+            // It is NOT correct to keep MIN(id): a fork is by construction a
+            // LATER insert (e.g. a friend's edit applied while the in-memory
+            // snapshot was stale — the very race this index backstops), so the
+            // higher-id row usually carries the NEWER amount/split/editVersion.
+            // Keeping the oldest would silently and irreversibly discard the
+            // user's most recent edit (the originating delivery is already
+            // acked, so nothing re-delivers to repair it). COALESCE guards rows
+            // from before `edit_version`/`last_modified` existed (NULL sorts
+            // oldest). `id` is unique, so the ordering is a strict total order
+            // → exactly one survivor per group. Rows with NULL/empty `sync_id`
+            // are local-only, never duplicates, and are left untouched.
+            exec("""
+                DELETE FROM transactions
+                WHERE sync_id IS NOT NULL AND sync_id != ''
+                  AND EXISTS (
+                      SELECT 1 FROM transactions newer
+                      WHERE newer.sync_id = transactions.sync_id
+                        AND newer.id != transactions.id
+                        AND (
+                            COALESCE(newer.edit_version, 0) > COALESCE(transactions.edit_version, 0)
+                         OR (COALESCE(newer.edit_version, 0) = COALESCE(transactions.edit_version, 0)
+                             AND COALESCE(newer.last_modified, 0) > COALESCE(transactions.last_modified, 0))
+                         OR (COALESCE(newer.edit_version, 0) = COALESCE(transactions.edit_version, 0)
+                             AND COALESCE(newer.last_modified, 0) = COALESCE(transactions.last_modified, 0)
+                             AND newer.id > transactions.id)
+                        )
+                  );
+            """)
+            // (b) Reap `receipt_items` orphaned by the collapse (plus any
+            // pre-existing orphans). `receipt_items.transaction_id` has no FK
+            // cascade, so a deleted fork's items would otherwise linger forever
+            // pointing at a gone row AND the surviving row would read back an
+            // empty breakdown. The authoritative survivor kept ITS OWN items
+            // (saved against its id), so the doomed forks' item rows are stale
+            // duplicates — delete them. `transactions.id` is NOT NULL, so the
+            // `NOT IN` form is safe from the NULL-in-NOT-IN pitfall.
+            exec("""
+                DELETE FROM receipt_items
+                WHERE transaction_id NOT IN (SELECT id FROM transactions);
+            """)
+            // (c) Enforce uniqueness from here on. Partial index so the
+            // constraint covers only genuinely-synced rows; NULL/empty
+            // `sync_id` rows can still coexist freely. The transaction insert
+            // path's `ON CONFLICT(sync_id)` upsert targets exactly this
+            // index — its conflict-target WHERE must repeat this predicate.
+            exec("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_sync_id
+                ON transactions(sync_id)
+                WHERE sync_id IS NOT NULL AND sync_id != '';
+            """)
+        }
     }
 
     private func columnExists(_ column: String, in table: String) -> Bool {
@@ -273,6 +347,24 @@ class SQLiteService: DatabaseProtocol {
         }
         sqlite3_finalize(stmt)
         return false
+    }
+
+    /// True when an index with `name` already exists in the schema. Used to
+    /// gate one-shot index-creation migrations the same way `columnExists`
+    /// gates column-addition ones, so the block runs once on the upgrading
+    /// launch and is skipped on every launch thereafter.
+    private func indexExists(_ name: String) -> Bool {
+        var stmt: OpaquePointer?
+        let query = "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ? LIMIT 1;"
+        var exists = false
+        if sqlite3_prepare_v2(db, query, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (name as NSString).utf8String, -1, nil)
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                exists = true
+            }
+        }
+        sqlite3_finalize(stmt)
+        return exists
     }
 
     private func exec(_ sql: String) {
@@ -327,7 +419,40 @@ class SQLiteService: DatabaseProtocol {
         sqlite3_bind_int(statement, 18, Int32(transaction.editVersion))
     }
 
-    private static let transactionInsertSQL = "INSERT INTO transactions (emoji, category, title, description, amount, currency, date, type, isIncome, tags, sync_id, last_modified, repeat_interval, parent_reminder_id, split_info, payload_checksum, excluded_from_insights, edit_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+    // Upsert: a duplicate `sync_id` reconciles the existing row in place
+    // instead of forking a second one. This is the DB-level backstop under
+    // `TransactionStore.insertOrUpdateBySyncID`'s in-memory fast-path — even
+    // if a timing race slips past the app-level dedup, the partial UNIQUE
+    // index on `sync_id` (see `migrateSchema`) turns the second insert into
+    // an UPDATE of the existing row rather than a SQLITE_CONSTRAINT failure.
+    // The conflict target repeats the index's WHERE predicate, which SQLite
+    // requires to match a *partial* unique index; rows with a NULL/empty
+    // `sync_id` (local-only) fall outside the index and just insert normally.
+    // `sync_id` itself is never rewritten (it's the conflict key); every
+    // other column is overwritten with the incoming values — last-write-wins,
+    // matching the app-level update path.
+    private static let transactionInsertSQL = """
+        INSERT INTO transactions (emoji, category, title, description, amount, currency, date, type, isIncome, tags, sync_id, last_modified, repeat_interval, parent_reminder_id, split_info, payload_checksum, excluded_from_insights, edit_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(sync_id) WHERE sync_id IS NOT NULL AND sync_id != '' DO UPDATE SET
+            emoji = excluded.emoji,
+            category = excluded.category,
+            title = excluded.title,
+            description = excluded.description,
+            amount = excluded.amount,
+            currency = excluded.currency,
+            date = excluded.date,
+            type = excluded.type,
+            isIncome = excluded.isIncome,
+            tags = excluded.tags,
+            last_modified = excluded.last_modified,
+            repeat_interval = excluded.repeat_interval,
+            parent_reminder_id = excluded.parent_reminder_id,
+            split_info = excluded.split_info,
+            payload_checksum = excluded.payload_checksum,
+            excluded_from_insights = excluded.excluded_from_insights,
+            edit_version = excluded.edit_version;
+        """
 
     func insert(transaction: Transaction) async {
         await withCheckedContinuation { continuation in

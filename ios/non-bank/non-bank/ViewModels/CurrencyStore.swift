@@ -161,7 +161,15 @@ class CurrencyStore: ObservableObject {
                 lastDate[tx.currency] = tx.date
             }
         }
-        let rest = allCodes.filter { $0 != base }.sorted { a, b in
+        let rest = allCodes.filter { code in
+            // Hide currencies that never had an FX rate (e.g. BGN, which the API
+            // doesn't quote). `usdRates` is the persisted merge-not-replace map,
+            // so a currency that ONCE had a rate stays listed even after the API
+            // drops it — its cached rate keeps conversions correct. Always keep a
+            // currency already used in a transaction so existing data is never
+            // orphaned out of the pickers.
+            code != base && (usdRates[code] != nil || freq[code, default: 0] > 0)
+        }.sorted { a, b in
             let fa = freq[a, default: 0], fb = freq[b, default: 0]
             if fa != fb { return fa > fb }
             let da = lastDate[a] ?? .distantPast, db = lastDate[b] ?? .distantPast

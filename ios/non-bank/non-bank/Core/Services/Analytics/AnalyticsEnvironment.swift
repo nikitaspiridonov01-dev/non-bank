@@ -377,6 +377,7 @@ extension AnalyticsServiceProtocol {
         setUserProperty(.txCountBucket(AnalyticsBuckets.count(txCount)))
         setUserProperty(.splitCountBucket(AnalyticsBuckets.count(splitCount)))
         setUserProperty(.friendCountBucket(AnalyticsBuckets.friendCount(friendCount)))
+        setUserProperty(.connectedFriendCount(AnalyticsBuckets.friendCount(friendStore.friends.filter { $0.isConnected }.count)))
         setUserProperty(.defaultCurrency(currencyStore.selectedCurrency))
         let days = InstallClock.minutesSinceInstall() / (60 * 24)
         setUserProperty(.daysSinceInstallBucket(AnalyticsBuckets.daysSinceInstall(days)))

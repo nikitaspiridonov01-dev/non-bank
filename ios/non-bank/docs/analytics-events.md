@@ -108,6 +108,20 @@ actions. We track each first occurrence so cohort tools can compute
 | `icloud_sync_disabled` | — | Churn signal. |
 | `icloud_initial_sync_completed` | `duration_seconds_bucket`, `tx_count_bucket`, `had_conflicts` | Time to backfill — performance regression detector. |
 
+### 8b. Server sync (friend auto-sync)
+
+Server-mediated split delivery between paired friends (`SyncEngine`).
+Fire-and-forget telemetry only — never gates the upload / apply path.
+
+| Event | Params | Question |
+|---|---|---|
+| `split_auto_synced` | `recipient_count` | A split upload landed on ≥1 paired recipient. Fires once per save/edit. Volume = how often the auto-sync path actually delivers. |
+| `sync_upload_failed` | `reason` (pairing_inactive/failed/offline) | Per-recipient upload didn't land. `pairing_inactive` = recipient revoked the pairing; `failed` = transient / 5xx. |
+| `pairing_established` | `via` (handshake/self_heal/link_import) | A friend NEWLY became connected via the sync path. Which channel converges pairings — drives "does self-heal carry its weight." |
+| `sync_delivery_received` | `count_bucket` | A foreground pull fetched ≥1 inbox delivery. Inbound traffic volume. |
+| `sync_delivery_applied` | `op` (upsert/delete/pair), `was_update` (bool) | A delivery applied successfully. `was_update` = updated an existing tx vs created a new one. |
+| `sync_delivery_failed` | `reason` (decrypt_failed/version_stale/apply_error) | A delivery couldn't be applied. `decrypt_failed` = no key authenticated; `version_stale` = guarded by the monotonic-version check; `apply_error` = the headless apply threw. |
+
 ### 9. Categories
 
 | Event | Params | Question |
@@ -232,6 +246,7 @@ cohort splits — never for targeting individuals.
 | `tx_count_bucket` | `0` / `1-5` / `6-20` / `21-50` / `51-200` / `200+` | Single-best engagement proxy. |
 | `split_count_bucket` | same | Split adoption depth. |
 | `friend_count_bucket` | `0` / `1-2` / `3-5` / `6-15` / `15+` | Social-graph density. |
+| `connected_friend_count` | `0` / `1-2` / `3-5` / `6-15` / `15+` | Server-sync paired-friend depth. Distinguishes "has friends" from "has friends who actually auto-sync." |
 | `default_currency` | ISO-4217 | Locale segmentation. |
 | `has_icloud_sync` | bool | Power-user. |
 | `has_completed_onboarding` | bool | Funnel stage. |

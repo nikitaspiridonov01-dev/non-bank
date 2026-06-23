@@ -46,6 +46,13 @@ final class SyncEngine {
     /// Re-entrancy guard so overlapping foregrounds don't double-pull.
     private var isPulling = false
 
+    /// DI-resolved analytics — telemetry ONLY, never gates or alters sync.
+    /// Lazy so the singleton can exist before `non_bankApp.init` finishes
+    /// registering services. `AnalyticsServiceProtocol` is `Sendable`, so a
+    /// captured local can cross into `Task.detached` without isolation warnings.
+    private lazy var analytics: AnalyticsServiceProtocol =
+        DIContainer.shared.resolve(AnalyticsServiceProtocol.self)
+
     private init() {}
 
     // MARK: - Upload (sender side)
@@ -91,6 +98,11 @@ final class SyncEngine {
         let syncID = transaction.syncID
         let version = transaction.editVersion
         let checksum = payload.checksum
+        // Telemetry only (never gates the upload): one event per auto-synced
+        // split, tagged with how many paired recipients it's dispatched to.
+        // Captured so the detached per-recipient tasks below can log outcomes.
+        let analytics = self.analytics
+        analytics.track(.splitAutoSynced(recipientCount: recipientIDs.count))
         Task {
             // 1. Items first — block deliveries until they're in place.
             await self.uploadItems(transaction)
@@ -118,11 +130,15 @@ final class SyncEngine {
                         await MainActor.run {
                             friendStore.markDisconnected(id: recipientID)
                             SyncEngine.shared.onUploadFailure?(syncID)
+                            analytics.track(.syncUploadFailed(reason: .pairingInactive))
                         }
                     case .failed:
                         // Transient (offline / 5xx) — keep the pairing; just
                         // offer the manual share link as a fallback.
-                        await MainActor.run { SyncEngine.shared.onUploadFailure?(syncID) }
+                        await MainActor.run {
+                            SyncEngine.shared.onUploadFailure?(syncID)
+                            analytics.track(.syncUploadFailed(reason: .failed))
+                        }
                     }
                 }
             }
@@ -231,6 +247,8 @@ final class SyncEngine {
         let myID = UserIDService.currentID()
         let deliveries = await SyncDeliveryService.fetchInbox(recipientID: myID)
         guard !deliveries.isEmpty else { return }
+        // Telemetry only — never affects what we apply.
+        analytics.track(.syncDeliveryReceived(countBucket: AnalyticsBuckets.count(deliveries.count)))
 
         // Candidate senders: our connected (paired) friends. We don't know
         // the sender id from the row, so we try each one's key — the
@@ -246,14 +264,18 @@ final class SyncEngine {
                 // real-id friend — after which our uploads actually reach them.
                 if await applyPairHandshake(delivery, myID: myID, friendStore: friendStore, transactionStore: transactionStore) {
                     acks.append((delivery.tx_sync_id, delivery.version))
+                    analytics.track(.syncDeliveryApplied(op: .pair, wasUpdate: false))
                 }
                 continue
             }
             if delivery.op == "delete" {
+                // Read-only peek for telemetry; the delete logic below is unchanged.
+                let existedLocally = transactionStore.transactions.contains { $0.syncID == delivery.tx_sync_id }
                 if let existing = transactionStore.transactions.first(where: { $0.syncID == delivery.tx_sync_id }) {
                     transactionStore.delete(id: existing.id)
                 }
                 acks.append((delivery.tx_sync_id, delivery.version))
+                analytics.track(.syncDeliveryApplied(op: .delete, wasUpdate: existedLocally))
                 continue
             }
 
@@ -284,7 +306,10 @@ final class SyncEngine {
             // Couldn't decrypt with the sender id or any paired friend's key —
             // likely the sender was removed locally. Leave it un-acked; it TTLs
             // out server-side. (Don't ack what we didn't apply.)
-            guard let payload else { continue }
+            guard let payload else {
+                analytics.track(.syncDeliveryFailed(reason: .decryptFailed))
+                continue
+            }
 
             let existing = transactionStore.transactions.first { $0.syncID == delivery.tx_sync_id }
 
@@ -314,6 +339,7 @@ final class SyncEngine {
             // server stops re-delivering. delivery.version == payload.ev.
             if let existing, delivery.version <= existing.editVersion {
                 acks.append((delivery.tx_sync_id, delivery.version))
+                analytics.track(.syncDeliveryFailed(reason: .versionStale))
                 continue
             }
 
@@ -352,6 +378,7 @@ final class SyncEngine {
                                    transactionStore: transactionStore, friendStore: friendStore,
                                    categoryStore: categoryStore, receiptItemStore: receiptItemStore) {
                 acks.append((delivery.tx_sync_id, delivery.version))
+                analytics.track(.syncDeliveryApplied(op: .upsert, wasUpdate: existing != nil))
             }
         }
 
@@ -420,6 +447,7 @@ final class SyncEngine {
                     ?? (handshake.n?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
                     ?? "Friend"
                 await MainActor.run { self.onPaired?(pairedName) }
+                analytics.track(.pairingEstablished(via: .handshake))
             }
             return true
         }
@@ -489,6 +517,7 @@ final class SyncEngine {
             ?? (senderName?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
             ?? "Friend"
         await MainActor.run { self.onPaired?(pairedName) }
+        analytics.track(.pairingEstablished(via: .selfHeal))
     }
 
     /// Headless apply — the non-UI sibling of
@@ -608,6 +637,7 @@ final class SyncEngine {
             }
             return appliedTxID != nil
         } catch {
+            analytics.track(.syncDeliveryFailed(reason: .applyError))
             return false
         }
     }

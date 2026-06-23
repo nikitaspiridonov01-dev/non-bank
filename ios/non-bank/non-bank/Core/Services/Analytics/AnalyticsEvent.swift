@@ -153,6 +153,30 @@ enum AnalyticsEvent {
     case iCloudSyncDisabled
     case iCloudInitialSyncCompleted(durationSecondsBucket: String, txCountBucket: String, hadConflicts: Bool)
 
+    // MARK: - Server sync (friend auto-sync)
+
+    /// A split upload succeeded to ≥1 paired recipient. `recipientCount`
+    /// is the number of paired recipients the delivery actually reached
+    /// (returned `.ok`) for this one save/edit — fires once per upload.
+    case splitAutoSynced(recipientCount: Int)
+    /// A per-recipient delivery upload didn't land. `reason` separates a
+    /// revoked pairing from a transient failure / offline.
+    case syncUploadFailed(reason: SyncUploadFailureReason)
+    /// A friend NEWLY became connected via the sync path. `via` tells us
+    /// which channel converged the pairing (handshake / self-heal / the
+    /// original link import).
+    case pairingEstablished(via: PairingChannel)
+    /// A foreground pull fetched ≥1 inbox delivery. `countBucket` is the
+    /// delivery count bucketed via `AnalyticsBuckets.count`.
+    case syncDeliveryReceived(countBucket: String)
+    /// An inbox delivery was applied successfully. `op` is the delivery
+    /// operation; `wasUpdate` distinguishes updating an existing tx from
+    /// creating a new one.
+    case syncDeliveryApplied(op: SyncDeliveryOp, wasUpdate: Bool)
+    /// An inbox delivery couldn't be applied. `reason` separates decrypt
+    /// failure from a stale-version skip from an apply error.
+    case syncDeliveryFailed(reason: SyncDeliveryFailReason)
+
     // MARK: - Categories
 
     case categoryCreated
@@ -331,6 +355,13 @@ extension AnalyticsEvent {
         case .iCloudSyncEnabled: return "icloud_sync_enabled"
         case .iCloudSyncDisabled: return "icloud_sync_disabled"
         case .iCloudInitialSyncCompleted: return "icloud_initial_sync_completed"
+
+        case .splitAutoSynced: return "split_auto_synced"
+        case .syncUploadFailed: return "sync_upload_failed"
+        case .pairingEstablished: return "pairing_established"
+        case .syncDeliveryReceived: return "sync_delivery_received"
+        case .syncDeliveryApplied: return "sync_delivery_applied"
+        case .syncDeliveryFailed: return "sync_delivery_failed"
 
         case .categoryCreated: return "category_created"
         case .categoryEdited: return "category_edited"
@@ -520,6 +551,19 @@ extension AnalyticsEvent {
                 "tx_count_bucket": txBucket,
                 "had_conflicts": String(conflicts)
             ]
+
+        case .splitAutoSynced(let recipientCount):
+            return ["recipient_count": String(recipientCount)]
+        case .syncUploadFailed(let reason):
+            return ["reason": reason.rawValue]
+        case .pairingEstablished(let via):
+            return ["via": via.rawValue]
+        case .syncDeliveryReceived(let countBucket):
+            return ["count_bucket": countBucket]
+        case let .syncDeliveryApplied(op, wasUpdate):
+            return ["op": op.rawValue, "was_update": String(wasUpdate)]
+        case .syncDeliveryFailed(let reason):
+            return ["reason": reason.rawValue]
 
         case .categoryCreated: return [:]
         case let .categoryEdited(titleChanged, emojiChanged, affectedBucket):
@@ -883,6 +927,43 @@ enum ICloudConflictKind: String {
     case other
 }
 
+// MARK: New — server sync (friend auto-sync)
+
+/// Why a per-recipient split upload didn't land. `pairing_inactive` =
+/// the recipient revoked the pairing (server rejects the delivery);
+/// `failed` = transient server / 5xx; `offline` = no connectivity.
+enum SyncUploadFailureReason: String {
+    case pairingInactive = "pairing_inactive"
+    case failed
+    case offline
+}
+
+/// Which channel newly converged a friend pairing. `handshake` = the
+/// reciprocal pair handshake landed; `self_heal` = pairing converged
+/// from ordinary delivery traffic; `link_import` = the original manual
+/// share-link import.
+enum PairingChannel: String {
+    case handshake
+    case selfHeal = "self_heal"
+    case linkImport = "link_import"
+}
+
+/// The operation carried by an applied inbox delivery.
+enum SyncDeliveryOp: String {
+    case upsert
+    case delete
+    case pair
+}
+
+/// Why an inbox delivery couldn't be applied. `decrypt_failed` = no
+/// paired key authenticated; `version_stale` = guarded out by the
+/// monotonic-version check; `apply_error` = the headless apply threw.
+enum SyncDeliveryFailReason: String {
+    case decryptFailed = "decrypt_failed"
+    case versionStale = "version_stale"
+    case applyError = "apply_error"
+}
+
 // MARK: - User properties
 
 /// Long-lived user-level properties. Each enum case is a single key
@@ -916,6 +997,12 @@ enum AnalyticsUserProperty {
     /// dismissed, `dismissedNear` = scrolled tiers, `purchased`.
     case tipFunnelStage(String)
 
+    /// Count of friends currently `isConnected` (server-sync paired),
+    /// bucketed via `AnalyticsBuckets.friendCount`. Sync-adoption depth
+    /// — distinguishes "has friends" from "has friends who actually
+    /// auto-sync." Refreshed alongside the other cohort properties.
+    case connectedFriendCount(String)
+
     var name: String {
         switch self {
         case .txCountBucket: return "tx_count_bucket"
@@ -929,6 +1016,7 @@ enum AnalyticsUserProperty {
         case .featuresUsedDays7Bucket: return "features_used_days7_bucket"
         case .avgScanEditsBucket: return "avg_scan_edits_bucket"
         case .tipFunnelStage: return "tip_funnel_stage"
+        case .connectedFriendCount: return "connected_friend_count"
         }
     }
 
@@ -938,7 +1026,7 @@ enum AnalyticsUserProperty {
              .friendCountBucket(let v), .defaultCurrency(let v),
              .daysSinceInstallBucket(let v),
              .featuresUsedDays7Bucket(let v), .avgScanEditsBucket(let v),
-             .tipFunnelStage(let v):
+             .tipFunnelStage(let v), .connectedFriendCount(let v):
             return v
         case .hasICloudSync(let v), .hasCompletedOnboarding(let v), .hasMadeTip(let v):
             return String(v)

@@ -1,14 +1,11 @@
 import SwiftUI
 
-/// Full-screen app-update gate, presented above everything by `RootView`
-/// when `AppUpdateService.check()` returns a non-`.none` requirement.
-///
-/// One screen, two behaviours, selected by `isCritical`:
-///   - **optional** — "Update available". Primary "Update" CTA plus a
-///     low-emphasis "Later" button that dismisses the cover.
-///   - **critical** — "Update required". Primary "Update" CTA only; NO
-///     dismiss affordance. `RootView` additionally applies
-///     `.interactiveDismissDisabled(true)` so the user can't swipe past it.
+/// Full-screen, CRITICAL-ONLY app-update gate, presented above everything by
+/// `RootView` when `AppUpdateService.check()` returns `.critical` (the running
+/// app is below the server's minimum supported version). Primary "Update" CTA
+/// only, NO dismiss affordance; `RootView` additionally applies
+/// `.interactiveDismissDisabled(true)` so the user can't swipe past it.
+/// Optional "a newer version is available" prompts are intentionally not shown.
 ///
 /// Standard color context (this is a top-level app gate, not a sub-app), so
 /// it uses the page-level warm tokens — `AppColors.backgroundPrimary`,
@@ -19,21 +16,12 @@ struct UpdateGateView: View {
     /// Where the "Update" button sends the user (resolved by
     /// `AppUpdateService` from the server policy's `storeUrl`).
     let storeURL: URL
-    /// Forced update when `true`: no "Later", no swipe-to-dismiss.
-    let isCritical: Bool
 
     @Environment(\.openURL) private var openURL
-    @Environment(\.dismiss) private var dismiss
 
-    private var title: String {
-        isCritical ? "Update required" : "Update available"
-    }
-
-    private var message: String {
-        isCritical
-            ? "This version of non-bank is no longer supported. Update to keep using the app."
-            : "A new version of non-bank is available with the latest fixes and improvements."
-    }
+    private let title = "Update required"
+    private let message =
+        "This version of non-bank is no longer supported. Update to keep using the app."
 
     var body: some View {
         ZStack {
@@ -81,21 +69,9 @@ struct UpdateGateView: View {
                             )
                     }
                     .buttonStyle(.plain)
-
-                    // Low-emphasis dismiss — optional updates only. Absent
-                    // for critical so there is no escape from the gate.
-                    if !isCritical {
-                        Button {
-                            dismiss()
-                        } label: {
-                            Text("Later")
-                                .font(AppFonts.body)
-                                .foregroundColor(AppColors.textSecondary)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, AppSpacing.sm)
-                        }
-                        .buttonStyle(.plain)
-                    }
+                    // No "Later"/dismiss button: this gate is critical-only,
+                    // so there is intentionally no escape — the user must
+                    // update to continue.
                 }
                 .padding(.horizontal, AppSpacing.lg)
                 .padding(.bottom, AppSpacing.xl)

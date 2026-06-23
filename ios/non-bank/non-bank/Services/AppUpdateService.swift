@@ -3,15 +3,14 @@ import Foundation
 /// What the launch-time version check concluded the app must do.
 ///
 ///  - `.none`     — running version is fine; show nothing.
-///  - `.optional` — a newer version exists; prompt but allow dismissal.
 ///  - `.critical` — running version is below the server's minimum; force
 ///    the update (no dismiss affordance).
 ///
-/// Both prompting cases carry the resolved App Store URL so the gate view
-/// can open it without re-deriving it.
+/// We deliberately do NOT surface optional / "a newer version is available"
+/// prompts — only a hard floor (`minVersion`) forces a gate. `.critical`
+/// carries the resolved App Store URL so the gate view can open it directly.
 enum UpdateRequirement: Equatable {
     case none
-    case optional(storeURL: URL)
     case critical(storeURL: URL)
 }
 
@@ -41,8 +40,9 @@ final class AppUpdateService {
     /// renamed response degrades to `.none` rather than throwing.
     private struct VersionPolicy: Decodable {
         let minVersion: String?
-        let latestVersion: String?
         let storeUrl: String?
+        // The server still sends `latestVersion`, but we intentionally don't
+        // decode/use it — only the hard `minVersion` floor gates.
     }
 
     /// `<BackendConfig.baseURL>/v1/app-version`.
@@ -87,16 +87,12 @@ final class AppUpdateService {
             return .none
         }
 
-        // A missing / unparseable threshold is treated as "no wall" for
-        // that tier rather than failing the whole check, so a server that
-        // only sets `minVersion` still enforces the critical floor.
+        // Only the hard floor gates. A missing / unparseable `minVersion`
+        // means "no floor" → nothing is forced (fail open). Optional
+        // "newer version available" prompts are intentionally never shown.
         if let min = policy.minVersion,
            Self.isVersion(current, lessThan: min) {
             return .critical(storeURL: storeURL)
-        }
-        if let latest = policy.latestVersion,
-           Self.isVersion(current, lessThan: latest) {
-            return .optional(storeURL: storeURL)
         }
         return .none
     }

@@ -759,7 +759,12 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
   const nowSec = Math.floor(Date.now() / 1000);
   const ipLimit =
     Number.parseInt(env.PER_IP_DAILY_LIMIT ?? "", 10) || DEFAULT_PER_IP_DAILY;
-  const ipCheck = await bumpIpParseQuota(env.DB, ipHash, ipLimit, nowSec);
+  let ipCheck: Awaited<ReturnType<typeof bumpIpParseQuota>>;
+  try {
+    ipCheck = await bumpIpParseQuota(env.DB, ipHash, ipLimit, nowSec);
+  } catch (e) {
+    return quotaStoreUnavailable(env, ipHash, e);
+  }
   if (!ipCheck.ok) {
     logEvent(env, "warn", {
       route: "/v1/parse-receipt",
@@ -885,12 +890,12 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
 
   const deviceLimit =
     Number.parseInt(env.PER_DEVICE_DAILY_LIMIT, 10) || DEFAULT_PER_DEVICE_DAILY;
-  const deviceCheck = await bumpDeviceQuota(
-    env.DB,
-    deviceId,
-    deviceLimit,
-    nowSec,
-  );
+  let deviceCheck: Awaited<ReturnType<typeof bumpDeviceQuota>>;
+  try {
+    deviceCheck = await bumpDeviceQuota(env.DB, deviceId, deviceLimit, nowSec);
+  } catch (e) {
+    return quotaStoreUnavailable(env, ipHash, e);
+  }
   if (!deviceCheck.ok) {
     logEvent(env, "warn", {
       route: "/v1/parse-receipt",
@@ -998,6 +1003,25 @@ async function handleAcceptLlama(env: Env): Promise<Response> {
       500,
     );
   }
+}
+
+// A D1 write for the quota counters failed — most likely the free-tier daily
+// write cap. Degrade to a clean, RETRYABLE 503 instead of letting the error
+// bubble to an uncaught 500. Either way the iOS client treats a cloud failure
+// as "fall back to local OCR", but 503 keeps error rates/monitoring honest
+// (transient, not a crash) and tells clients/CDN it's worth retrying.
+function quotaStoreUnavailable(env: Env, ipHash: string, e: unknown): Response {
+  logEvent(env, "warn", {
+    route: "/v1/parse-receipt",
+    ip_hash: ipHash,
+    msg: "quota_store_unavailable",
+    detail: e instanceof Error ? e.message : String(e),
+  });
+  return jsonResponse(
+    { error: "service_unavailable", detail: "quota store temporarily unavailable" },
+    503,
+    { "retry-after": "120" },
+  );
 }
 
 async function handleQuotaSnapshot(env: Env): Promise<Response> {

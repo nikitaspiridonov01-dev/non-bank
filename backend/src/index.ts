@@ -88,6 +88,15 @@ export interface Env {
   SAMBANOVA_API_KEY?: string;
   NVIDIA_API_KEY?: string;
   HUGGINGFACE_API_KEY?: string;
+  // App-update gate policy. iOS fetches GET /v1/app-version on launch and
+  // compares its own CFBundleShortVersionString:
+  //   running < MIN_APP_VERSION    → forced ("critical") update
+  //   running < LATEST_APP_VERSION → optional update prompt (dismissible)
+  // At 1.0 == 1.0 the app shows nothing; bump these on each release. Public
+  // read-only static policy — see `handleAppVersion`.
+  MIN_APP_VERSION?: string;
+  LATEST_APP_VERSION?: string;
+  APP_STORE_URL?: string;
 }
 
 // Image preprocessing happens on iOS (resize + EXIF strip), so we just
@@ -143,6 +152,11 @@ export default {
       }
       if (url.pathname === "/v1/health" && req.method === "GET") {
         return withCors(jsonResponse({ ok: true, env: env.ENV }, 200), cors);
+      }
+      // App-update gate policy. Public, read-only, no App Attest, no D1 —
+      // just the version thresholds from env. iOS fetches this on launch.
+      if (url.pathname === "/v1/app-version" && req.method === "GET") {
+        return withCors(handleAppVersion(env), cors);
       }
       // App Attest — issue a stateless challenge for the one-time key
       // attestation. Cheap (HMAC, no storage); gated by the per-IP
@@ -991,6 +1005,23 @@ async function handleQuotaSnapshot(env: Env): Promise<Response> {
     `SELECT provider, rpd_used, rpd_limit, consecutive_errors, total_requests, total_errors FROM provider_quotas`,
   ).all();
   return jsonResponse({ providers: result.results ?? [] });
+}
+
+// Static app-update policy. Read from env vars with safe fallbacks so a
+// misconfigured deploy degrades to "1.0" (== current shipping version →
+// the app shows no prompt) rather than locking anyone out. Synchronous: no
+// D1, no auth, no provider hop. Short cache so a release-time bump
+// propagates to clients within minutes without hammering the Worker.
+function handleAppVersion(env: Env): Response {
+  const minVersion = env.MIN_APP_VERSION ?? "1.0";
+  const latestVersion = env.LATEST_APP_VERSION ?? "1.0";
+  const storeUrl =
+    env.APP_STORE_URL ?? "https://apps.apple.com/app/idPLACEHOLDER";
+  return jsonResponse(
+    { minVersion, latestVersion, storeUrl },
+    200,
+    { "cache-control": "max-age=300" },
+  );
 }
 
 function jsonResponse(

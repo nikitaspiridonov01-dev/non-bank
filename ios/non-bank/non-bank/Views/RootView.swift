@@ -30,6 +30,16 @@ struct RootView: View {
     /// (and only here) if the brand moment ever needs tuning.
     private static let minimumSplashDuration: Duration = .seconds(1.5)
 
+    /// Result of the once-per-launch app-update check. `nil` until the
+    /// async check resolves to a non-`.none` requirement; drives the
+    /// `.fullScreenCover` below. Optional case is cleared on "Later"
+    /// dismiss; critical case is never cleared from in here (no escape).
+    @State private var updateRequirement: UpdateRequirement?
+
+    /// Latch so the update gate runs (and can pop) at most once per
+    /// launch — a dismissed optional update must not immediately re-pop.
+    @State private var didRunUpdateCheck = false
+
     var body: some View {
         Group {
             if splashDone {
@@ -56,5 +66,52 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.35), value: onboarding.isCompleted)
+        // Kick off the app-update check once, AFTER the splash floor lifts.
+        // Non-blocking (its own `Task`); fail-open inside the service means
+        // a slow / failed check just leaves `updateRequirement == nil` and
+        // nothing presents. Guarded by `didRunUpdateCheck` so it runs at
+        // most once per launch.
+        .onChange(of: splashDone) { _, done in
+            guard done, !didRunUpdateCheck else { return }
+            didRunUpdateCheck = true
+            Task {
+                let requirement = await AppUpdateService().check()
+                if requirement != .none {
+                    updateRequirement = requirement
+                }
+            }
+        }
+        // Top-level update gate. For `.critical` it is non-dismissible:
+        // `interactiveDismissDisabled(true)` blocks the swipe and the view
+        // itself renders no "Later"/close affordance. For `.optional` the
+        // "Later" button + normal swipe both dismiss it; we never re-show
+        // it this launch (`didRunUpdateCheck` stays true).
+        .fullScreenCover(item: $updateRequirement) { requirement in
+            switch requirement {
+            case .none:
+                // Unreachable — `.none` is filtered before binding — but
+                // keeps the switch exhaustive without a forced unwrap.
+                EmptyView()
+            case .optional(let storeURL):
+                UpdateGateView(storeURL: storeURL, isCritical: false)
+            case .critical(let storeURL):
+                UpdateGateView(storeURL: storeURL, isCritical: true)
+                    .interactiveDismissDisabled(true)
+            }
+        }
+    }
+}
+
+/// `Identifiable` conformance so `UpdateRequirement` can drive a
+/// `.fullScreenCover(item:)`. The two presenting cases get stable, distinct
+/// ids; `.none` is never bound (it's filtered before assignment) but still
+/// needs an id for the synthesized switch.
+extension UpdateRequirement: Identifiable {
+    var id: String {
+        switch self {
+        case .none: return "none"
+        case .optional: return "optional"
+        case .critical: return "critical"
+        }
     }
 }

@@ -386,6 +386,12 @@ struct CreateTransactionModal: View {
     /// Pending replacement Transaction when editing a recurring parent — drives
     /// the "Replace reminder?" confirmation alert.
     @State private var pendingRecurringReplacement: Transaction? = nil
+    /// The LIVE store row (resolved by syncID at edit-open), used as the
+    /// commit baseline instead of the stale `editingTransaction` snapshot — so
+    /// a friend's sync update that landed while the detail card was open can't
+    /// be reverted by a cosmetic edit, and the editVersion bump anchors to the
+    /// live row (which the friend-side version guard depends on).
+    @State private var editBaseline: Transaction? = nil
     @State private var showRecurringReplaceAlert: Bool = false
 
     /// Re-entry guard for the Save (✓) control. The save action awaits a
@@ -504,6 +510,12 @@ struct CreateTransactionModal: View {
     }
 
     private func commitTransaction() {
+        // Baseline for the whole commit = the LIVE store row (resolved by
+        // syncID in onAppear), NOT the stale `editingTransaction` snapshot.
+        // This is what makes a cosmetic edit safe when a friend's sync update
+        // landed while the sheet was open, and anchors the editVersion bump to
+        // the live row so the friend-side version guard keeps its meaning.
+        let baseline = editBaseline ?? editingTransaction
         // When editing a recurring parent, confirm via the alert first, then
         // update the parent IN PLACE (see `confirmRecurringReplacement`). This
         // used to be a delete + re-add "replace", but those were two unordered
@@ -513,7 +525,7 @@ struct CreateTransactionModal: View {
         // replacement carrying the existing `syncID` so the confirm handler can
         // re-stamp it onto the same row (same id + syncID) — open sheets bound
         // to the reminder keep resolving after the edit.
-        if let existing = editingTransaction, existing.isRecurringParent {
+        if let existing = baseline, existing.isRecurringParent {
             guard var replacement = vm.buildTransaction(
                 editingId: nil,
                 syncID: existing.syncID
@@ -542,18 +554,18 @@ struct CreateTransactionModal: View {
         // leaving it nil rotated the syncID on every edit: locally masked (the
         // store updates by `id`), but each sync upload then carried a brand-new
         // syncID, so paired friends saw a DUPLICATE instead of an update.
-        let saveSyncID: String? = editingTransaction == nil
+        let saveSyncID: String? = baseline == nil
             ? { let id = inFlightSyncID ?? UUID().uuidString; inFlightSyncID = id; return id }()
-            : editingTransaction?.syncID
+            : baseline?.syncID
         guard var tx = vm.buildTransaction(
-            editingId: editingTransaction?.id,
+            editingId: baseline?.id,
             syncID: saveSyncID
         ) else { return }
         // Editing an existing transaction must preserve the user's
         // include/exclude-from-insights choice — the build step starts
         // from `vm` state, which doesn't carry that flag, so the row
         // would otherwise quietly flip back to "counted" on every edit.
-        if let existing = editingTransaction, existing.excludedFromInsights {
+        if let existing = baseline, existing.excludedFromInsights {
             tx = tx.settingExcludedFromInsights(true)
         }
         let pendingItems = vm.pendingReceiptItems
@@ -566,7 +578,7 @@ struct CreateTransactionModal: View {
         // is on its way out, and keeping the lock set covers the dismiss
         // animation window where the toolbar ✓ is still hit-testable.
 
-        if editingTransaction != nil {
+        if baseline != nil {
             // Only the financially-meaningful fields — amount, currency, and
             // the split structure (participants + their shares + mode) — are
             // what a paired friend actually applies; cosmetic fields (title,
@@ -575,9 +587,9 @@ struct CreateTransactionModal: View {
             // triggers the friend's push) ONLY when those synced fields
             // changed. A cosmetic-only edit must NOT re-deliver or notify
             // friends — it just saves locally.
-            let syncedChanged = syncRelevantChange(old: editingTransaction, new: tx)
+            let syncedChanged = syncRelevantChange(old: baseline, new: tx)
             if syncedChanged {
-                tx = tx.settingEditVersion((editingTransaction?.editVersion ?? 0) + 1)
+                tx = tx.settingEditVersion((baseline?.editVersion ?? 0) + 1)
             }
             transactionStore.update(tx)
             // For an in-place edit we already know the row id, so save items
@@ -819,7 +831,7 @@ struct CreateTransactionModal: View {
 
     private func confirmRecurringReplacement() {
         guard let replacement = pendingRecurringReplacement,
-              let existing = editingTransaction else {
+              let existing = editBaseline ?? editingTransaction else {
             // No pending replacement to commit — release the save lock so
             // the user isn't stuck if they somehow re-enter this path.
             isSaving = false
@@ -1690,7 +1702,15 @@ struct CreateTransactionModal: View {
             }
             // Логика инициализации и переключения типа
             .onAppear {
-                if let tx = editingTransaction {
+                if let snapshot = editingTransaction {
+                    // `editingTransaction` is a value snapshot captured at
+                    // row-tap; a friend's sync update landing while the detail
+                    // card is open makes it STALE. Re-resolve the LIVE row by
+                    // syncID and use it as the edit baseline — populating /
+                    // rebuilding / version-bumping from the stale copy used to
+                    // revert the friend's amounts and push the old ones back.
+                    let tx = transactionStore.transactions.first { $0.syncID == snapshot.syncID } ?? snapshot
+                    editBaseline = tx
                     vm.populate(
                         from: tx,
                         categories: categoryStore.categories,

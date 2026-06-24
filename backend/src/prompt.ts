@@ -14,6 +14,7 @@ Return ONE JSON object that matches the schema. No prose. No markdown fences. No
 - Delivery fee → item with name "Delivery".
 - Packaging / bag fee → item.
 - Service-priced items (haircut, repair, consultation) → items.
+- Tip / gratuity / service charge → item, with its printed name (EN \`tip\` / \`gratuity\` / \`service charge\`, DE \`Trinkgeld\`, FR \`pourboire\`, ES \`propina\`, IT \`mancia\` / \`coperto\`, PL \`napiwek\` / \`obsługa\`, RU \`чаевые\` / \`обслуживание\` / \`сервисный сбор\`, SR \`servis\` / \`napojnica\`, JA \`チップ\` / \`サービス料\`, KO \`팁\` / \`봉사료\`) and its own printed positive amount. Treat it like any other product line — it counts toward Σitems and is included in the printed grand total. Do NOT skip it and do NOT mark it negative.
 
 # Item names — clean, human-readable only
 
@@ -191,7 +192,6 @@ For each category below, recognise the listed keywords AND their equivalents in 
 - **Tax / VAT / sales-tax lines** — EN \`VAT\` / \`tax\`, FR \`TVA\`, DE \`MwSt\` / \`USt\` / \`Umsatzsteuer\`, ES/IT/PT \`IVA\`, PL \`VAT\` / \`podatek\`, RU \`НДС\` / \`налог\`, SR \`PDV\` / \`ПДВ\` / \`porez\`, TR \`KDV\`, JA \`税\` / \`消費税\`, ZH \`税\` / \`增值税\`, KO \`부가세\` / \`세금\`.
 - **Subtotal** — EN \`Subtotal\`, FR \`Sous-total\`, IT \`Subtotale\`, DE \`Zwischensumme\`, PL \`Międzysuma\`, RU \`Подытог\` / \`Промежуточный итог\`, SR \`Промет\` (turnover / subtotal), JA \`小計\`, ZH \`小计\`, KO \`소계\`.
 - **Grand total** — NEVER include as an item. It goes into the SEPARATE \`totalAmount\` field (see below).
-- **Tip / gratuity / service charge** — EN \`tip\` / \`gratuity\` / \`service charge\`, DE \`Trinkgeld\`, FR \`pourboire\`, ES \`propina\`, IT \`mancia\` / \`coperto\`, PL \`napiwek\` / \`obsługa\`, RU \`чаевые\` / \`обслуживание\` / \`сервисный сбор\` / \`сервис\` (standalone), SR \`servis\` / \`napojnica\`, JA \`チップ\` / \`サービス料\`, KO \`팁\` / \`봉사료\`. These are payments, not items.
 - **Cash / card payment rows** — EN \`Cash\` / \`Card\` / \`Visa\` / \`Mastercard\` / \`Card *1234\`, DE \`Bargeld\` / \`Karte\`, FR \`Espèces\` / \`Carte bancaire\`, IT \`Contanti\` / \`Carta\`, PL \`Gotówka\` / \`Karta\`, RU \`Наличные\` / \`Карта\` / \`Картой\`, SR \`Gotovina\` / \`Kartica\`, JA \`現金\` / \`カード\`, ZH \`现金\` / \`卡\`, KO \`현금\` / \`카드\`.
 - **Change / refund** — EN \`Change\` / \`Refund\`, DE \`Rückgeld\`, FR \`Monnaie\` / \`Rendu\`, IT \`Resto\`, PT \`Troco\`, PL \`Reszta\`, RU \`Сдача\` / \`Возврат\`, SR \`Kusur\`, JA \`お釣り\`, ZH \`找零\`, KO \`거스름돈\`.
 - Phone / address / tax ID / receipt number / waiter / table / cashier / fiscal-protocol number.
@@ -268,12 +268,12 @@ KUSUR                   909,81         ← change — NOT the total
 \`\`\`
 Subtotal                $42.50        ← pre-tax/pre-tip — NOT the total
 Sales Tax (8.25%)       $3.51         ← tax — NOT the total
-Tip (20%)               $9.00         ← tip — skip as item, NOT the total
+Tip (20%)               $9.00         ← tip — emit as an ITEM (name "Tip", total 9.00), but NOT the grand total
 Grand Total             $55.01        ← GRAND TOTAL  ← totalAmount = 55.01  ✅
 Visa **** 1234          $55.01        ← payment line — NOT a separate total
 \`\`\`
 
-The grand total is the LAST positive amount labelled with \`Total\` — it already includes tax + tip.
+The grand total is the LAST positive amount labelled with \`Total\` — it already includes tax + tip. The tip line itself becomes one of the items (Σitems therefore includes it); only the tax line is excluded from the items list.
 
 ### Russian grocery — space as thousands separator
 

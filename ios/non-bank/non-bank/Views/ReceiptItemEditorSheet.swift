@@ -389,7 +389,9 @@ struct ReceiptItemEditorSheet: View {
         // typed/picked "Discount" before entering a digit). Beyond
         // discount, `.fee/.tip` now also surface their own icons so
         // the editor mirrors what the review/read-only sheets show.
-        let kind = ReceiptItem.Kind.classify(name: item.name, lineTotal: item.lineTotal)
+        // A manually-added tip carries `forcedKind == .tip` (tips no longer
+        // auto-classify by name), so honour it here for the right icon.
+        let kind = item.forcedKind ?? ReceiptItem.Kind.classify(name: item.name, lineTotal: item.lineTotal)
         let isDiscount = kind == .discount
         return Button {
             handleRowTap(item.id)
@@ -627,7 +629,10 @@ struct ReceiptItemEditorSheet: View {
                     iconTint: .neutral
                 ) {
                     activeSheet = nil
-                    addPresetItem(name: "Tips", isDiscount: false)
+                    // Manual tip: stamp `.tip` so it behaves as a tip
+                    // (proportional distribution in a byItems split) even
+                    // though "Tips" no longer auto-classifies as `.tip`.
+                    addPresetItem(name: "Tips", isDiscount: false, forcedKind: .tip)
                 }
                 addItemMenuRow(
                     label: "Discount",
@@ -939,9 +944,9 @@ struct ReceiptItemEditorSheet: View {
     /// so the next digit the user types is interpreted as a deduction —
     /// the numpad doesn't have a minus key, and forcing the user to think
     /// about sign isn't useful when the line type already implies it.
-    private func addPresetItem(name: String, isDiscount: Bool) {
+    private func addPresetItem(name: String, isDiscount: Bool, forcedKind: ReceiptItem.Kind? = nil) {
         commitActiveInputToModel()
-        let new = EditableItem(name: name, lineTotal: 0, original: nil)
+        let new = EditableItem(name: name, lineTotal: 0, original: nil, forcedKind: forcedKind)
         items.append(new)
         activeItemID = new.id
         activeInput = isDiscount ? "-" : ""
@@ -1001,15 +1006,24 @@ struct ReceiptItemEditorSheet: View {
         var lineTotal: Double
         let original: ReceiptItem?
 
+        /// Stored kind override carried through the editor round-trip. Set
+        /// only for the manual "Tips" preset (and preserved for any item
+        /// that arrived already carrying `forcedKind == .tip`) so a manual
+        /// tip keeps behaving as a tip after the user edits its amount or
+        /// name. nil for everything else, which keeps classifying by name.
+        var forcedKind: ReceiptItem.Kind?
+
         static func == (lhs: EditableItem, rhs: EditableItem) -> Bool {
             lhs.id == rhs.id && lhs.name == rhs.name && lhs.lineTotal == rhs.lineTotal
+                && lhs.forcedKind == rhs.forcedKind
         }
 
-        init(name: String, lineTotal: Double, original: ReceiptItem?) {
+        init(name: String, lineTotal: Double, original: ReceiptItem?, forcedKind: ReceiptItem.Kind? = nil) {
             self.id = original?.id ?? UUID()
             self.name = name
             self.lineTotal = lineTotal
             self.original = original
+            self.forcedKind = forcedKind
         }
 
         init(from receipt: ReceiptItem) {
@@ -1017,6 +1031,7 @@ struct ReceiptItemEditorSheet: View {
             self.name = receipt.name
             self.lineTotal = receipt.lineTotal
             self.original = receipt
+            self.forcedKind = receipt.forcedKind
         }
 
         /// Returns a `ReceiptItem` ready to be persisted. Drops `quantity`
@@ -1039,7 +1054,8 @@ struct ReceiptItemEditorSheet: View {
                 transactionID: original?.transactionID,
                 syncID: original?.syncID ?? UUID().uuidString,
                 position: original?.position ?? 0,
-                lastModified: Date()
+                lastModified: Date(),
+                forcedKind: forcedKind
             )
         }
     }

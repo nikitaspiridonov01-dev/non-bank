@@ -238,6 +238,16 @@ class SQLiteService: DatabaseProtocol {
             exec("ALTER TABLE receipt_items ADD COLUMN assigned_participant_ids TEXT;")
         }
 
+        // --- Receipt items: stored kind override for manual tips ---
+        // `forced_kind` stores `ReceiptItem.Kind.rawValue` (e.g. "tip") for
+        // a manually-added tip line, so it keeps behaving as a tip after
+        // reload even though tip keywords no longer auto-classify. NULL on
+        // rows that pre-date the feature and on every auto-parsed line; the
+        // read path maps NULL → nil → name-based classification.
+        if !columnExists("forced_kind", in: "receipt_items") {
+            exec("ALTER TABLE receipt_items ADD COLUMN forced_kind TEXT;")
+        }
+
         // --- Friends v3: remove legacy emoji column ---
         // Old schema had `emoji TEXT NOT NULL` which blocks new inserts that omit it.
         // SQLite ALTER TABLE DROP COLUMN requires 3.35+; safer to recreate the table.
@@ -913,8 +923,8 @@ class SQLiteService: DatabaseProtocol {
 
     private static let receiptItemInsertSQL = """
         INSERT INTO receipt_items
-            (sync_id, transaction_id, position, name, quantity, price, total, last_modified, assigned_participant_ids)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            (sync_id, transaction_id, position, name, quantity, price, total, last_modified, assigned_participant_ids, forced_kind)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
 
     private func bindReceiptItemFields(_ statement: OpaquePointer?, _ item: ReceiptItem) {
@@ -931,6 +941,7 @@ class SQLiteService: DatabaseProtocol {
             sqlite3_bind_null(statement, 7)
             sqlite3_bind_double(statement, 8, item.lastModified.timeIntervalSince1970)
             bindAssignedParticipantIDs(statement, position: 9, ids: item.assignedParticipantIDs)
+            bindForcedKind(statement, position: 10, kind: item.forcedKind)
             return
         }
         sqlite3_bind_text(statement, 1, (item.syncID as NSString).utf8String, -1, nil)
@@ -954,6 +965,17 @@ class SQLiteService: DatabaseProtocol {
         }
         sqlite3_bind_double(statement, 8, item.lastModified.timeIntervalSince1970)
         bindAssignedParticipantIDs(statement, position: 9, ids: item.assignedParticipantIDs)
+        bindForcedKind(statement, position: 10, kind: item.forcedKind)
+    }
+
+    /// Binds the stored kind override (manual tips). nil → NULL, so an
+    /// auto-parsed line stays name-classified on read.
+    private func bindForcedKind(_ statement: OpaquePointer?, position: Int32, kind: ReceiptItem.Kind?) {
+        if let raw = kind?.rawValue {
+            sqlite3_bind_text(statement, position, (raw as NSString).utf8String, -1, nil)
+        } else {
+            sqlite3_bind_null(statement, position)
+        }
     }
 
     /// JSON-encodes the assignment list. Empty list is stored as NULL —
@@ -996,6 +1018,11 @@ class SQLiteService: DatabaseProtocol {
                 assigned = decoded
             }
         }
+        var forcedKind: ReceiptItem.Kind? = nil
+        if sqlite3_column_type(statement, 10) != SQLITE_NULL,
+           let ptr = sqlite3_column_text(statement, 10) {
+            forcedKind = ReceiptItem.Kind(rawValue: String(cString: ptr))
+        }
         return ReceiptItem(
             name: name,
             quantity: quantity,
@@ -1006,7 +1033,8 @@ class SQLiteService: DatabaseProtocol {
             transactionID: txID,
             syncID: syncID,
             position: position,
-            lastModified: lastModified
+            lastModified: lastModified,
+            forcedKind: forcedKind
         )
     }
 
@@ -1052,7 +1080,7 @@ class SQLiteService: DatabaseProtocol {
         }
     }
 
-    private static let receiptItemSelectColumns = "id, sync_id, transaction_id, position, name, quantity, price, total, last_modified, assigned_participant_ids"
+    private static let receiptItemSelectColumns = "id, sync_id, transaction_id, position, name, quantity, price, total, last_modified, assigned_participant_ids, forced_kind"
 
     func fetchReceiptItems(transactionID: Int) async -> [ReceiptItem] {
         await withCheckedContinuation { continuation in
@@ -1093,11 +1121,11 @@ class SQLiteService: DatabaseProtocol {
         guard let id = item.persistedID else { return }
         await withCheckedContinuation { continuation in
             dbQueue.async {
-                let sql = "UPDATE receipt_items SET sync_id = ?, transaction_id = ?, position = ?, name = ?, quantity = ?, price = ?, total = ?, last_modified = ?, assigned_participant_ids = ? WHERE id = ?;"
+                let sql = "UPDATE receipt_items SET sync_id = ?, transaction_id = ?, position = ?, name = ?, quantity = ?, price = ?, total = ?, last_modified = ?, assigned_participant_ids = ?, forced_kind = ? WHERE id = ?;"
                 var statement: OpaquePointer?
                 if sqlite3_prepare_v2(self.db, sql, -1, &statement, nil) == SQLITE_OK {
                     self.bindReceiptItemFields(statement, item)
-                    sqlite3_bind_int(statement, 10, Int32(id))
+                    sqlite3_bind_int(statement, 11, Int32(id))
                     if sqlite3_step(statement) != SQLITE_DONE {
                         print("Failed to update receipt item")
                     }

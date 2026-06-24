@@ -18,7 +18,6 @@ struct ReceiptLineFilter {
         case anchorTotal           // the grand-total line — strong section anchor
         case discount              // a discount line — kept as a negative item
         case fee                   // a service / delivery / handling fee line
-        case tip                   // a tip / gratuity / service-charge line
     }
 
     /// Classifies a single line of receipt text. Order of checks matters:
@@ -32,10 +31,12 @@ struct ReceiptLineFilter {
     ///    skip because tax is store-side metadata (already baked into
     ///    the grand total), not a buyer-paid charge the user wants to
     ///    track. Buyer-paid duties / fees stay as `.fee`.
-    /// 3. **Tip / fee** then route to their respective keep-with-kind
-    ///    verdicts. Order is mostly cosmetic (they're nearly always
-    ///    disjoint); `.tip` precedes `.fee` so a "service charge fee"
-    ///    hypothetical leans `.tip`.
+    /// 3. **Fee** then routes to the keep-with-kind `.fee` verdict.
+    ///    Tips are NOT auto-classified — a tip / gratuity / service-charge
+    ///    line falls through to `.keep` (a regular item) unless it also
+    ///    matches a fee keyword (e.g. "service charge"), in which case it
+    ///    becomes `.fee`. Tips can only be tagged manually in the editor
+    ///    (which sets `ReceiptItem.forcedKind = .tip`).
     /// 4. **Pattern-based** (dates, masked cards, phones) runs after the
     ///    keyword regexes since it's a stricter check.
     /// 5. **Anchor** runs last — only fires when nothing more specific did.
@@ -48,9 +49,6 @@ struct ReceiptLineFilter {
         }
         if Self.nonProductRegex.matches(in: trimmed) {
             return .skipNonProduct
-        }
-        if Self.tipRegex.matches(in: trimmed) {
-            return .tip
         }
         if Self.feeRegex.matches(in: trimmed) {
             return .fee
@@ -95,12 +93,16 @@ struct ReceiptLineFilter {
     /// here — it's reserved for `anchorTotalWords` so a one-off `Total` line
     /// is treated as the body terminator, not as a skipped non-product.
     ///
-    /// NOTE: Tax / tip / fee keywords USED TO live here. They moved to
-    /// dedicated lists below (`taxWords`, `tipWords`, `feeWords`) so the
-    /// "by items" split mode can keep those rows as semantically tagged
-    /// items and distribute them proportionally to each participant's
-    /// item subtotal — rather than dropping them silently the way a true
-    /// admin / payment line is dropped.
+    /// NOTE: Fee keywords USED TO live here alongside tax. Fees moved to the
+    /// dedicated `feeWords` list below so the "by items" split mode can keep
+    /// those rows as semantically tagged `.fee` items and distribute them
+    /// proportionally to each participant's item subtotal — rather than
+    /// dropping them silently the way a true admin / payment line is dropped.
+    /// Tips are NOT classified at all anymore: a tip / gratuity line falls
+    /// through to `.keep` (a regular item) unless it also matches `feeWords`
+    /// (e.g. "service charge"). Manual tips are tagged in the editor via
+    /// `ReceiptItem.forcedKind = .tip`. Tax keywords remain in this list
+    /// (skipped as store-side metadata).
     private static let nonProductWords: [String] = [
         // Subtotals
         "subtotal", "sub-total", "sub total", "sous-total", "subtotale",
@@ -202,23 +204,13 @@ struct ReceiptLineFilter {
         stems: nonProductCyrillicStems
     )
 
-    // MARK: - Tip keywords
-
-    /// Words that identify a tip / gratuity / service-charge line. Kept
-    /// in the items list as `.tip`-kinded rows so the "by items" split
-    /// distributes them proportionally. Service charge sits here (rather
-    /// than in fees) because it usually scales like a tip — a percentage
-    /// of the subtotal — and gets bundled with `gratuity`/`obsługa` in
-    /// receipt language.
-    private static let tipWords: [String] = [
-        "tip", "tips", "чаевые", "trinkgeld", "pourboire",
-        "propina", "gorjeta", "mancia", "napojnica", "napiwek",
-        "service charge", "gratuity", "obsługa", "obsluga"
-    ]
-
-    private static let tipRegex = WordRegex(words: tipWords)
-
     // MARK: - Fee keywords
+    //
+    // NOTE: Tips are intentionally NOT auto-classified. A tip / gratuity
+    // line is treated as a regular item (`.keep`) unless it also matches a
+    // fee keyword below (e.g. "service charge", which is in `feeWords`), in
+    // which case it becomes `.fee`. Manual tips are tagged in the editor
+    // via `ReceiptItem.forcedKind = .tip`, which bypasses this classifier.
 
     /// Words that identify a fee / surcharge line (delivery, booking,
     /// handling, processing, convenience, etc.). Kept as `.fee`-kinded

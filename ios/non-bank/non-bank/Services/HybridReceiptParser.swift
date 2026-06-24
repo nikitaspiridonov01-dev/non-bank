@@ -674,10 +674,12 @@ actor HybridReceiptParser {
         var droppedByFilter: [String] = []
         let filteredItems = normalizedInput.compactMap { item -> ReceiptItem? in
             switch ReceiptLineFilter.classify(item.name) {
-            case .keep, .fee, .tip:
-                // Fee / tip rows are kept (positive sign — they ADD to
-                // the total) so the split-by-items calculator can
-                // distribute them proportionally. `ReceiptItem.kind`
+            case .keep, .fee:
+                // Fee rows are kept (positive sign — they ADD to the
+                // total) so the split-by-items calculator can distribute
+                // them proportionally. Tip / gratuity lines now also land
+                // in `.keep` (tips are no longer auto-detected) and are
+                // likewise kept as regular items. `ReceiptItem.kind`
                 // re-derives the classification via the same
                 // `ReceiptLineFilter.classify` call, so we don't need to
                 // stash the verdict on the row itself. Tax/VAT lines

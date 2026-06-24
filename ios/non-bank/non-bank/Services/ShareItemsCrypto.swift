@@ -120,6 +120,7 @@ enum ShareItemsCrypto {
         let p: Double?          // unit price
         let t: Double?          // line total
         let a: [String]         // assigned participant IDs
+        let k: String?          // forced kind (manual tips); nil for auto rows
 
         init(from item: ReceiptItem) {
             n = item.name
@@ -127,6 +128,22 @@ enum ShareItemsCrypto {
             p = item.price
             t = item.total
             a = item.assignedParticipantIDs
+            k = item.forcedKind?.rawValue
+        }
+
+        // Optional-decode `a` and `k` so a payload from an older app
+        // build (which omitted them) still decodes — a missing optional
+        // synthesises to nil, and we map a nil `a` to the empty array.
+        enum CodingKeys: String, CodingKey { case n, q, p, t, a, k }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            n = try c.decode(String.self, forKey: .n)
+            q = try c.decodeIfPresent(Double.self, forKey: .q)
+            p = try c.decodeIfPresent(Double.self, forKey: .p)
+            t = try c.decodeIfPresent(Double.self, forKey: .t)
+            a = try c.decodeIfPresent([String].self, forKey: .a) ?? []
+            k = try c.decodeIfPresent(String.self, forKey: .k)
         }
 
         func toReceiptItem() -> ReceiptItem {
@@ -135,7 +152,8 @@ enum ShareItemsCrypto {
                 quantity: q,
                 price: p,
                 total: t,
-                assignedParticipantIDs: a
+                assignedParticipantIDs: a,
+                forcedKind: k.flatMap(ReceiptItem.Kind.init(rawValue:))
             )
         }
     }

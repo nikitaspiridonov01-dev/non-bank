@@ -45,6 +45,10 @@ struct ExportedReceiptItem: Codable {
     let syncID: String
     let position: Int
     let lastModified: Date
+    /// Stored kind override (manual tips). Optional so backups written
+    /// before this field — and rows that never had a forced kind — decode
+    /// cleanly to `nil` (= name-based classification on re-import).
+    let forcedKind: ReceiptItem.Kind?
 
     init(from item: ReceiptItem, transactionSyncID: String) {
         self.transactionSyncID = transactionSyncID
@@ -56,6 +60,7 @@ struct ExportedReceiptItem: Codable {
         self.syncID = item.syncID
         self.position = item.position
         self.lastModified = item.lastModified
+        self.forcedKind = item.forcedKind
     }
 
     /// Rebuild a `ReceiptItem` for persistence. `transactionID` is left
@@ -72,7 +77,8 @@ struct ExportedReceiptItem: Codable {
             transactionID: nil,
             syncID: syncID,
             position: position,
-            lastModified: lastModified
+            lastModified: lastModified,
+            forcedKind: forcedKind
         )
     }
 }

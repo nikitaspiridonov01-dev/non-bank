@@ -79,7 +79,6 @@ struct ReceiptItem: Codable, Sendable, Identifiable, Equatable {
                 // positive amount we fall back to `.item`.
                 return lineTotal > 0 ? .item : .discount
             case .fee:      return .fee
-            case .tip:      return .tip
             case .keep, .skipNonProduct, .anchorTotal:
                 return .item
             }
@@ -130,6 +129,17 @@ struct ReceiptItem: Codable, Sendable, Identifiable, Equatable {
     var position: Int = 0
     var lastModified: Date = Date()
 
+    /// Stored override for `kind`, set ONLY for a manually-added tip (the
+    /// "Tips" preset in the editor). When non-nil it wins over the
+    /// name-based `Kind.classify`. This is the marker that lets a manual
+    /// tip behave as a tip even though tip keywords no longer auto-classify
+    /// as `.tip` — an auto-parsed line that happens to read "Tips" stays a
+    /// regular `.item`. Like `persistedID`/`syncID`, it is NOT part of the
+    /// JSON `CodingKeys` contract (LLM output never carries it); it is
+    /// threaded through SQLite, the export envelope, and the share-items
+    /// wire format so a manual tip survives reload, backup, and friend-sync.
+    var forcedKind: Kind? = nil
+
     /// True if this item has a name and a non-zero price or total. Negative
     /// values are allowed so discount items (`Скидка -5,00`) survive — the
     /// downstream parser converts those into deductions.
@@ -154,7 +164,7 @@ struct ReceiptItem: Codable, Sendable, Identifiable, Equatable {
     /// keyword, a fresh discount synonym) instantly reclassifies historic
     /// rows on next read with no migration.
     var kind: Kind {
-        Kind.classify(name: name, lineTotal: lineTotal)
+        forcedKind ?? Kind.classify(name: name, lineTotal: lineTotal)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -187,7 +197,8 @@ struct ReceiptItem: Codable, Sendable, Identifiable, Equatable {
         transactionID: Int? = nil,
         syncID: String = UUID().uuidString,
         position: Int = 0,
-        lastModified: Date = Date()
+        lastModified: Date = Date(),
+        forcedKind: Kind? = nil
     ) {
         self.name = name
         self.quantity = quantity
@@ -199,6 +210,7 @@ struct ReceiptItem: Codable, Sendable, Identifiable, Equatable {
         self.syncID = syncID
         self.position = position
         self.lastModified = lastModified
+        self.forcedKind = forcedKind
     }
 
     // MARK: - Display formatting

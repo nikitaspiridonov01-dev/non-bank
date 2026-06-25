@@ -447,6 +447,22 @@ final class ShareLinkCoordinator: ObservableObject {
             }
 
             if isUpdate, let txID = existingID {
+                // STALE-ITEMS guard (mirrors SyncEngine.applyHeadless): on a
+                // byItems update whose receipt items did NOT arrive (share-items
+                // fetch nil/empty/expired/undecryptable), do NOT write the new
+                // splitInfo — it would get AHEAD of the still-old local items, and
+                // a later cosmetic edit recomputes the OLD shares from those items
+                // and reverts the amounts (+ pushes them back). Leave the row +
+                // items untouched; re-opening once items propagate applies it
+                // cleanly. `payloadChecksumChanged` so an identical re-share (no
+                // real change) still falls through to the normal no-op update.
+                let payloadChecksumChanged =
+                    existingTx?.payloadChecksum != resolved.transaction.payloadChecksum
+                if payload.sm == SplitMode.byItems.rawValue,
+                   payloadChecksumChanged, !itemsCameFromShare {
+                    routingState = .identical(syncID: resolved.transaction.syncID)
+                    return
+                }
                 // Update path keeps the same SQLite primary key but
                 // replaces every other field — including the freshly
                 // computed `payloadChecksum`, which the classifier will

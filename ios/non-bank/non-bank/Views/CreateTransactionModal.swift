@@ -795,7 +795,44 @@ struct CreateTransactionModal: View {
         guard let old else { return true }
         return old.amount != new.amount
             || old.currency != new.currency
-            || old.splitInfo != new.splitInfo
+            || !splitFinanciallyEqual(old.splitInfo, new.splitInfo)
+    }
+
+    /// Compare two `SplitInfo`s on the fields a paired friend actually applies,
+    /// ignoring the DERIVED `lentAmount` and tolerating sub-cent float noise.
+    ///
+    /// `lentAmount` MUST NOT be a comparison axis: it's a pure function of
+    /// `paidByMe - myShare`, and the two writers disagree on its sign —
+    /// `ReceivedTransactionMapper` stores it UNCLAMPED (negative for a receiver
+    /// who paid 0), while `buildTransaction` clamps it to `max(..., 0)`. The raw
+    /// `SplitInfo` Equatable compared it, so a title-only re-save of a SYNCED
+    /// split looked like an amount change (e.g. -14.99 vs 0) and pushed a
+    /// spurious "changed amounts" delivery to the friend. Friends are compared
+    /// order-independently by `friendID` (the receive and build paths order them
+    /// differently).
+    private func splitFinanciallyEqual(_ a: SplitInfo?, _ b: SplitInfo?) -> Bool {
+        switch (a, b) {
+        case (nil, nil):
+            return true
+        case let (x?, y?):
+            let eps = 0.005
+            guard abs(x.totalAmount - y.totalAmount) < eps,
+                  abs(x.paidByMe - y.paidByMe) < eps,
+                  abs(x.myShare - y.myShare) < eps,
+                  x.splitMode == y.splitMode,
+                  x.friends.count == y.friends.count else { return false }
+            let byID = Dictionary(y.friends.map { ($0.friendID, $0) },
+                                  uniquingKeysWith: { first, _ in first })
+            for f in x.friends {
+                guard let g = byID[f.friendID],
+                      abs(f.share - g.share) < eps,
+                      abs(f.paidAmount - g.paidAmount) < eps,
+                      f.isSettled == g.isSettled else { return false }
+            }
+            return true
+        default:
+            return false
+        }
     }
 
     /// Post-create hook: nudge the user to send the share link — but ONLY

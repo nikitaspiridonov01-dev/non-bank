@@ -214,7 +214,12 @@ enum ReceivedTransactionMapper {
         // ── Receiver-perspective SplitInfo ───────────────────────────
         let receiverPaid = receiverParticipant.pa
         let receiverShare = receiverParticipant.sh
-        let receiverLent = receiverPaid - receiverShare
+        // Clamp to 0 to match `buildTransaction`'s `max(paidByMe - myShare, 0)`
+        // (and the model's "money I LENT" semantics — never negative). An
+        // unclamped negative lentAmount on a receiver who paid 0 made a later
+        // title-only re-save look like a sync-relevant amount change (the rebuild
+        // produces a clamped 0), pushing a spurious edit back to the sharer.
+        let receiverLent = max(receiverPaid - receiverShare, 0)
 
         // Sharer's contribution as the receiver sees it: paid `payload.pa`
         // out of pocket, owes `payload.ms` as their fair share.

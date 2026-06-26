@@ -795,6 +795,12 @@ struct CreateTransactionModal: View {
         guard let old else { return true }
         return old.amount != new.amount
             || old.currency != new.currency
+            // A recurrence change creates/removes a SPAWNING entity (the
+            // recurring parent), so the friend must converge on it to get
+            // (or drop) the reminder on their side. NOT the same as a plain
+            // `date` change — moving a one-off into the future spawns nothing
+            // and stays local (date is intentionally absent from this check).
+            || old.repeatInterval != new.repeatInterval
             || !splitFinanciallyEqual(old.splitInfo, new.splitInfo)
     }
 

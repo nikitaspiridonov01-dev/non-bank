@@ -8,8 +8,13 @@ import {
 } from "../prompt.ts";
 import { toBase64 } from "../lib/bytes.ts";
 
-// Groq Llama 4 Scout 17B — secondary provider.
-// Free tier: 1000 RPD, 30 RPM, 6K TPM. Sub-second responses.
+// Groq Qwen3.6 27B (vision) — secondary provider.
+// Migrated 2026-06-26 from meta-llama/llama-4-scout-17b-16e-instruct, which
+// Groq DECOMMISSIONS on 2026-07-17 (free/dev-tier deprecation). `qwen/
+// qwen3.6-27b` is the free, vision-capable (text+image) replacement Groq
+// recommends — the other suggested model (gpt-oss-120b) is text-only and
+// would break the image-based receipt parse. Verify the free RPD/RPM/TPM caps
+// against Groq's current pricing if the router's quota accounting drifts.
 // OpenAI-compat surface, so the request shape mirrors OpenRouter — keep an
 // eye on the diff if you refactor a shared OpenAI helper later.
 //
@@ -21,7 +26,7 @@ import { toBase64 } from "../lib/bytes.ts";
 // belt-and-suspenders fallback for the rare cases the model still emits
 // prose despite the flag.
 const ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+const MODEL = "qwen/qwen3.6-27b";
 
 export const groqProvider: Provider = {
   id: "groq",

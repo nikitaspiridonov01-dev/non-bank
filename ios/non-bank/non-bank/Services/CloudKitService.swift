@@ -132,16 +132,20 @@ final class CloudKitService {
         // InsightsSettings for the global toggle, which is synced
         // separately via NSUbiquitousKeyValueStore).
         record["excludedFromInsights"] = (tx.excludedFromInsights ? 1 : 0) as CKRecordValue
-        // NOTE: we deliberately do NOT write `editVersion` to the CKRecord.
-        // CloudKit PRODUCTION does not auto-add fields, so writing a field
-        // that isn't in the deployed production schema makes the ENTIRE record
-        // save fail (silently, on TestFlight/App Store builds) — which is what
-        // stopped all transactions from reaching iCloud. editVersion is only
-        // needed by the server-mediated friend-sync guard; for own-device
-        // CloudKit backup it can safely default to 0 on restore (see
-        // transactionFromRecord + the max() conflict merge). If we ever want
-        // it backed up, add `editVersion` to the production schema FIRST, then
-        // re-introduce the write.
+        // editVersion IS written now. The `editVersion` field was deployed to
+        // the PRODUCTION CloudKit schema (Transaction record type, Int(64)) on
+        // 2026-06-26, so this no longer trips the strict-prod-schema trap where
+        // writing an undeployed field silently fails the ENTIRE record save
+        // (which previously stopped all transactions reaching iCloud — hence
+        // the write was off). Carrying editVersion across the OWNER's devices
+        // keeps the friend-sync version guard (SyncEngine version <= existing)
+        // in lockstep with the friend: without it CloudKit handed the owner's
+        // other device editVersion=0 (read at transactionFromRecord, defaulted
+        // 0; merge = max(local, remote)), so it fell behind the friend and a
+        // synced edit needed a 2nd try to beat the guard. Read side already at
+        // transactionFromRecord; do NOT remove the field from prod or recreate
+        // the container without it, or this silently breaks all CloudKit sync.
+        record["editVersion"] = tx.editVersion as CKRecordValue
 
         return record
     }

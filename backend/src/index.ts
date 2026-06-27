@@ -7,6 +7,7 @@ import { bumpDeviceQuota, bumpIpParseQuota } from "./quota.ts";
 import { handleSharePage } from "./share.ts";
 import { handlePrivacyPage } from "./privacy.ts";
 import { handleSupportPage } from "./support.ts";
+import { handleLandingPage } from "./landing.ts";
 import {
   handleUploadShareItems,
   handleFetchShareItems,
@@ -205,6 +206,11 @@ export default {
       // Support page — static. Required for the App Store "Support URL" field.
       if (url.pathname === "/support" && req.method === "GET") {
         return handleSupportPage();
+      }
+      // Landing / home page — static. The brand root (non-bank.app) otherwise
+      // falls through to the JSON 404. Usable as the App Store Marketing URL.
+      if (url.pathname === "/" && req.method === "GET") {
+        return handleLandingPage();
       }
       // Server-mediated sync — Phase 0: record a friend pairing after a
       // real user opens a share link. App-Attest-gated + per-IP rate-

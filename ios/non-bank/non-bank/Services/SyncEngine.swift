@@ -492,6 +492,31 @@ final class SyncEngine {
         // 2-person split holds exactly the one peer.)
         guard participants.count == 1 else { return }
         let phantomID = participants[0].friendID
+
+        // REAL-but-disconnected reconnect — the case the phantom-upgrade guard
+        // below structurally CAN'T handle. Here the lone participant id already
+        // IS the sender's real id (so there's no phantom to upgrade), and we
+        // hold them as a DISCONNECTED real friend. This is exactly the stuck
+        // state after a remove + re-add where the one-shot op=pair handshake
+        // never landed: without this, NO ordinary traffic ever re-colors them
+        // (selfHeal only upgraded phantoms; the guard below returns), so the
+        // user is stranded on the share sheet forever. Reconnect from the
+        // friend's ordinary upsert instead of depending on the fragile
+        // handshake. SAFE against resurrecting a deliberately-removed friend:
+        // this fires only on an op=upsert delivery, which the server delivers
+        // ONLY over an ACTIVE pairing (removal revokes it), and it flips an
+        // EXISTING record — it never re-creates a deleted one.
+        if phantomID == senderRealID,
+           let existing = friendStore.friend(byID: senderRealID), !existing.isConnected {
+            friendStore.markConnected(id: senderRealID)
+            let pairedName = (existing.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : existing.name)
+                ?? (senderName?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+                ?? "Friend"
+            await MainActor.run { self.onPaired?(pairedName) }
+            analytics.track(.pairingEstablished(via: .selfHeal))
+            return
+        }
+
         // The lone participant is already the sender's real id (or us) → no
         // phantom to upgrade. Also require it be un-connected to act.
         guard phantomID != senderRealID, phantomID != myID,

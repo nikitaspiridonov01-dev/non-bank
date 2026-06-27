@@ -6,6 +6,7 @@ import { route, RouterExhaustedError } from "./router.ts";
 import { bumpDeviceQuota, bumpIpParseQuota } from "./quota.ts";
 import { handleSharePage } from "./share.ts";
 import { handlePrivacyPage } from "./privacy.ts";
+import { handleSupportPage } from "./support.ts";
 import {
   handleUploadShareItems,
   handleFetchShareItems,
@@ -200,6 +201,10 @@ export default {
       // Policy URL" field and TestFlight external (public) testing.
       if (url.pathname === "/privacy" && req.method === "GET") {
         return handlePrivacyPage();
+      }
+      // Support page — static. Required for the App Store "Support URL" field.
+      if (url.pathname === "/support" && req.method === "GET") {
+        return handleSupportPage();
       }
       // Server-mediated sync — Phase 0: record a friend pairing after a
       // real user opens a share link. App-Attest-gated + per-IP rate-

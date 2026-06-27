@@ -272,7 +272,11 @@ final class SyncEngine {
                 // Read-only peek for telemetry; the delete logic below is unchanged.
                 let existedLocally = transactionStore.transactions.contains { $0.syncID == delivery.tx_sync_id }
                 if let existing = transactionStore.transactions.first(where: { $0.syncID == delivery.tx_sync_id }) {
-                    transactionStore.delete(id: existing.id)
+                    // Apply the tombstone LOCALLY only — do NOT re-broadcast a
+                    // delete. The sender already addressed every participant;
+                    // re-uploading a tombstone here echoes it back to the sender
+                    // and turns a single delete into a both-devices wipe.
+                    transactionStore.delete(id: existing.id, propagateToFriends: false)
                 }
                 acks.append((delivery.tx_sync_id, delivery.version))
                 analytics.track(.syncDeliveryApplied(op: .delete, wasUpdate: existedLocally))

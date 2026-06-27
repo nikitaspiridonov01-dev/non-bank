@@ -294,7 +294,7 @@ class TransactionStore: ObservableObject {
         }
     }
 
-    func delete(id: Int) {
+    func delete(id: Int, propagateToFriends: Bool = true) {
         let tx = transactions.first { $0.id == id }
         Task {
             // Snapshot the receipt items BEFORE deleting them locally —
@@ -335,10 +335,17 @@ class TransactionStore: ObservableObject {
                 // Server-mediated sync: tell paired friends to delete their
                 // copy too. The CloudKit push above only reaches the user's
                 // own devices; without this a deleted split lingered on every
-                // friend's device forever. uploadDelete sends a version=Int.max
+                // friend's device forever. uploadDelete sends a high-version
                 // tombstone, which also overwrites any still-pending upsert
                 // delivery for this tx on the server.
-                if let split = tx.splitInfo {
+                //
+                // BUT only on a USER-INITIATED delete (`propagateToFriends`).
+                // When we're APPLYING a delete tombstone we RECEIVED from a
+                // friend (SyncEngine.pullAndApply), we must NOT re-broadcast:
+                // the originator already addressed every participant, so an
+                // echo is pure amplification — it bounces a tombstone back to
+                // the sender and turns one delete into a both-devices wipe.
+                if propagateToFriends, let split = tx.splitInfo {
                     SyncEngine.shared.uploadDelete(
                         syncID: tx.syncID,
                         participantIDs: split.friends.map { $0.friendID }

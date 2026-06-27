@@ -588,8 +588,17 @@ struct CreateTransactionModal: View {
             // changed. A cosmetic-only edit must NOT re-deliver or notify
             // friends — it just saves locally.
             let syncedChanged = syncRelevantChange(old: baseline, new: tx)
-            if syncedChanged {
-                tx = tx.settingEditVersion((baseline?.editVersion ?? 0) + 1)
+            // Preserve the live row's sync edit version even on a COSMETIC edit.
+            // `buildTransaction` rebuilds from VM state and defaults editVersion
+            // to 0, and only the synced branch re-stamps it — so a title-only
+            // edit would otherwise RESET the row to 0, and the NEXT synced edit
+            // (e.g. making it recurring) would upload a version the friend's
+            // guard rejects: no apply → no reminder, and a later edit then
+            // surfaces as a duplicate once the friend finally catches up. Mirror
+            // the excludedFromInsights preservation above; bump only on a synced
+            // change, otherwise carry the baseline version forward unchanged.
+            if let baseEV = baseline?.editVersion {
+                tx = tx.settingEditVersion(syncedChanged ? baseEV + 1 : baseEV)
             }
             transactionStore.update(tx)
             // For an in-place edit we already know the row id, so save items
@@ -891,9 +900,11 @@ struct CreateTransactionModal: View {
         // changed, so cosmetic edits stay local and friends just converge.
         var updated = replacement.withID(existing.id)
         let syncedChanged = syncRelevantChange(old: existing, new: updated)
-        if syncedChanged {
-            updated = updated.settingEditVersion(existing.editVersion + 1)
-        }
+        // Same editVersion preservation as the regular edit branch — a cosmetic
+        // edit of a recurring parent must keep the live version, never reset it
+        // to `buildTransaction`'s default 0 (which would desync the friend's
+        // version guard). Bump only on a synced change.
+        updated = updated.settingEditVersion(syncedChanged ? existing.editVersion + 1 : existing.editVersion)
         transactionStore.update(updated)
         // Track as an edit so reminder churn doesn't inflate the "creates" funnel.
         trackTransactionSaved(updated, isEdit: true)

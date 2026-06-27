@@ -56,7 +56,7 @@ const PRIVACY_HTML = `<!DOCTYPE html>
       --text-tertiary: #8a8076;
       --border: #efe7dc;
       --accent: #6E46B4;
-      --warm-cta: #a06d3a;
+      --warm-cta: #8a5520;
     }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }

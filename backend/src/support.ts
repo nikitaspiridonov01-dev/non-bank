@@ -43,6 +43,7 @@ const SUPPORT_HTML = `<!DOCTYPE html>
     --border: #2a2421;
     --accent: #c8afe1;
     --warm-cta: #c79566;
+    --cta-bg: #97632c;
   }
   @media (prefers-color-scheme: light) {
     :root {
@@ -54,7 +55,8 @@ const SUPPORT_HTML = `<!DOCTYPE html>
       --text-tertiary: #8a8076;
       --border: #efe7dc;
       --accent: #6E46B4;
-      --warm-cta: #a06d3a;
+      --warm-cta: #8a5520;
+      --cta-bg: #8a5520;
     }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -73,8 +75,8 @@ const SUPPORT_HTML = `<!DOCTYPE html>
   .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0 36px; }
   .cta {
     display: inline-block;
-    background: var(--warm-cta);
-    color: #161210;
+    background: var(--cta-bg);
+    color: #fff;
     font-size: 15px;
     font-weight: 600;
     padding: 12px 20px;

@@ -34,7 +34,7 @@ import {
   registerDeviceToken,
   getDeviceTokens,
 } from "./sync.ts";
-import { apnsConfigFromEnv, sendPush, sendPairingPush } from "./apns.ts";
+import { apnsConfigFromEnv, sendPush, sendBackgroundPush, sendPairingPush } from "./apns.ts";
 import { handleTestProviders } from "./test_providers.ts";
 import {
   issueChallenge,
@@ -580,6 +580,16 @@ async function sendDeliveryPush(
   const data = { transactionSyncID: txSyncId };
   for (const t of tokens) {
     const ok = await sendPush(config, t.token, t.env, alert, nowSec, data);
+    // ALSO wake the app in the BACKGROUND so a recipient who never opens the
+    // app or taps the banner still drains the inbox. An alert push only
+    // triggers a pull on TAP or when the app is foregrounded; a content-
+    // available background push fires AppDelegate.didReceiveRemoteNotification
+    // -> pullAndApply even while backgrounded, so new shared expenses and
+    // edits apply without user action. iOS-throttled + best-effort; the alert
+    // banner (for visibility) and the foreground/tap pulls remain the
+    // guaranteed paths. Without this, deliveries sat un-applied in the inbox
+    // until the friend happened to foreground the app.
+    await sendBackgroundPush(config, t.token, t.env, nowSec, data);
     if (!ok) {
       // Best-effort cleanup of obviously-dead tokens. We don't have the
       // APNs status code here (sendPush returns bool), so only prune on a

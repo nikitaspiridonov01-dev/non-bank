@@ -11,7 +11,7 @@
 // landing page so the two read as one product.
 
 const SUPPORT_EMAIL = "nonbankapp@gmail.com";
-const LAST_UPDATED = "3 June 2026";
+const LAST_UPDATED = "28 June 2026";
 
 export function handlePrivacyPage(): Response {
   return new Response(PRIVACY_HTML, {
@@ -107,9 +107,9 @@ const PRIVACY_HTML = `<!DOCTYPE html>
     <div class="summary">
       <h2>The short version</h2>
       <ul>
-        <li>Your transactions, friends, categories and receipts stay <b>on your device</b> and sync only to <b>your own iCloud</b> — we never see them.</li>
-        <li>We don't <b>sell your data</b>, show <b>ads</b>, or <b>track you</b> across other apps or websites.</li>
-        <li>The only thing we collect is <b>anonymous, aggregated usage analytics</b> to improve the app.</li>
+        <li>Your transactions, friends, categories and receipts live <b>on your device</b> and sync through <b>your own iCloud</b> — we can't see them.</li>
+        <li>The only data that reaches our server is a <b>receipt you scan</b> (read, then discarded) and a <b>split you share</b> (end-to-end encrypted, briefly stored, then auto-deleted — we can't read it). Never your wider financial history.</li>
+        <li>We don't <b>sell your data</b> or show <b>ads</b>, and we don't <b>track you across other apps or websites</b>. We use only <b>anonymous, first-party analytics</b> to improve the app.</li>
       </ul>
     </div>
 
@@ -120,12 +120,12 @@ const PRIVACY_HTML = `<!DOCTYPE html>
 
     <section>
       <h2>What stays on your device</h2>
-      <p>Everything you enter — transactions, amounts, friends, categories, scanned receipts and balances — is stored <b>locally on your device</b>. If you turn on iCloud sync, it syncs through <b>your personal iCloud account</b> (Apple's CloudKit), which only you can access. This data is <b>never sent to our servers</b> and we have no way to read it.</p>
+      <p>Everything you enter — transactions, amounts, friends, categories, scanned receipts and balances — is stored <b>locally on your device</b>. If you turn on iCloud sync, it syncs through <b>your personal iCloud account</b> (Apple's CloudKit), which only you can access — <b>not</b> our servers. The only times data leaves your device for our server are when you <b>scan a receipt</b> or <b>share a split with a friend</b> (both covered below); even then we never receive your wider financial history, and shared splits are encrypted so we can't read them.</p>
     </section>
 
     <section>
       <h2>Receipt scanning</h2>
-      <p>When you scan a receipt, the photo is sent to our processing service so the items and amounts can be recognised. The image is processed <b>in the moment and is not stored</b> — once the results are returned to your device, the image is discarded. We keep no copy.</p>
+      <p>When you scan a receipt, the photo is sent to our scanning service — which uses a <b>third-party AI provider</b> to read the items and amounts. The image is processed <b>in the moment and is not stored</b> — once the results are returned to your device, the image is discarded. We keep no copy and do not use it for anything else.</p>
       <p>To prevent abuse of this service, we store a <b>one-way (hashed, non-reversible) device identifier</b> to enforce usage limits. It cannot be traced back to you or your device.</p>
     </section>
 
@@ -140,8 +140,9 @@ const PRIVACY_HTML = `<!DOCTYPE html>
     </section>
 
     <section>
-      <h2>Sharing a split</h2>
-      <p>When you share a split via a link, the details are <b>encrypted on your device first</b>. The decryption key travels inside the link itself and is <b>never sent to our servers</b>, so we cannot read what you shared. The encrypted data is stored temporarily and <b>automatically deleted after 30 days</b>.</p>
+      <h2>Sharing and syncing splits</h2>
+      <p>To deliver a shared split to your friend — whether they already use Non Bank (it syncs automatically) or you send them a link — the split's details are <b>encrypted on your device first</b>, then relayed through our server. The decryption key is derived independently on each device, or carried inside the link itself; it is <b>never sent to our servers</b>, so we <b>cannot read</b> what you shared.</p>
+      <p>That encrypted data is stored only <b>temporarily</b>: it's removed once your friend's device picks it up, and automatically deleted in any case after at most <b>14 days</b> (in-app sync) or <b>30 days</b> (share links). To route a split to the right device we also store an <b>opaque, hashed</b> pairing token and (for notifications) a device push token — neither reveals who you are or who your friends are, and there is no record of your social graph.</p>
     </section>
 
     <section>

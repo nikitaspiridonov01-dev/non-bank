@@ -128,7 +128,7 @@ const SUPPORT_HTML = `<!DOCTYPE html>
       <h2>Frequently asked questions</h2>
 
       <p class="faq-q">Is my financial data private?</p>
-      <p>Yes. Your transactions, friends, categories and receipts stay <b>on your device</b> and sync only to <b>your own iCloud</b> — we never see them. No ads, no tracking, no data selling. See our <a href="/privacy">Privacy Policy</a> for the details.</p>
+      <p>Yes. Your transactions, friends, categories and receipts live <b>on your device</b> and sync through <b>your own iCloud</b> — we can't see them. No ads, no cross-app tracking, no selling your data. A split you share is end-to-end encrypted. See our <a href="/privacy">Privacy Policy</a> for the full details.</p>
 
       <p class="faq-q">How do I sync across my devices?</p>
       <p>Sign in to the <b>same iCloud account</b> on each device and keep iCloud sync enabled. Your data is carried by Apple's iCloud (CloudKit), which only you can access. Restoring on a new iPhone works the same way — sign in to your iCloud account.</p>
@@ -139,14 +139,8 @@ const SUPPORT_HTML = `<!DOCTYPE html>
       <p class="faq-q">How do I share a split with a friend?</p>
       <p>Open the split and share it. Your friend gets a link; if you're both on Non Bank, their copy stays in sync automatically, and any edits flow between you — encrypted, so only the two of you can read them.</p>
 
-      <p class="faq-q">A friend's edit or reminder didn't show up</p>
-      <p>Make sure both of you are on the <b>latest version</b> of the app and connected to the internet, then open the transaction to refresh. If it still doesn't appear, email us with what you did and we'll look into it.</p>
-
       <p class="faq-q">How do I scan a receipt?</p>
       <p>Tap to scan a receipt photo and Non Bank pulls out the items, prices, taxes and fees. You can adjust anything by hand before saving. The photo is processed to read the receipt and is not stored.</p>
-
-      <p class="faq-q">Managing your subscription</p>
-      <p>The optional subscription is billed by Apple. To view, change or cancel it, open <b>Settings → [your name] → Subscriptions</b> on your iPhone. Refund requests are handled by Apple at <a href="https://reportaproblem.apple.com" rel="noopener" target="_blank">reportaproblem.apple.com</a>.</p>
 
       <p class="faq-q">How do I delete my data?</p>
       <p>Deleting the app removes all on-device data. Data stored in your iCloud can be removed from your device's iCloud settings.</p>

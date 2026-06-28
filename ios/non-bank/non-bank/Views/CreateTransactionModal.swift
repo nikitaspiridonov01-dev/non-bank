@@ -601,17 +601,27 @@ struct CreateTransactionModal: View {
                 tx = tx.settingEditVersion(syncedChanged ? baseEV + 1 : baseEV)
             }
             transactionStore.update(tx)
-            // For an in-place edit we already know the row id, so save items
-            // immediately if a fresh scan happened during this edit.
+            // For an in-place edit we already know the row id. byItems receipt
+            // items travel over a SEPARATE share-items channel, and
+            // uploadSplit → uploadItems reads them FROM THE STORE — so the
+            // synced upload must run ONLY AFTER saveItems has persisted (and
+            // reloaded) the edited items. Otherwise uploadItems races the
+            // detached save and ships the OLD assignedParticipantIDs: a friend
+            // keeps a removed item on "Your items" even though the amounts
+            // (computed from the fresh items in buildTransaction, not the
+            // store) are correct. Mirror the new-tx-with-scan path's
+            // save-then-upload ordering.
             if !pendingItems.isEmpty {
                 Task {
                     await receiptItemStore.saveItems(pendingItems, for: tx.id)
+                    if syncedChanged {
+                        SyncEngine.shared.uploadSplit(tx)
+                    }
                 }
-            }
-            trackTransactionSaved(tx, isEdit: true)
-            if syncedChanged {
+            } else if syncedChanged {
                 SyncEngine.shared.uploadSplit(tx)
             }
+            trackTransactionSaved(tx, isEdit: true)
             dismiss()
             // Editing a split that STILL has unpaired (grey) friends should
             // offer the share sheet too — not just on create — so the user can

@@ -490,18 +490,22 @@ final class SplitDebtServiceTests: XCTestCase {
     func testUserPositionTowards_thirdPartyPaid_settledWithCoSharer() {
         // Mama paid; the user and the friend both just have a share.
         // Towards Mama the user borrows; towards the friend: nothing.
+        // Round figures on purpose: these assertions compare the enum
+        // (and its associated Double) exactly, so a share that isn't
+        // exactly representable would make the test about float
+        // arithmetic rather than about attribution.
         let tx = makeSplit(
-            date: pastDate, paidByMe: 0, myShare: 1193.61,
+            date: pastDate, paidByMe: 0, myShare: 100,
             friends: [
-                FriendShare(friendID: "Friend", share: 1193.61, paidAmount: 0),
-                FriendShare(friendID: "Mama", share: 0, paidAmount: 2387.22),
+                FriendShare(friendID: "Friend", share: 100, paidAmount: 0),
+                FriendShare(friendID: "Mama", share: 0, paidAmount: 200),
             ]
         )
         XCTAssertEqual(SplitDebtService.userPosition(in: tx, towards: "Friend"), .settled)
-        XCTAssertEqual(SplitDebtService.userPosition(in: tx, towards: "Mama"), .borrowed(1193.61))
+        XCTAssertEqual(SplitDebtService.userPosition(in: tx, towards: "Mama"), .borrowed(100))
         // Whole-transaction position is unchanged — it's what the
         // all-debts list still shows.
-        XCTAssertEqual(SplitDebtService.userPosition(in: tx), .borrowed(1193.61))
+        XCTAssertEqual(SplitDebtService.userPosition(in: tx), .borrowed(100))
     }
 
     func testUserPositionTowards_directLendAndBorrow() {

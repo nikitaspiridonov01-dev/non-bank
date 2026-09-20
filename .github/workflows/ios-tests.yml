@@ -1,13 +1,28 @@
 # Runs the iOS unit tests on a GitHub-hosted macOS runner.
 #
-# Manual-only for now (workflow_dispatch): the repository is public, so
-# macOS minutes are free, but a run still takes a while because the
-# Firebase SwiftPM graph has to resolve from scratch on every job.
-# `only_testing` narrows the run (default: the SplitDebtService suite);
-# pass an empty string to run the whole non-bankTests bundle.
+# The repository is public, so macOS minutes are free, but a run still
+# takes a while because the Firebase SwiftPM graph has to resolve from
+# scratch on every job.
+#
+# Triggers: pushes to the branch this landed on, pull requests touching
+# the iOS project, and manual dispatch. A workflow only becomes
+# dispatchable through the UI/API once it exists on the default branch,
+# so the push trigger is what makes it runnable before that.
+# `only_testing` narrows a manual run (default: the SplitDebtService
+# suite); pass an empty string to run the whole non-bankTests bundle.
 name: iOS tests
 
 on:
+  push:
+    branches:
+      - claude/nifty-babbage-srmr16
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-tests.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-tests.yml"
   workflow_dispatch:
     inputs:
       only_testing:
@@ -51,7 +66,9 @@ jobs:
 
       - name: Run tests
         env:
-          ONLY_TESTING: ${{ inputs.only_testing }}
+          # `inputs.*` is empty on push/pull_request; fall back to the
+          # same default the dispatch input carries.
+          ONLY_TESTING: ${{ github.event_name == 'workflow_dispatch' && inputs.only_testing || 'non-bankTests/SplitDebtServiceTests' }}
         run: |
           set -o pipefail
           ARGS=()

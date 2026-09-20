@@ -83,11 +83,21 @@ jobs:
             -skipMacroValidation \
             CODE_SIGNING_ALLOWED=NO \
             "${ARGS[@]}" \
-            2>&1 | tee xcodebuild.log | grep -E "Test Case|Test Suite|error:|warning: .*SplitDebt|\*\* TEST|BUILD" || true
-          # `grep || true` above only shapes the console; the real
-          # verdict comes from the log's own summary line.
-          grep -E "\*\* TEST (SUCCEEDED|FAILED) \*\*" xcodebuild.log
+            2>&1 | tee xcodebuild.log | grep -iE "test case '|test suite '|executed [0-9]+ test|error:|\*\* TEST|BUILD" || true
+          # `grep || true` above only shapes the console (case-insensitive:
+          # Xcode 26 prints "Test case '…' passed", older Xcodes printed
+          # "Test Case"). The real verdict comes from the summary lines.
+          echo "::group::Per-test results"
+          grep -iE "test case '.*' (passed|failed)" xcodebuild.log | sed 's/^[[:space:]]*//' | sort -u || true
+          echo "::endgroup::"
+          grep -iE "executed [0-9]+ tests?, with" xcodebuild.log | tail -1
+          grep -E "\*\* TEST (SUCCEEDED|FAILED) \*\*" xcodebuild.log | head -1
           grep -q "\*\* TEST SUCCEEDED \*\*" xcodebuild.log
+          # `-only-testing` with a mistyped identifier runs zero tests and
+          # still reports SUCCEEDED — refuse to call that green.
+          PASSED=$(grep -icE "test case '.*' passed" xcodebuild.log || true)
+          echo "Passed test cases: $PASSED"
+          test "$PASSED" -gt 0
 
       - name: Upload full xcodebuild log
         if: always()

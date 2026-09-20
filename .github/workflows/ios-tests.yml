@@ -1,0 +1,80 @@
+# Runs the iOS unit tests on a GitHub-hosted macOS runner.
+#
+# Manual-only for now (workflow_dispatch): the repository is public, so
+# macOS minutes are free, but a run still takes a while because the
+# Firebase SwiftPM graph has to resolve from scratch on every job.
+# `only_testing` narrows the run (default: the SplitDebtService suite);
+# pass an empty string to run the whole non-bankTests bundle.
+name: iOS tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      only_testing:
+        description: "xcodebuild -only-testing identifier (empty = everything)"
+        required: false
+        default: "non-bankTests/SplitDebtServiceTests"
+
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: ios/non-bank
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode on the runner
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Pick an iPhone simulator on the newest iOS runtime
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j | jq -r '
+            .devices
+            | to_entries
+            | map(select(.key | contains("iOS")))
+            | sort_by(.key)
+            | last
+            | .value
+            | map(select(.name | startswith("iPhone")))
+            | first
+            | .udid')
+          test -n "$UDID" && test "$UDID" != "null"
+          xcrun simctl list devices available | grep "$UDID"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Run tests
+        env:
+          ONLY_TESTING: ${{ inputs.only_testing }}
+        run: |
+          set -o pipefail
+          ARGS=()
+          if [ -n "$ONLY_TESTING" ]; then
+            ARGS+=("-only-testing:$ONLY_TESTING")
+          fi
+          xcodebuild test \
+            -project non-bank.xcodeproj \
+            -scheme non-bank \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            "${ARGS[@]}" \
+            2>&1 | tee xcodebuild.log | grep -E "Test Case|Test Suite|error:|warning: .*SplitDebt|\*\* TEST|BUILD" || true
+          # `grep || true` above only shapes the console; the real
+          # verdict comes from the log's own summary line.
+          grep -E "\*\* TEST (SUCCEEDED|FAILED) \*\*" xcodebuild.log
+          grep -q "\*\* TEST SUCCEEDED \*\*" xcodebuild.log
+
+      - name: Upload full xcodebuild log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: ios/non-bank/xcodebuild.log

@@ -28,6 +28,10 @@ on:
         description: "CFBundleVersion to stamp (empty = run number + 7)"
         required: false
         default: ""
+      marketing_version:
+        description: "CFBundleShortVersionString override (empty = project's MARKETING_VERSION)"
+        required: false
+        default: ""
   push:
     tags:
       - "v*"
@@ -91,13 +95,23 @@ jobs:
         id: build
         env:
           INPUT_BUILD: ${{ inputs.build_number }}
+          INPUT_MARKETING: ${{ inputs.marketing_version }}
         run: |
           if [ -n "$INPUT_BUILD" ]; then
             BUILD="$INPUT_BUILD"
           else
             BUILD=$(( GITHUB_RUN_NUMBER + BUILD_NUMBER_BASE ))
           fi
-          MARKETING=$(grep -m1 "MARKETING_VERSION = " "$PROJECT/project.pbxproj" | sed 's/.*= \(.*\);/\1/')
+          # App Store Connect closes a version "train" once that marketing
+          # version is approved, so a new release needs a higher
+          # CFBundleShortVersionString, not just a higher build number.
+          # The project's MARKETING_VERSION is the source of truth; the
+          # dispatch input is an escape hatch for a one-off.
+          if [ -n "$INPUT_MARKETING" ]; then
+            MARKETING="$INPUT_MARKETING"
+          else
+            MARKETING=$(grep -m1 "MARKETING_VERSION = " "$PROJECT/project.pbxproj" | sed 's/.*= \(.*\);/\1/')
+          fi
           echo "Marketing version: $MARKETING  build: $BUILD"
           echo "number=$BUILD" >> "$GITHUB_OUTPUT"
           echo "marketing=$MARKETING" >> "$GITHUB_OUTPUT"
@@ -123,6 +137,7 @@ jobs:
             DEVELOPMENT_TEAM="$TEAM_ID" \
             CODE_SIGN_STYLE=Automatic \
             CURRENT_PROJECT_VERSION="${{ steps.build.outputs.number }}" \
+            MARKETING_VERSION="${{ steps.build.outputs.marketing }}" \
             2>&1 | tee archive.log | grep -E "error:|warning: .*(sign|provision|entitle)|\*\* ARCHIVE|Signing Identity|Provisioning Profile" || true
           grep -q "\*\* ARCHIVE SUCCEEDED \*\*" archive.log
 

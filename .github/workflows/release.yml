@@ -31,6 +31,14 @@ on:
   push:
     tags:
       - "v*"
+    # Bootstrap trigger: GitHub only lets a workflow be dispatched once
+    # it exists on the default branch, so until this lands on main the
+    # only way to exercise it is a push that touches THIS file on the
+    # feature branch. Remove this block after the merge.
+    branches:
+      - claude/nifty-babbage-srmr16
+    paths:
+      - ".github/workflows/release.yml"
 
 permissions:
   contents: read

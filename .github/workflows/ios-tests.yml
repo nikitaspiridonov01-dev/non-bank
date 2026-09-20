@@ -90,7 +90,10 @@ jobs:
           echo "::group::Per-test results"
           grep -iE "test case '.*' (passed|failed)" xcodebuild.log | sed 's/^[[:space:]]*//' | sort -u || true
           echo "::endgroup::"
-          grep -iE "executed [0-9]+ tests?, with" xcodebuild.log | tail -1
+          # Xcode 26 no longer prints the classic "Executed N tests, with M
+          # failures" summary to the console, so this line is informational
+          # only (`|| true`); the verdict below is what gates the job.
+          grep -iE "executed [0-9]+ tests?, with" xcodebuild.log | tail -1 || true
           grep -E "\*\* TEST (SUCCEEDED|FAILED) \*\*" xcodebuild.log | head -1
           grep -q "\*\* TEST SUCCEEDED \*\*" xcodebuild.log
           # `-only-testing` with a mistyped identifier runs zero tests and

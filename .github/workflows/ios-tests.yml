@@ -9,7 +9,10 @@
 # dispatchable through the UI/API once it exists on the default branch,
 # so the push trigger is what makes it runnable before that.
 # `only_testing` narrows a manual run (default: the SplitDebtService
-# suite); pass an empty string to run the whole non-bankTests bundle.
+# suite); pass the literal `all` to run the whole non-bankTests bundle.
+# (An empty string can't be the "everything" signal: in `${{ }}`
+# expressions "" is falsy, so `x || default` always re-applies the
+# default and the request is silently swallowed.)
 name: iOS tests
 
 on:
@@ -26,7 +29,7 @@ on:
   workflow_dispatch:
     inputs:
       only_testing:
-        description: "xcodebuild -only-testing identifier (empty = everything)"
+        description: "xcodebuild -only-testing identifier, or `all` for the whole bundle"
         required: false
         default: "non-bankTests/SplitDebtServiceTests"
 
@@ -68,13 +71,14 @@ jobs:
         env:
           # `inputs.*` is empty on push/pull_request; fall back to the
           # same default the dispatch input carries.
-          ONLY_TESTING: ${{ github.event_name == 'workflow_dispatch' && inputs.only_testing || 'non-bankTests/SplitDebtServiceTests' }}
+          ONLY_TESTING: ${{ inputs.only_testing || 'non-bankTests/SplitDebtServiceTests' }}
         run: |
           set -o pipefail
           ARGS=()
-          if [ -n "$ONLY_TESTING" ]; then
+          if [ "$ONLY_TESTING" != "all" ]; then
             ARGS+=("-only-testing:$ONLY_TESTING")
           fi
+          echo "Test selection: ${ONLY_TESTING} -> ${ARGS[*]:-<whole bundle>}"
           xcodebuild test \
             -project non-bank.xcodeproj \
             -scheme non-bank \

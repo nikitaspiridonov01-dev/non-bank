@@ -117,16 +117,19 @@ final class ReceiptLineFilterTests: XCTestCase {
         XCTAssertEqual(ReceiptLineFilter.classify("Total discount -5,00"), .discount)
     }
 
-    func testClassify_tipsAndService_returnTipVerdict() {
-        // Phase 2: tip / gratuity / service-charge lines now route to the
-        // `.tip` verdict (they're kept in the items list so the
-        // by-items split calculator distributes them proportionally).
-        XCTAssertEqual(ReceiptLineFilter.classify("Tip 10.00"), .tip)
-        XCTAssertEqual(ReceiptLineFilter.classify("Service charge 15%"), .tip)
-        XCTAssertEqual(ReceiptLineFilter.classify("Чаевые 100"), .tip)
-        XCTAssertEqual(ReceiptLineFilter.classify("Mancia 5"), .tip)
-        XCTAssertEqual(ReceiptLineFilter.classify("Napojnica 2"), .tip)
-        XCTAssertEqual(ReceiptLineFilter.classify("Napiwek 5"), .tip)
+    func testClassify_tips_areNotAutoDetected_fallThroughToKeep() {
+        // Tips are manual-only: the classifier has no tip verdict any
+        // more, so a tip / gratuity line in a scanned receipt parses as
+        // a regular item. The only way a row becomes a tip is the
+        // editor's Tips preset (`ReceiptItem.forcedKind = .tip`).
+        XCTAssertEqual(ReceiptLineFilter.classify("Tip 10.00"), .keep)
+        XCTAssertEqual(ReceiptLineFilter.classify("Чаевые 100"), .keep)
+        XCTAssertEqual(ReceiptLineFilter.classify("Mancia 5"), .keep)
+        XCTAssertEqual(ReceiptLineFilter.classify("Napojnica 2"), .keep)
+        XCTAssertEqual(ReceiptLineFilter.classify("Napiwek 5"), .keep)
+        // "Service charge" is in `feeWords`, so it still gets a kind —
+        // just `.fee` now rather than the retired tip verdict.
+        XCTAssertEqual(ReceiptLineFilter.classify("Service charge 15%"), .fee)
     }
 
     func testClassify_feesAcrossLanguages_returnFeeVerdict() {
@@ -141,14 +144,16 @@ final class ReceiptLineFilterTests: XCTestCase {
 
     // MARK: - Round C-3: fragile OCR separator + missing-keyword coverage
 
-    func testClassify_serviceChargeFlexibleSeparator_returnsTipVerdict() {
+    func testClassify_serviceChargeFlexibleSeparator_returnsFeeVerdict() {
         // Real OCR often emits multi-word phrases with mangled
         // whitespace (double space, tab) or a hyphen between words.
         // The `[\s\-]+` separator in `WordRegex` keeps the literal
         // single-space match working while picking these up too.
-        XCTAssertEqual(ReceiptLineFilter.classify("Service  Charge 5,00"), .tip)
-        XCTAssertEqual(ReceiptLineFilter.classify("Service\tCharge 5,00"), .tip)
-        XCTAssertEqual(ReceiptLineFilter.classify("Service-Charge 5,00"), .tip)
+        // "Service charge" lives in `feeWords` since tips stopped being
+        // auto-detected, so the verdict is `.fee`.
+        XCTAssertEqual(ReceiptLineFilter.classify("Service  Charge 5,00"), .fee)
+        XCTAssertEqual(ReceiptLineFilter.classify("Service\tCharge 5,00"), .fee)
+        XCTAssertEqual(ReceiptLineFilter.classify("Service-Charge 5,00"), .fee)
         // Abbreviated fee forms — "svc fee" / "svc. charge"
         XCTAssertEqual(ReceiptLineFilter.classify("Svc fee 2,00"), .fee)
         XCTAssertEqual(ReceiptLineFilter.classify("Svc. charge 2,00"), .fee)

@@ -376,6 +376,169 @@ final class SplitDebtServiceTests: XCTestCase {
         XCTAssertEqual(SplitDebtService.userPosition(in: tx), .settled)
     }
 
+    // MARK: - simplifiedDebts: pairwise attribution
+    //
+    // These four pin down the cases the earlier global greedy pass got
+    // wrong. It built ONE balance graph over every split and paired
+    // creditors with debtors by amount alone, so it could attribute a
+    // debt to a friend no money ever moved to/from. Debts are now netted
+    // per friend from each transaction's own settlement, so a friend's
+    // row is exactly what moved between the two of us.
+
+    func testSimplifiedDebts_thirdPartyPayer_doesNotCreateDebtWithCoSharer() {
+        // Mama pays for the three of us in tx1/tx2: I owe Mama, the
+        // friend owes Mama, nothing moves between me and the friend.
+        // In tx3 I cover Mama, with the friend absent entirely.
+        // Correct: Mama owes me the remainder, the friend balances out.
+        // Old behaviour: the friend was paired off against my surplus
+        // and the screen claimed I'd lent her the whole 400.
+        let tx1 = makeSplit(
+            id: 1, date: pastDate, paidByMe: 0, myShare: 100,
+            friends: [
+                FriendShare(friendID: "Friend", share: 100, paidAmount: 0),
+                FriendShare(friendID: "Mama", share: 0, paidAmount: 200),
+            ]
+        )
+        let tx2 = makeSplit(
+            id: 2, date: pastDate, paidByMe: 0, myShare: 300,
+            friends: [
+                FriendShare(friendID: "Friend", share: 300, paidAmount: 0),
+                FriendShare(friendID: "Mama", share: 0, paidAmount: 600),
+            ]
+        )
+        let tx3 = makeSplit(
+            id: 3, date: pastDate, paidByMe: 1000, myShare: 200,
+            friends: [FriendShare(friendID: "Mama", share: 800, paidAmount: 0)]
+        )
+        let result = SplitDebtService.simplifiedDebts(
+            transactions: [tx1, tx2, tx3], targetCurrency: "USD", convert: identityConvert, now: now
+        )
+        XCTAssertEqual(result.rows.first { $0.friendID == "Friend" }?.amount ?? -1, 0, accuracy: 0.001)
+        XCTAssertEqual(result.rows.first { $0.friendID == "Mama" }?.amount ?? 0, 400, accuracy: 0.001)
+        // The user's overall position is untouched by the attribution fix.
+        XCTAssertEqual(result.status, .youLent(400))
+    }
+
+    func testSimplifiedDebts_splitWithoutTheUser_doesNotBecomeTheirDebt() {
+        // A and B split a dinner the user only recorded — the user has
+        // no share and paid nothing, so it is none of their business.
+        // Only the second transaction is theirs, and it is with B.
+        let observed = makeSplit(
+            id: 1, date: pastDate, paidByMe: 0, myShare: 0,
+            friends: [
+                FriendShare(friendID: "A", share: 3000, paidAmount: 0),
+                FriendShare(friendID: "B", share: 3000, paidAmount: 6000),
+            ]
+        )
+        let mine = makeSplit(
+            id: 2, date: pastDate, paidByMe: 3000, myShare: 0,
+            friends: [FriendShare(friendID: "B", share: 3000, paidAmount: 0)]
+        )
+        let result = SplitDebtService.simplifiedDebts(
+            transactions: [observed, mine], targetCurrency: "USD", convert: identityConvert, now: now
+        )
+        XCTAssertEqual(result.rows.first { $0.friendID == "B" }?.amount ?? 0, 3000, accuracy: 0.001)
+        XCTAssertEqual(result.rows.first { $0.friendID == "A" }?.amount ?? -1, 0, accuracy: 0.001)
+        XCTAssertEqual(result.status, .youLent(3000))
+    }
+
+    func testSimplifiedDebts_disjointGroups_areNeverPairedOnATie() {
+        // Two unrelated circles of the same size: C owes me, and A owes B
+        // in a split I'm not part of. Equal magnitudes used to let the
+        // tie-break marry my credit to A's debt.
+        let mine = makeSplit(
+            id: 1, date: pastDate, paidByMe: 6000, myShare: 0,
+            friends: [FriendShare(friendID: "C", share: 6000, paidAmount: 0)]
+        )
+        let theirs = makeSplit(
+            id: 2, date: pastDate, paidByMe: 0, myShare: 0,
+            friends: [
+                FriendShare(friendID: "A", share: 6000, paidAmount: 0),
+                FriendShare(friendID: "B", share: 0, paidAmount: 6000),
+            ]
+        )
+        let result = SplitDebtService.simplifiedDebts(
+            transactions: [mine, theirs], targetCurrency: "USD", convert: identityConvert, now: now
+        )
+        XCTAssertEqual(result.rows.first { $0.friendID == "C" }?.amount ?? 0, 6000, accuracy: 0.001)
+        XCTAssertEqual(result.rows.first { $0.friendID == "A" }?.amount ?? -1, 0, accuracy: 0.001)
+        XCTAssertEqual(result.rows.first { $0.friendID == "B" }?.amount ?? -1, 0, accuracy: 0.001)
+    }
+
+    func testSimplifiedDebts_unbalancedSplitDoesNotSwallowAnotherFriendsDebt() {
+        // tx1's shares don't add up to what was paid (byItems with lines
+        // left unassigned, or legacy data missing `paidAmount`). The
+        // leftover 2000 of "credit" used to spill onto the global graph
+        // and cancel the very real 800 owed to B.
+        let unbalanced = makeSplit(
+            id: 1, date: pastDate, paidByMe: 5000, myShare: 1500,
+            friends: [FriendShare(friendID: "A", share: 1500, paidAmount: 0)]
+        )
+        let realDebt = makeSplit(
+            id: 2, date: pastDate, paidByMe: 0, myShare: 800,
+            friends: [FriendShare(friendID: "B", share: 0, paidAmount: 800)]
+        )
+        let result = SplitDebtService.simplifiedDebts(
+            transactions: [unbalanced, realDebt], targetCurrency: "USD", convert: identityConvert, now: now
+        )
+        XCTAssertEqual(result.rows.first { $0.friendID == "A" }?.amount ?? 0, 1500, accuracy: 0.001)
+        XCTAssertEqual(result.rows.first { $0.friendID == "B" }?.amount ?? 0, -800, accuracy: 0.001)
+    }
+
+    // MARK: - userPosition(in:towards:)
+
+    func testUserPositionTowards_thirdPartyPaid_settledWithCoSharer() {
+        // Mama paid; the user and the friend both just have a share.
+        // Towards Mama the user borrows; towards the friend: nothing.
+        let tx = makeSplit(
+            date: pastDate, paidByMe: 0, myShare: 1193.61,
+            friends: [
+                FriendShare(friendID: "Friend", share: 1193.61, paidAmount: 0),
+                FriendShare(friendID: "Mama", share: 0, paidAmount: 2387.22),
+            ]
+        )
+        XCTAssertEqual(SplitDebtService.userPosition(in: tx, towards: "Friend"), .settled)
+        XCTAssertEqual(SplitDebtService.userPosition(in: tx, towards: "Mama"), .borrowed(1193.61))
+        // Whole-transaction position is unchanged — it's what the
+        // all-debts list still shows.
+        XCTAssertEqual(SplitDebtService.userPosition(in: tx), .borrowed(1193.61))
+    }
+
+    func testUserPositionTowards_directLendAndBorrow() {
+        let iPaid = makeSplit(
+            id: 1, date: pastDate, paidByMe: 20, myShare: 10,
+            friends: [FriendShare(friendID: "A", share: 10, paidAmount: 0)]
+        )
+        XCTAssertEqual(SplitDebtService.userPosition(in: iPaid, towards: "A"), .lent(10))
+
+        let theyPaid = makeSplit(
+            id: 2, date: pastDate, paidByMe: 0, myShare: 10,
+            friends: [FriendShare(friendID: "A", share: 10, paidAmount: 20)]
+        )
+        XCTAssertEqual(SplitDebtService.userPosition(in: theyPaid, towards: "A"), .borrowed(10))
+    }
+
+    func testUserPositionTowards_unknownFriend_settled() {
+        let tx = makeSplit(
+            date: pastDate, paidByMe: 20, myShare: 10,
+            friends: [FriendShare(friendID: "A", share: 10, paidAmount: 0)]
+        )
+        XCTAssertEqual(SplitDebtService.userPosition(in: tx, towards: "nobody"), .settled)
+    }
+
+    func testUserPositionTowards_userNotInvolved_staysNotInvolved() {
+        // Friends-only split: "not involved" is about the user, so it
+        // reads the same on a friend's screen as everywhere else.
+        let tx = makeSplit(
+            date: pastDate, paidByMe: 0, myShare: 0,
+            friends: [
+                FriendShare(friendID: "A", share: 10, paidAmount: 20),
+                FriendShare(friendID: "B", share: 10, paidAmount: 0),
+            ]
+        )
+        XCTAssertEqual(SplitDebtService.userPosition(in: tx, towards: "A"), .notInvolved)
+    }
+
     // MARK: - perTransactionSettlement
 
     func testPerTransactionSettlement_nonSplit_empty() {

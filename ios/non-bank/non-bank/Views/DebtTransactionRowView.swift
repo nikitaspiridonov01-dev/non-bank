@@ -2,16 +2,28 @@ import SwiftUI
 
 /// Transaction row for the debt-summary and friend-detail screens.
 /// Mirrors `TransactionRowView` on the left but replaces the amount column with
-/// the user's personal position in the split: "You lent / You borrow / Not involved".
+/// the user's position in the split: "You lent / You borrow / Not involved".
 struct DebtTransactionRowView: View {
     let transaction: Transaction
     let emoji: String
+    /// When set, the position column shows what moved between the user and
+    /// **this friend** instead of the user's position in the transaction as
+    /// a whole. Friend-scoped screens pass their friend's ID: on a dinner a
+    /// third person paid for, the whole-transaction figure is what the user
+    /// owes *the payer*, so rendering it under a friend's name claimed a
+    /// debt that doesn't exist between them (and never added up to the
+    /// balance in the header). `nil` on the all-debts list, where the
+    /// whole-transaction position is the right answer.
+    var counterpartyID: String? = nil
     let isLast: Bool
     let onTap: () -> Void
     let onDelete: () -> Void
 
     private var position: UserTransactionPosition {
-        SplitDebtService.userPosition(in: transaction)
+        guard let counterpartyID else {
+            return SplitDebtService.userPosition(in: transaction)
+        }
+        return SplitDebtService.userPosition(in: transaction, towards: counterpartyID)
     }
 
     var body: some View {
@@ -88,7 +100,10 @@ struct DebtTransactionRowView: View {
                 .font(AppFonts.labelCaption)
                 .foregroundColor(AppColors.textTertiary)
         case .settled:
-            Text("Settled")
+            // Friend-scoped: mirror the wording `DebtRowView` uses for a
+            // zero balance in the transaction's own breakdown card, so the
+            // row and the card can't seem to disagree.
+            Text(counterpartyID == nil ? "Settled" : "Balances out")
                 .font(AppFonts.labelCaption)
                 .foregroundColor(AppColors.textTertiary)
         case .lent(let amount):

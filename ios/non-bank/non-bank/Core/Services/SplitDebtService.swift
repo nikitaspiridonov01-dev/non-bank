@@ -1,7 +1,7 @@
 import Foundation
 
 /// A single row in the simplified debts view — a friend and the net amount
-/// I transfer to/from them after greedy simplification.
+/// I transfer to/from them once every shared transaction is settled.
 struct SimplifiedDebt: Equatable, Identifiable {
     let friendID: String
     /// Positive = friend owes me. Negative = I owe friend. ~0 = balances out.
@@ -10,7 +10,7 @@ struct SimplifiedDebt: Equatable, Identifiable {
     var id: String { friendID }
 }
 
-/// Result of simplifying split-transaction debts Splitwise-style.
+/// Result of netting split-transaction debts per friend.
 struct SimplifiedDebtsSummary: Equatable {
     /// One row per friend who appears in any valid split transaction.
     /// Non-zero rows first (sorted by |amount| desc), "balances out" rows last.
@@ -116,12 +116,11 @@ enum SplitDebtService {
         // has to agree with the modal's debt list — a friend tagged
         // "balances out" in the modal must NOT contribute an avatar
         // to the badge. The modal computes its rows from
-        // `simplifiedDebts(...)` (greedy Splitwise-style pairing
-        // across the entire transaction set), so the badge has to
-        // consume the same data. The earlier per-transaction raw
-        // sum landed friends in the avatar row even when their
-        // simplified balance with the user netted to zero — that
-        // mismatch is the bug we just fixed.
+        // `simplifiedDebts(...)` (per-transaction settlement netted
+        // per friend), so the badge has to consume the same data. An
+        // earlier raw per-transaction sum landed friends in the avatar
+        // row even when their balance with the user netted to zero —
+        // that mismatch is the bug that pairing fixed.
         let simplified = simplifiedDebts(
             transactions: transactions,
             targetCurrency: targetCurrency,
@@ -165,12 +164,34 @@ enum SplitDebtService {
     /// Chosen so it cannot collide with `FriendIDGenerator` output (which is dashed).
     private static let meID = "__me__"
 
-    /// Computes simplified per-friend debts using greedy pairing on the
-    /// full participant graph (Splitwise "simplify debts" style).
+    /// Computes per-friend debts by netting the user's **pairwise** position
+    /// across every valid split transaction.
+    ///
+    /// Each transaction is settled on its own (`perTransactionSettlement`,
+    /// greedy pairing inside that one split — everybody there took part in
+    /// the same purchase), and the resulting `me ↔ friend` edges are summed
+    /// per friend. So a friend's row is exactly "the money that moved
+    /// between us", and it always equals the sum of that friend's rows in
+    /// the transaction list on their detail screen.
+    ///
+    /// This deliberately does NOT simplify *across* transactions on one
+    /// global balance graph. That earlier approach paired creditors with
+    /// debtors purely by amount, which let it:
+    ///   - invent a `me ↔ friend` edge out of money that moved between the
+    ///     user and somebody else entirely (the friend merely happened to
+    ///     carry an offsetting balance),
+    ///   - pull a friend's balance from a split the user isn't even part of
+    ///     (`paidByMe == 0 && myShare == 0`) into the user's own debts,
+    ///   - pair two people from completely disjoint groups on a tie-break,
+    ///   - and let the residue of an unbalanced split (shares not summing to
+    ///     what was paid) silently cancel a real debt with another friend.
+    /// Netting pairwise keeps each transaction's arithmetic inside that
+    /// transaction, so none of those can happen. The user's overall net
+    /// (`netAmount`) is unchanged — only its attribution per friend is.
     ///
     /// Only past, non-recurring-parent split transactions are considered.
     /// The result lists every friend who appeared in a valid split — friends
-    /// whose simplified balance with the user nets to zero are marked with
+    /// whose balance with the user nets to zero are marked with
     /// `amount == 0` so the UI can render them as "balances out".
     static func simplifiedDebts(
         transactions: [Transaction],
@@ -183,32 +204,42 @@ enum SplitDebtService {
         }
         guard !valid.isEmpty else { return .empty }
 
-        var balances: [String: Double] = [:]
+        var totals: [String: Double] = [:]
         var friendsInvolved: [String] = []
         var seenFriends = Set<String>()
 
         for tx in valid {
             guard let split = tx.splitInfo else { continue }
 
-            balances[meID, default: 0] += convert(split.paidByMe - split.myShare, tx.currency, targetCurrency)
+            // Every participant gets a row, even when nothing moved
+            // between us in any transaction — the UI renders those as
+            // "balances out" rather than dropping the friend.
+            for friend in split.friends where seenFriends.insert(friend.friendID).inserted {
+                friendsInvolved.append(friend.friendID)
+            }
 
-            for friend in split.friends {
-                if seenFriends.insert(friend.friendID).inserted {
-                    friendsInvolved.append(friend.friendID)
-                }
-                balances[friend.friendID, default: 0] += convert(friend.paidAmount - friend.share, tx.currency, targetCurrency)
+            // Settle this transaction on its own, then convert the
+            // resulting edges. Converting after the per-transaction
+            // settlement (rather than converting each participant's
+            // balance before a global pass) also keeps the greedy
+            // arithmetic inside a single currency.
+            for row in perTransactionSettlement(for: tx).rows where abs(row.amount) > 0.005 {
+                totals[row.friendID, default: 0] += convert(row.amount, tx.currency, targetCurrency)
             }
         }
 
-        let myDebts = greedySimplify(balances: balances)
-
         let rows = friendsInvolved
-            .map { SimplifiedDebt(friendID: $0, amount: myDebts[$0] ?? 0) }
+            .map { SimplifiedDebt(friendID: $0, amount: totals[$0] ?? 0) }
             .sorted { lhs, rhs in
                 let lhsNonZero = abs(lhs.amount) > 0.005
                 let rhsNonZero = abs(rhs.amount) > 0.005
                 if lhsNonZero != rhsNonZero { return lhsNonZero }
-                return abs(lhs.amount) > abs(rhs.amount)
+                let l = abs(lhs.amount), r = abs(rhs.amount)
+                // `sorted(by:)` isn't stable, so equal magnitudes (in
+                // particular the whole balances-out group, all at 0)
+                // would otherwise shuffle between renders. Tie-break on
+                // ID to pin the order down.
+                return l != r ? l > r : lhs.friendID < rhs.friendID
             }
 
         let netAmount = rows.reduce(0) { $0 + $1.amount }
@@ -242,6 +273,40 @@ enum SplitDebtService {
         // this single transaction. Earlier this fell through to
         // `.notInvolved`, which surfaced the wrong "you're not
         // involved" copy on perfectly balanced splits.
+        return .settled
+    }
+
+    /// The user's position in a single split transaction **towards one
+    /// specific counterparty**, i.e. what actually moved between the two
+    /// of them in this transaction.
+    ///
+    /// `userPosition(in:)` answers "how much am I up or down in this
+    /// transaction overall" — on a friend's detail screen that's the wrong
+    /// question, because the amount there belongs to whoever actually paid.
+    /// A dinner somebody else paid for, where the user and this friend both
+    /// only have a share, leaves nothing between them: the user owes the
+    /// payer, not the friend. This returns `.settled` for exactly that case,
+    /// matching the "balances out" row the transaction's own breakdown card
+    /// shows for that friend.
+    ///
+    /// Amounts are in the transaction's own currency — callers convert if needed.
+    static func userPosition(
+        in transaction: Transaction,
+        towards counterpartyID: String
+    ) -> UserTransactionPosition {
+        // "Not involved" is a statement about the user, not about the
+        // pair, so it keeps the whole-transaction answer: a split
+        // between other friends that the user merely recorded reads the
+        // same on every screen.
+        guard userPosition(in: transaction) != .notInvolved else { return .notInvolved }
+
+        let amount = perTransactionSettlement(for: transaction)
+            .rows
+            .first { $0.friendID == counterpartyID }?
+            .amount ?? 0
+
+        if amount > 0.005 { return .lent(amount) }
+        if amount < -0.005 { return .borrowed(-amount) }
         return .settled
     }
 

@@ -328,6 +328,10 @@ struct FriendDetailView: View {
                                 DebtTransactionRowView(
                                     transaction: tx,
                                     emoji: categoryStore.validatedCategory(for: tx.category).emoji,
+                                    // Friend-scoped list: the position column
+                                    // shows this pair's movement, not the
+                                    // user's position in the whole split.
+                                    counterpartyID: friend.id,
                                     isLast: idx == group.transactions.count - 1,
                                     onTap: {
                                         selectedTransaction = tx

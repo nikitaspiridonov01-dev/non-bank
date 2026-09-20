@@ -1,0 +1,112 @@
+# Runs the iOS unit tests on a GitHub-hosted macOS runner.
+#
+# The repository is public, so macOS minutes are free, but a run still
+# takes a while because the Firebase SwiftPM graph has to resolve from
+# scratch on every job.
+#
+# Triggers: pushes to main, pull requests touching the iOS project, and
+# manual dispatch.
+# `only_testing` narrows a manual run (default: the SplitDebtService
+# suite); pass the literal `all` to run the whole non-bankTests bundle.
+# (An empty string can't be the "everything" signal: in `${{ }}`
+# expressions "" is falsy, so `x || default` always re-applies the
+# default and the request is silently swallowed.)
+name: iOS tests
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-tests.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-tests.yml"
+  workflow_dispatch:
+    inputs:
+      only_testing:
+        description: "xcodebuild -only-testing identifier, or `all` for the whole bundle"
+        required: false
+        default: "non-bankTests/SplitDebtServiceTests"
+
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: ios/non-bank
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode on the runner
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Pick an iPhone simulator on the newest iOS runtime
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j | jq -r '
+            .devices
+            | to_entries
+            | map(select(.key | contains("iOS")))
+            | sort_by(.key)
+            | last
+            | .value
+            | map(select(.name | startswith("iPhone")))
+            | first
+            | .udid')
+          test -n "$UDID" && test "$UDID" != "null"
+          xcrun simctl list devices available | grep "$UDID"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Run tests
+        env:
+          # `inputs.*` is empty on push/pull_request; fall back to the
+          # same default the dispatch input carries.
+          ONLY_TESTING: ${{ inputs.only_testing || 'non-bankTests/SplitDebtServiceTests' }}
+        run: |
+          set -o pipefail
+          ARGS=()
+          if [ "$ONLY_TESTING" != "all" ]; then
+            ARGS+=("-only-testing:$ONLY_TESTING")
+          fi
+          echo "Test selection: ${ONLY_TESTING} -> ${ARGS[*]:-<whole bundle>}"
+          xcodebuild test \
+            -project non-bank.xcodeproj \
+            -scheme non-bank \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            "${ARGS[@]}" \
+            2>&1 | tee xcodebuild.log | grep -iE "test case '|test suite '|executed [0-9]+ test|error:|\*\* TEST|BUILD" || true
+          # `grep || true` above only shapes the console (case-insensitive:
+          # Xcode 26 prints "Test case '…' passed", older Xcodes printed
+          # "Test Case"). The real verdict comes from the summary lines.
+          echo "::group::Per-test results"
+          grep -iE "test case '.*' (passed|failed)" xcodebuild.log | sed 's/^[[:space:]]*//' | sort -u || true
+          echo "::endgroup::"
+          # Xcode 26 no longer prints the classic "Executed N tests, with M
+          # failures" summary to the console, so this line is informational
+          # only (`|| true`); the verdict below is what gates the job.
+          grep -iE "executed [0-9]+ tests?, with" xcodebuild.log | tail -1 || true
+          grep -E "\*\* TEST (SUCCEEDED|FAILED) \*\*" xcodebuild.log | head -1
+          grep -q "\*\* TEST SUCCEEDED \*\*" xcodebuild.log
+          # `-only-testing` with a mistyped identifier runs zero tests and
+          # still reports SUCCEEDED — refuse to call that green.
+          PASSED=$(grep -icE "test case '.*' passed" xcodebuild.log || true)
+          echo "Passed test cases: $PASSED"
+          test "$PASSED" -gt 0
+
+      - name: Upload full xcodebuild log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: ios/non-bank/xcodebuild.log

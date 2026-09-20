@@ -1,0 +1,184 @@
+# Archives the iOS app and uploads it to App Store Connect (TestFlight /
+# App Store review) from a GitHub-hosted macOS runner.
+#
+# Signing is fully cloud-managed: the App Store Connect API key lets
+# `xcodebuild -allowProvisioningUpdates` create the runner's development
+# certificate, fetch/create the App Store provisioning profile for the
+# bundle ID + entitlements, and sign the export with Apple's cloud
+# "Apple Distribution" certificate — the same path Xcode's Organizer
+# uses. No .p12 or profile has to be stored as a secret.
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   ASC_KEY_ID       — App Store Connect API key ID (10 chars)
+#   ASC_ISSUER_ID    — the team's Issuer ID (UUID)
+#   ASC_PRIVATE_KEY  — full contents of AuthKey_<KEY_ID>.p8
+# The key needs the App Manager role or higher. If the first run fails
+# with a permissions error on certificate creation, re-issue it as Admin.
+#
+# Build number: App Store Connect rejects a build number it has already
+# seen for the same marketing version. `build_number` overrides; when
+# left empty the run number of THIS workflow plus the project's last
+# manual build (7) is used, so numbers stay monotonic across runs.
+name: Release to App Store Connect
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: "CFBundleVersion to stamp (empty = run number + 7)"
+        required: false
+        default: ""
+      marketing_version:
+        description: "CFBundleShortVersionString override (empty = project's MARKETING_VERSION)"
+        required: false
+        default: ""
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  TEAM_ID: 28PGV25T47
+  BUNDLE_ID: nikitaspiridonov.non-bank
+  SCHEME: non-bank
+  PROJECT: non-bank.xcodeproj
+  BUILD_NUMBER_BASE: 7
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: ios/non-bank
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode on the runner
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Install App Store Connect API key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          test -n "$ASC_KEY_ID" || { echo "::error::ASC_KEY_ID secret is missing"; exit 1; }
+          test -n "$ASC_PRIVATE_KEY" || { echo "::error::ASC_PRIVATE_KEY secret is missing"; exit 1; }
+          # xcodebuild reads the key from an explicit path; altool/notarytool
+          # look in ~/private_keys. Write both so either tool can find it.
+          mkdir -p "$HOME/private_keys"
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          chmod 600 "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          head -1 "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8" | grep -q "BEGIN PRIVATE KEY" \
+            || { echo "::error::ASC_PRIVATE_KEY does not look like a .p8 (first line must be -----BEGIN PRIVATE KEY-----)"; exit 1; }
+          echo "ASC_KEY_PATH=$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8" >> "$GITHUB_ENV"
+
+      - name: Resolve build number
+        id: build
+        env:
+          INPUT_BUILD: ${{ inputs.build_number }}
+          INPUT_MARKETING: ${{ inputs.marketing_version }}
+        run: |
+          if [ -n "$INPUT_BUILD" ]; then
+            BUILD="$INPUT_BUILD"
+          else
+            BUILD=$(( GITHUB_RUN_NUMBER + BUILD_NUMBER_BASE ))
+          fi
+          # App Store Connect closes a version "train" once that marketing
+          # version is approved, so a new release needs a higher
+          # CFBundleShortVersionString, not just a higher build number.
+          # The project's MARKETING_VERSION is the source of truth; the
+          # dispatch input is an escape hatch for a one-off.
+          if [ -n "$INPUT_MARKETING" ]; then
+            MARKETING="$INPUT_MARKETING"
+          else
+            MARKETING=$(grep -m1 "MARKETING_VERSION = " "$PROJECT/project.pbxproj" | sed 's/.*= \(.*\);/\1/')
+          fi
+          echo "Marketing version: $MARKETING  build: $BUILD"
+          echo "number=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "marketing=$MARKETING" >> "$GITHUB_OUTPUT"
+
+      - name: Archive
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "build/${SCHEME}.xcarchive" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="${{ steps.build.outputs.number }}" \
+            MARKETING_VERSION="${{ steps.build.outputs.marketing }}" \
+            2>&1 | tee archive.log | grep -E "error:|warning: .*(sign|provision|entitle)|\*\* ARCHIVE|Signing Identity|Provisioning Profile" || true
+          grep -q "\*\* ARCHIVE SUCCEEDED \*\*" archive.log
+
+      - name: Write ExportOptions.plist
+        run: |
+          cat > build/ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          PLIST
+          cat build/ExportOptions.plist
+
+      - name: Export and upload to App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          xcodebuild -exportArchive \
+            -archivePath "build/${SCHEME}.xcarchive" \
+            -exportOptionsPlist build/ExportOptions.plist \
+            -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            2>&1 | tee export.log | grep -E "error:|warning:|\*\* EXPORT|Upload|upload|Package Summary|Signing" || true
+          grep -q "\*\* EXPORT SUCCEEDED \*\*" export.log
+          echo "::notice::Uploaded ${BUNDLE_ID} ${{ steps.build.outputs.marketing }} (${{ steps.build.outputs.number }}) to App Store Connect — it appears in TestFlight after Apple's processing (usually 5–15 min)."
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-logs
+          path: |
+            ios/non-bank/archive.log
+            ios/non-bank/export.log
+          if-no-files-found: ignore
+
+      - name: Remove API key from the runner
+        if: always()
+        run: rm -rf "$HOME/private_keys"

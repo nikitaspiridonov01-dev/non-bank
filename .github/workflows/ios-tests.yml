@@ -4,10 +4,8 @@
 # takes a while because the Firebase SwiftPM graph has to resolve from
 # scratch on every job.
 #
-# Triggers: pushes to the branch this landed on, pull requests touching
-# the iOS project, and manual dispatch. A workflow only becomes
-# dispatchable through the UI/API once it exists on the default branch,
-# so the push trigger is what makes it runnable before that.
+# Triggers: pushes to main, pull requests touching the iOS project, and
+# manual dispatch.
 # `only_testing` narrows a manual run (default: the SplitDebtService
 # suite); pass the literal `all` to run the whole non-bankTests bundle.
 # (An empty string can't be the "everything" signal: in `${{ }}`
@@ -18,7 +16,7 @@ name: iOS tests
 on:
   push:
     branches:
-      - claude/nifty-babbage-srmr16
+      - main
     paths:
       - "ios/**"
       - ".github/workflows/ios-tests.yml"

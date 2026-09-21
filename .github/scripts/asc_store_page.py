@@ -274,21 +274,30 @@ def live_promo(app):
             return
 
 
-def editable_app_info(app):
-    infos = get(f"/apps/{app}/appInfos")["data"]
-    for i in infos:
-        st = i["attributes"].get("state") or i["attributes"].get("appStoreState")
-        if st in ("PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED"):
-            return i
-    print("no editable appInfo yet (states: "
-          + ", ".join(str(i["attributes"].get("state") or i["attributes"].get("appStoreState")) for i in infos)
-          + ") — name/subtitle/category skipped this run; re-run once the version exists")
-    return None
+def editable_app_info(app, attempts=6):
+    # Right after a new App Store version is created, ASC takes a few
+    # seconds to spawn the matching editable appInfo — poll briefly.
+    for n in range(attempts):
+        infos = get(f"/apps/{app}/appInfos")["data"]
+        for i in infos:
+            st = i["attributes"].get("state") or i["attributes"].get("appStoreState")
+            if st in ("PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED"):
+                return i
+        if DRY or n == attempts - 1:
+            print("no editable appInfo (states: "
+                  + ", ".join(str(i["attributes"].get("state") or i["attributes"].get("appStoreState")) for i in infos)
+                  + ")" + (" — expected in dry-run before the version exists" if DRY else " — re-run once the version exists"))
+            return None
+        time.sleep(5)
 
 
 def apply_app_info(app):
     info = editable_app_info(app)
     if not info:
+        if DRY:
+            for locale, f in LOCALES.items():
+                print(f"  (planned) {locale}: name={f['name']!r} subtitle={f['subtitle']!r}")
+            print(f"  (planned) secondaryCategory={SECONDARY_CATEGORY}")
         return
     print(f"appInfo {info['id']}: name / subtitle / category")
     existing = {l["attributes"]["locale"]: l for l in get(f"/appInfos/{info['id']}/appInfoLocalizations")["data"]}
@@ -306,6 +315,11 @@ def apply_app_info(app):
 
 def apply_version_localizations(vid):
     print(f"version {vid}: localizations")
+    if vid == "dry-run":
+        for locale, f in LOCALES.items():
+            print(f"  (planned) {locale}: keywords={f['keywords']!r}")
+            print(f"            promo={f['promotionalText'][:80]!r}… description={len(f['description'])} chars, whatsNew={len(f['whatsNew'])} chars")
+        return
     existing = {l["attributes"]["locale"]: l
                 for l in get(f"/appStoreVersions/{vid}/appStoreVersionLocalizations")["data"]}
     for locale, f in LOCALES.items():

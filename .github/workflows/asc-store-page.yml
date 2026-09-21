@@ -1,0 +1,41 @@
+# Applies the App Store product-page refresh (name / subtitle / keywords /
+# description / locales / secondary category) to the next version via the
+# ASC API, or attaches the processed build to it. Manual dispatch only —
+# nothing about the public store page changes without a person clicking
+# Run. Same ASC API key as release.yml. Never submits for review.
+name: ASC store page
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "metadata | attach"
+        required: false
+        default: "metadata"
+      dry_run:
+        description: "1 = print planned changes only, send nothing"
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet "PyJWT[crypto]" requests
+      - env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          ASC_BUNDLE_ID: nikitaspiridonov.non-bank
+          TARGET_VERSION: "1.0.2"
+          MODE: ${{ inputs.mode || 'metadata' }}
+          DRY_RUN: ${{ inputs.dry_run || '1' }}
+        run: python .github/scripts/asc_store_page.py

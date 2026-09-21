@@ -1,0 +1,49 @@
+# Read-only Google Analytics (GA4) reports for the app, printed to the job
+# log. Uses a service account with the Viewer role on the property.
+#
+# Secrets:
+#   GA4_SA_KEY_JSON   — service-account key JSON (Viewer on the property)
+#   GA4_PROPERTY_ID   — optional; defaults to the app's property below
+name: GA4 report
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Lookback window in days"
+        required: false
+        default: "30"
+      report:
+        description: "all | daily | events | versions | friend_detail | screens | audience | retention"
+        required: false
+        default: "all"
+  push:
+    # Bootstrap: a workflow is only dispatchable once it exists on the
+    # default branch. Until then a push touching these files runs it.
+    branches:
+      - claude/nifty-babbage-srmr16
+    paths:
+      - ".github/workflows/ga4-report.yml"
+      - ".github/scripts/ga4_report.py"
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install --quiet google-auth requests
+      - name: Run reports
+        env:
+          GA4_SA_KEY_JSON: ${{ secrets.GA4_SA_KEY_JSON }}
+          GA4_PROPERTY_ID: ${{ secrets.GA4_PROPERTY_ID || '540029267' }}
+          DAYS: ${{ inputs.days || '30' }}
+          REPORT: ${{ inputs.report || 'all' }}
+        run: python .github/scripts/ga4_report.py --days "$DAYS" --report "$REPORT"

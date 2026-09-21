@@ -1392,6 +1392,9 @@ struct TransactionModeFlowSheet: View {
             if mode == .settleUp {
                 analytics.track(.settleUpCompleted)
             }
+            // A finished split is the "this worked" moment — the only
+            // place we ever ask for an App Store rating.
+            ReviewPromptService.noteSplitCompleted()
         }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         onDone()

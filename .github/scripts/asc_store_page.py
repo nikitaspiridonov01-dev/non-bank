@@ -132,7 +132,7 @@ PRIVADO POR DISEÑO
                      "• La app puede pedirte una valoración una vez después de dividir una cuenta\n"
                      "• El saldo con un amigo refleja solo el dinero que se movió entre ustedes"),
     },
-    "de": {
+    "de-DE": {
         "name": "Non Bank: Ausgaben & Teilen",
         "subtitle": "Rechnung teilen, Beleg scannen",
         "keywords": "ausgaben,budget,haushaltsbuch,kosten,teilen,freunde,reise,schulden,geld,finanzen,kassenbon,wg,privat",
@@ -163,7 +163,7 @@ Ideen? Schreib an nonbankapp@gmail.com""",
                      "• Die App kann nach einer Aufteilung einmal um eine Bewertung bitten\n"
                      "• Der Saldo mit einem Freund zeigt nur das Geld, das zwischen euch geflossen ist"),
     },
-    "fr": {
+    "fr-FR": {
         "name": "Non Bank: Dépenses & Partage",
         "subtitle": "Partagez l'addition, scannez",
         "keywords": "dépenses,budget,partager,addition,amis,voyage,dettes,argent,finances,ticket,reçu,colocation,privé",

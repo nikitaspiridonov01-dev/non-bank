@@ -133,8 +133,76 @@ def report_friend_detail(tok, prop, days):
         )
 
 
+def report_screens(tok, prop, days):
+    body = {
+        "dateRanges": date_range(days),
+        "dimensions": [{"name": "unifiedScreenName"}],
+        "metrics": [{"name": "screenPageViews"}, {"name": "totalUsers"}, {"name": "userEngagementDuration"}],
+        "orderBys": [{"metric": {"metricName": "screenPageViews"}, "desc": True}],
+        "limit": 30,
+    }
+    print_table(run_report(tok, prop, body), f"Screens, last {days} days (engagement in seconds)")
+
+
+def report_audience(tok, prop, days):
+    body = {
+        "dateRanges": date_range(days),
+        "dimensions": [{"name": "newVsReturning"}],
+        "metrics": [{"name": "activeUsers"}, {"name": "sessions"}, {"name": "averageSessionDuration"},
+                    {"name": "sessionsPerUser"}],
+        "limit": 10,
+    }
+    print_table(run_report(tok, prop, body), f"New vs returning, last {days} days")
+    body = {
+        "dateRanges": date_range(days),
+        "dimensions": [{"name": "country"}],
+        "metrics": [{"name": "activeUsers"}, {"name": "newUsers"}, {"name": "sessions"}],
+        "orderBys": [{"metric": {"metricName": "activeUsers"}, "desc": True}],
+        "limit": 15,
+    }
+    print_table(run_report(tok, prop, body), f"Countries, last {days} days")
+
+
+def report_retention(tok, prop, days):
+    # Weekly acquisition cohorts, users still active on day 1 / 7 / 14 / 28.
+    weeks = max(1, min(6, days // 7))
+    cohorts = []
+    for i in range(weeks):
+        cohorts.append({
+            "name": f"w-{i}",
+            "dimension": "firstSessionDate",
+            "dateRange": {"startDate": f"{(i + 1) * 7}daysAgo", "endDate": f"{i * 7 + 1}daysAgo"},
+        })
+    body = {
+        "dimensions": [{"name": "cohort"}, {"name": "cohortNthDay"}],
+        "metrics": [{"name": "cohortActiveUsers"}],
+        "cohortSpec": {
+            "cohorts": cohorts,
+            "cohortsRange": {"granularity": "DAILY", "startOffset": 0, "endOffset": 28},
+        },
+        "orderBys": [{"dimension": {"dimensionName": "cohort"}}, {"dimension": {"dimensionName": "cohortNthDay"}}],
+        "limit": 1000,
+    }
+    resp = run_report(tok, prop, body)
+    # Pivot: one line per cohort, retained users on the interesting days.
+    days_of_interest = ["0000", "0001", "0003", "0007", "0014", "0028"]
+    table = {}
+    for row in resp.get("rows", []):
+        c, d = (v["value"] for v in row["dimensionValues"])
+        table.setdefault(c, {})[d] = row["metricValues"][0]["value"]
+    print(f"\n=== Retention by weekly cohort (users active on day N), last {weeks} weeks ===")
+    print("cohort  window                  " + "  ".join(f"d{int(d):>2}" for d in days_of_interest))
+    for c in cohorts:
+        r = table.get(c["name"], {})
+        rng = f"{c['dateRange']['startDate']:>10}..{c['dateRange']['endDate']:<10}"
+        print(f"{c['name']:<7} {rng}  " + "  ".join(f"{r.get(d, '-'):>3}" for d in days_of_interest))
+
+
 REPORTS = {
     "daily": report_daily,
+    "screens": report_screens,
+    "audience": report_audience,
+    "retention": report_retention,
     "events": report_events,
     "versions": report_versions,
     "friend_detail": report_friend_detail,

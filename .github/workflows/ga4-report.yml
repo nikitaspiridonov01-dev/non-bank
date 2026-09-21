@@ -14,7 +14,7 @@ on:
         required: false
         default: "30"
       report:
-        description: "all | daily | events | versions | friend_detail"
+        description: "all | daily | events | versions | friend_detail | screens | audience | retention"
         required: false
         default: "all"
   push:

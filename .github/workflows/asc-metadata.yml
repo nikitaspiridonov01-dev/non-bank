@@ -1,0 +1,32 @@
+# Prints the live App Store product-page metadata (name, subtitle,
+# keywords, description, categories). Read-only. Same ASC API key.
+name: ASC metadata
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/nifty-babbage-srmr16
+    paths:
+      - ".github/workflows/asc-metadata.yml"
+      - ".github/scripts/asc_metadata.py"
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet "PyJWT[crypto]" requests
+      - env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          ASC_BUNDLE_ID: nikitaspiridonov.non-bank
+        run: python .github/scripts/asc_metadata.py

@@ -197,26 +197,56 @@ def report_analytics():
         print(f"\n--- {name} [{rep['_source']}]: {len(inst)} daily instances in window ---")
         if not inst:
             continue
-        totals = defaultdict(lambda: defaultdict(float))
+        # Metrics are the "Counts"-style columns; everything else is a dimension.
+        # Break each day down by the most informative dimension (Event for the
+        # discovery report, Download Type for downloads, ...), so impressions
+        # and product page views are not lumped into one number.
+        METRIC_COLS = ("Counts", "Unique Counts", "Units", "Installs", "Deletions", "Downloads")
+        SKIP_COLS = ("Date", "App Name", "App Apple Identifier")
+        BREAKDOWN_PREFS = ("Event", "Download Type", "Event Type", "Source Type")
+        rows = []
         for i in sorted(inst, key=lambda x: x["attributes"]["processingDate"]):
             segs = get_json(f"/analyticsReportInstances/{i['id']}/segments")["data"]
             for s in segs:
                 blob = requests.get(s["attributes"]["url"], timeout=120).content
                 text = gzip.decompress(blob).decode("utf-8", errors="replace")
                 for row in csv.DictReader(io.StringIO(text), delimiter="\t"):
-                    date = row.get("Date") or i["attributes"]["processingDate"]
-                    for k, v in row.items():
-                        if k in ("Date", "App Name", "App Apple Identifier") or v in (None, ""):
-                            continue
-                        try:
-                            totals[date][k] += float(v)
-                        except ValueError:
-                            totals[date][f"{k}={v}"] += 1  # dimension value: count rows
-        # Print numeric columns only, most informative first.
-        numeric_cols = sorted({k for d in totals.values() for k, v in d.items() if "=" not in k})
-        print("date        " + "  ".join(f"{c[:22]:>22}" for c in numeric_cols))
+                    row.setdefault("Date", i["attributes"]["processingDate"])
+                    rows.append(row)
+        if not rows:
+            print("(instances exist but contain no rows)")
+            continue
+        cols = list(rows[0].keys())
+        metrics = [c for c in cols if c in METRIC_COLS]
+        dims = [c for c in cols if c not in METRIC_COLS and c not in SKIP_COLS]
+        key = next((d for d in BREAKDOWN_PREFS if d in dims), None)
+
+        def num(v):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return 0.0
+
+        # date -> breakdown value -> metric -> total
+        totals = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
+        for row in rows:
+            bucket = row.get(key, "all") if key else "all"
+            for m in metrics:
+                totals[row["Date"]][bucket][m] += num(row.get(m))
+        print(f"dimensions: {', '.join(dims)}   breakdown by: {key or '(none)'}")
+        print(f"{'date':<11} {'':<28}" + "".join(f"{m:>14}" for m in metrics))
         for date in sorted(totals):
-            print(f"{date:<11} " + "  ".join(f"{int(totals[date].get(c, 0)):>22}" for c in numeric_cols))
+            for bucket in sorted(totals[date]):
+                vals = totals[date][bucket]
+                print(f"{date:<11} {bucket[:28]:<28}" + "".join(f"{int(vals.get(m, 0)):>14}" for m in metrics))
+        # Secondary view: where the traffic comes from (Source Type / Territory), summed over the window.
+        for extra in ("Source Type", "Territory", "Page Type"):
+            if extra in dims and extra != key:
+                agg = defaultdict(float)
+                for row in rows:
+                    agg[row.get(extra, "?")] += num(row.get(metrics[0])) if metrics else 0
+                top = sorted(agg.items(), key=lambda kv: -kv[1])[:8]
+                print(f"  by {extra}: " + ", ".join(f"{k}={int(v)}" for k, v in top))
     print("\nall report types:", ", ".join(names))
 
 

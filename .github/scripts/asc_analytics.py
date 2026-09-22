@@ -144,38 +144,46 @@ def find_app_id() -> str:
     return data[0]["id"]
 
 
-def ensure_report_request(app_id: str) -> str:
-    existing = get_json(f"/apps/{app_id}/analyticsReportRequests", params={"filter[accessType]": "ONGOING"})["data"]
+def ensure_report_request(app_id: str, access_type: str = "ONGOING") -> str:
+    """ONGOING = daily reports from the request date on; ONE_TIME_SNAPSHOT =
+    a one-off dump of history, which is the only way to get a "before"
+    baseline for dates earlier than the ONGOING request."""
+    existing = get_json(f"/apps/{app_id}/analyticsReportRequests", params={"filter[accessType]": access_type})["data"]
     if existing:
         rr = existing[0]
-        print(f"analytics report request exists: {rr['id']} (stoppedDueToInactivity={rr['attributes'].get('stoppedDueToInactivity')})")
+        print(f"{access_type} report request exists: {rr['id']} (stoppedDueToInactivity={rr['attributes'].get('stoppedDueToInactivity')})")
         return rr["id"]
     r = api("POST", "/analyticsReportRequests", json={"data": {
         "type": "analyticsReportRequests",
-        "attributes": {"accessType": "ONGOING"},
+        "attributes": {"accessType": access_type},
         "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
     }})
     if r.status_code not in (200, 201):
-        raise RuntimeError(f"create report request -> {r.status_code}: {r.text[:600]}")
+        raise RuntimeError(f"create {access_type} report request -> {r.status_code}: {r.text[:600]}")
     rr = r.json()["data"]
-    print(f"analytics report request CREATED: {rr['id']} — Apple starts producing daily reports in ~24-48h; re-run then.")
+    print(f"{access_type} report request CREATED: {rr['id']} — Apple produces it within ~24-48h; re-run then.")
     return rr["id"]
 
 
 WANTED_REPORTS = {
-    "App Store Discovery and Engagement",  # impressions, product page views, taps
-    "App Downloads",                       # first-time downloads, redownloads
-    "App Store Installation and Deletion", # installs, deletions
+    "App Store Discovery and Engagement Standard",  # impressions, product page views, taps
+    "App Downloads Standard",                       # first-time downloads, redownloads
+    "App Store Installation and Deletion Standard", # installs, deletions
 }
 
 
 def report_analytics():
     print("\n=== App Store analytics (impressions / page views / downloads) ===")
     app_id = find_app_id()
-    rr_id = ensure_report_request(app_id)
-    reports = get_json(f"/analyticsReportRequests/{rr_id}/reports", params={"limit": 200})["data"]
+    snapshot_id = ensure_report_request(app_id, "ONE_TIME_SNAPSHOT")
+    rr_id = ensure_report_request(app_id, "ONGOING")
+    reports = []
+    for req_id, label in ((snapshot_id, "snapshot"), (rr_id, "ongoing")):
+        for rep in get_json(f"/analyticsReportRequests/{req_id}/reports", params={"limit": 200})["data"]:
+            rep["_source"] = label
+            reports.append(rep)
     if not reports:
-        print("no reports available yet for this request (expected right after creation)")
+        print("no reports available yet for these requests (expected right after creation)")
         return
     names = sorted({r["attributes"]["name"] for r in reports})
     print(f"{len(reports)} report types available; wanted: {sorted(WANTED_REPORTS)}")
@@ -186,7 +194,7 @@ def report_analytics():
             continue
         inst = get_json(f"/analyticsReports/{rep['id']}/instances", params={"filter[granularity]": "DAILY", "limit": 200})["data"]
         inst = [i for i in inst if i["attributes"].get("processingDate", "") >= cutoff.isoformat()]
-        print(f"\n--- {name}: {len(inst)} daily instances in window ---")
+        print(f"\n--- {name} [{rep['_source']}]: {len(inst)} daily instances in window ---")
         if not inst:
             continue
         totals = defaultdict(lambda: defaultdict(float))

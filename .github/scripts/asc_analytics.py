@@ -204,15 +204,25 @@ def report_analytics():
         METRIC_COLS = ("Counts", "Unique Counts", "Units", "Installs", "Deletions", "Downloads")
         SKIP_COLS = ("Date", "App Name", "App Apple Identifier")
         BREAKDOWN_PREFS = ("Event", "Download Type", "Event Type", "Source Type")
-        rows = []
+        # A daily instance can carry rows for several dates (late/revised
+        # data), so the same date shows up in more than one instance. Keep,
+        # per date, only the rows from the newest instance that has it —
+        # summing across instances double-counts.
+        rows_by_date = {}  # date -> (processingDate, [rows])
         for i in sorted(inst, key=lambda x: x["attributes"]["processingDate"]):
+            pdate = i["attributes"]["processingDate"]
             segs = get_json(f"/analyticsReportInstances/{i['id']}/segments")["data"]
+            fresh = defaultdict(list)
             for s in segs:
                 blob = requests.get(s["attributes"]["url"], timeout=120).content
                 text = gzip.decompress(blob).decode("utf-8", errors="replace")
                 for row in csv.DictReader(io.StringIO(text), delimiter="\t"):
-                    row.setdefault("Date", i["attributes"]["processingDate"])
-                    rows.append(row)
+                    row.setdefault("Date", pdate)
+                    fresh[row["Date"]].append(row)
+            for date, drows in fresh.items():
+                if date not in rows_by_date or rows_by_date[date][0] <= pdate:
+                    rows_by_date[date] = (pdate, drows)
+        rows = [r for _, drows in rows_by_date.values() for r in drows]
         if not rows:
             print("(instances exist but contain no rows)")
             continue

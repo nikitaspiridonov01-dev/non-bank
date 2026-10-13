@@ -1,0 +1,53 @@
+name: backend-deploy
+
+# Deploys the Cloudflare Worker (backend/) with wrangler. Manual only: the
+# Worker serves production API + the public site, so a deploy is an explicit
+# act. Runs the backend test suite first and aborts on failure.
+#
+# Secrets (repo → Settings → Secrets → Actions):
+#   CLOUDFLARE_API_TOKEN  — API token with "Workers Scripts: Edit" (+ "Workers
+#                           Routes: Edit" for the custom domain) on the account
+#   CLOUDFLARE_ACCOUNT_ID — the account id from the Cloudflare dashboard
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "production | staging"
+        required: false
+        default: "production"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Test
+        run: npm test
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ "${{ github.event.inputs.env }}" = "staging" ]; then
+            npx wrangler deploy --env staging
+          else
+            npx wrangler deploy
+          fi
+      - name: Smoke-check the public site
+        if: github.event.inputs.env != 'staging'
+        run: |
+          for p in / /robots.txt /sitemap.xml /og.png /support /privacy; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "https://non-bank.app$p")
+            echo "$p -> $code"
+            [ "$code" = "200" ] || exit 1
+          done

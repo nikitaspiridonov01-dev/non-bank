@@ -8,6 +8,7 @@ import { handleSharePage } from "./share.ts";
 import { handlePrivacyPage } from "./privacy.ts";
 import { handleSupportPage } from "./support.ts";
 import { handleLandingPage } from "./landing.ts";
+import { handleRobots, handleSitemap, handleOgImage, handleIcon } from "./seo.ts";
 import {
   handleUploadShareItems,
   handleFetchShareItems,
@@ -211,6 +212,21 @@ export default {
       // falls through to the JSON 404. Usable as the App Store Marketing URL.
       if (url.pathname === "/" && req.method === "GET") {
         return handleLandingPage();
+      }
+      // Search-engine + link-preview plumbing for the public site (see seo.ts).
+      if (req.method === "GET") {
+        switch (url.pathname) {
+          case "/robots.txt":
+            return handleRobots();
+          case "/sitemap.xml":
+            return handleSitemap();
+          case "/og.png":
+            return handleOgImage();
+          case "/icon.png":
+          case "/apple-touch-icon.png":
+          case "/favicon.ico":
+            return handleIcon();
+        }
       }
       // Server-mediated sync — Phase 0: record a friend pairing after a
       // real user opens a share link. App-Attest-gated + per-IP rate-

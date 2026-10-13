@@ -10,6 +10,8 @@
 // escaping. Styled with the same warm dark/light palette as the share
 // landing page so the two read as one product.
 
+import { seoHead } from "./seo.ts";
+
 const SUPPORT_EMAIL = "nonbankapp@gmail.com";
 const LAST_UPDATED = "28 June 2026";
 
@@ -25,14 +27,16 @@ export function handlePrivacyPage(): Response {
   });
 }
 
+const HEAD = seoHead({
+  path: "/privacy",
+  title: "Privacy Policy · Non Bank",
+  description: "What Non Bank collects and what it does not: your transactions, friends and receipts stay on your iPhone and your own iCloud. No bank logins, no tracking, no ads.",
+});
+
 const PRIVACY_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Privacy Policy · Non Bank</title>
-<meta name="theme-color" content="#0a0807">
-<meta name="robots" content="index, follow">
+${HEAD}
 <style>
   :root {
     color-scheme: dark light;

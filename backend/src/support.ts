@@ -6,6 +6,8 @@
 // same warm dark/light palette as the privacy + share pages so the three
 // read as one product.
 
+import { seoHead } from "./seo.ts";
+
 const SUPPORT_EMAIL = "nonbankapp@gmail.com";
 // App Store URL for the "Get the app" button (App Store Connect Apple ID).
 // Resolves once the app is live; before that it 404s, which is fine — the
@@ -23,14 +25,16 @@ export function handleSupportPage(): Response {
   });
 }
 
+const HEAD = seoHead({
+  path: "/support",
+  title: "Support · Non Bank",
+  description: "Help with Non Bank, the private expense tracker and bill splitter for iPhone: receipts, splitting, sync, iCloud, exports, and how to reach us.",
+});
+
 const SUPPORT_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Support · Non Bank</title>
-<meta name="theme-color" content="#0a0807">
-<meta name="robots" content="index, follow">
+${HEAD}
 <style>
   :root {
     color-scheme: dark light;

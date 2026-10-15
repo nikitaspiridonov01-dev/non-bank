@@ -57,8 +57,7 @@ Non Bank is for people who want to understand their money and settle up with fri
 
 Got an idea, or something you'd love Non Bank to do? Write to nonbankapp@gmail.com — every suggestion shapes what comes next."""
 
-WHATS_NEW_EN = ("• Split shares are now exact to the cent — no more lost or rounded-away cents
-"
+WHATS_NEW_EN = ("• Split shares are now exact to the cent — no more lost or rounded-away cents\n"
                 "• Amounts with fractions display consistently on every screen")
 
 LOCALES = {

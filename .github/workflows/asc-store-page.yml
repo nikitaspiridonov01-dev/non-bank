@@ -16,6 +16,10 @@ on:
         description: "1 = print planned changes only, send nothing"
         required: false
         default: "1"
+      target_version:
+        description: "App Store version to create/edit (CFBundleShortVersionString)"
+        required: false
+        default: "1.0.3"
 
 permissions:
   contents: read
@@ -35,7 +39,7 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
           ASC_BUNDLE_ID: nikitaspiridonov.non-bank
-          TARGET_VERSION: "1.0.2"
+          TARGET_VERSION: ${{ inputs.target_version || '1.0.3' }}
           MODE: ${{ inputs.mode || 'metadata' }}
           DRY_RUN: ${{ inputs.dry_run || '1' }}
         run: python .github/scripts/asc_store_page.py

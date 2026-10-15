@@ -12,7 +12,7 @@ name: backend-deploy
 on:
   # Bootstrap: a workflow is only dispatchable once it exists on the default
   # branch. Until then, a push to this file on the feature branch runs it.
-  # Remove this trigger after the first merge to main.
+  # Remove this trigger after the first merge to main (bootstrap re-run #3).
   push:
     branches: [claude/nifty-babbage-srmr16]
     paths: [.github/workflows/backend-deploy.yml]

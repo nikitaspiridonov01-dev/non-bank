@@ -4,7 +4,7 @@ name: backend-deploy
 # Worker serves production API + the public site, so a deploy is an explicit
 # act. Runs the backend test suite first and aborts on failure.
 #
-# Secrets (repo → Settings → Secrets → Actions):
+# Secrets (repo → Settings → Secrets and variables → Actions):
 #   CLOUDFLARE_API_TOKEN  — API token with "Workers Scripts: Edit" (+ "Workers
 #                           Routes: Edit" for the custom domain) on the account
 #   CLOUDFLARE_ACCOUNT_ID — the account id from the Cloudflare dashboard

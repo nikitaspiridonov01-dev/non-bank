@@ -10,6 +10,12 @@ name: backend-deploy
 #   CLOUDFLARE_ACCOUNT_ID — the account id from the Cloudflare dashboard
 
 on:
+  # Bootstrap: a workflow is only dispatchable once it exists on the default
+  # branch. Until then, a push to this file on the feature branch runs it.
+  # Remove this trigger after the first merge to main.
+  push:
+    branches: [claude/nifty-babbage-srmr16]
+    paths: [.github/workflows/backend-deploy.yml]
   workflow_dispatch:
     inputs:
       env:
@@ -38,13 +44,13 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          if [ "${{ github.event.inputs.env }}" = "staging" ]; then
+          if [ "${{ github.event.inputs.env || 'production' }}" = "staging" ]; then
             npx wrangler deploy --env staging
           else
             npx wrangler deploy
           fi
       - name: Smoke-check the public site
-        if: github.event.inputs.env != 'staging'
+        if: (github.event.inputs.env || 'production') != 'staging'
         run: |
           for p in / /robots.txt /sitemap.xml /og.png /support /privacy; do
             code=$(curl -s -o /dev/null -w "%{http_code}" "https://non-bank.app$p")

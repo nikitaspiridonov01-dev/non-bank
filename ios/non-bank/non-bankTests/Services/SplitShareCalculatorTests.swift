@@ -224,7 +224,7 @@ final class SplitShareCalculatorTests: XCTestCase {
             makeItem(name: "Pasta", total: 14.99, assignees: ["bob"]),
             makeItem(name: "Wine", total: 22.10, assignees: ["alice", "bob"]),
             makeItem(name: "Service fee", total: 5.55, assignees: []),
-            makeItem(name: "Tip", total: 4.44, assignees: []),
+            makeItem(name: "Service charge", total: 4.44, assignees: []),
             makeItem(name: "Discount", total: -3.33, assignees: [])
         ]
         let result = SplitShareCalculator.compute(

@@ -53,6 +53,20 @@ jobs:
           curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID" \
             | python3 -c 'import sys,json; d=json.load(sys.stdin); print("account:", json.dumps({"success": d.get("success"), "name": (d.get("result") or {}).get("name"), "errors": d.get("errors")}))'
+          # Shape of the secret, without revealing it: Cloudflare API tokens
+          # are 40 chars of [A-Za-z0-9_-]; a 64-char all-hex string is a
+          # hash or an id, not a token.
+          python3 - <<'PY'
+          import os, re
+          t = os.environ["CLOUDFLARE_API_TOKEN"]
+          print("shape: len=%d hex_only=%s has_whitespace=%s has_dash_or_underscore=%s mixed_case=%s" % (
+              len(t), bool(re.fullmatch(r"[0-9a-fA-F]+", t)), any(c.isspace() for c in t),
+              any(c in "-_" for c in t), t != t.lower() and t != t.upper()))
+          PY
+          # Account-owned tokens verify against a different endpoint.
+          curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify" \
+            | python3 -c 'import sys,json; d=json.load(sys.stdin); print("account-token verify:", json.dumps({"success": d.get("success"), "status": (d.get("result") or {}).get("status"), "errors": d.get("errors")}))'
           npx wrangler whoami || true
       - name: Deploy
         env:

@@ -64,8 +64,9 @@ enum SplitItemBreakdown {
     /// Matches `SplitShareCalculator.zeroEpsilon` so the two stay in lockstep.
     private static let zeroEpsilon: Double = 0.001
 
-    /// Deterministic charge-row order for the UI.
-    private static let chargeOrder: [ReceiptItem.Kind] = [.fee, .tip, .discount]
+    /// Deterministic charge-row order for the UI — and the allocation
+    /// order, shared with the calculator so the two reconcile.
+    private static var chargeOrder: [ReceiptItem.Kind] { SplitShareCalculator.chargeOrder }
 
     /// Per-participant breakdown for a `byItems` split.
     ///
@@ -90,10 +91,10 @@ enum SplitItemBreakdown {
         for item in items where item.kind == .item {
             let assignees = item.assignedParticipantIDs.filter(participants.contains)
             guard !assignees.isEmpty else { continue }
-            let perAssignee = item.lineTotal / Double(assignees.count)
-            for id in assignees {
-                perItems[id, default: []].append(ItemSlice(item: item, slice: perAssignee))
-                directBase[id, default: 0] += perAssignee
+            let slices = MoneyMath.splitEvenly(item.lineTotal, count: assignees.count)
+            for (id, slice) in zip(assignees, slices) {
+                perItems[id, default: []].append(ItemSlice(item: item, slice: slice))
+                directBase[id, default: 0] += slice
             }
             directItemTotal += item.lineTotal
         }
@@ -110,33 +111,39 @@ enum SplitItemBreakdown {
         // → no proportional distribution.
         let canProportion = directItemTotal > zeroEpsilon && abs(chargeSum) > zeroEpsilon
 
+        // Per-kind cuts in whole cents, allocated exactly as
+        // `SplitShareCalculator.compute` does (same order, same sorted
+        // roster, same pass-1 base), so Σ rows == that participant's share.
+        let orderedIDs = participants.sorted()
+        let baseWeights = orderedIDs.map { directBase[$0] ?? 0 }
+        var cutsByKind: [ReceiptItem.Kind: [String: Double]] = [:]
+        if canProportion {
+            for kind in chargeOrder {
+                guard let sum = chargeByKind[kind], abs(sum) > zeroEpsilon else { continue }
+                let cuts = MoneyMath.allocate(sum, weights: baseWeights)
+                cutsByKind[kind] = Dictionary(uniqueKeysWithValues: zip(orderedIDs, cuts))
+            }
+        }
+
         var result: [String: ParticipantBreakdown] = [:]
         for id in participants {
             let base = directBase[id] ?? 0
-            let proportion = canProportion ? base / directItemTotal : 0
-
-            // The total uses the FULL charge sum (not the filtered display
-            // rows) so it stays bit-identical to SplitShareCalculator —
-            // `Σ_kind (sum_kind × proportion) == chargeSum × proportion`.
-            let chargeCutTotal = chargeSum * proportion
-
             var charges: [ChargeCut] = []
-            if canProportion {
-                for kind in chargeOrder {
-                    guard let sum = chargeByKind[kind], abs(sum) > zeroEpsilon else { continue }
-                    let cut = sum * proportion
-                    // A zero-item participant gets a ~0 cut — omit the row.
-                    guard abs(cut) > zeroEpsilon else { continue }
-                    // Use the source line's own name when this kind came from
-                    // a single distinctly-named line (the common case — one
-                    // "Тариф за сервис"); otherwise a generic kind label.
-                    let names = Set(
-                        (chargeNamesByKind[kind] ?? [])
-                            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-                    )
-                    let label = names.count == 1 ? names.first! : Self.genericChargeName(kind)
-                    charges.append(ChargeCut(kind: kind, name: label, amount: cut))
-                }
+            var chargeCutTotal: Double = 0
+            for kind in chargeOrder {
+                guard let cut = cutsByKind[kind]?[id] else { continue }
+                chargeCutTotal += cut
+                // A zero-item participant gets a 0 cut — omit the row.
+                guard abs(cut) > zeroEpsilon else { continue }
+                // Use the source line's own name when this kind came from
+                // a single distinctly-named line (the common case — one
+                // "Тариф за сервис"); otherwise a generic kind label.
+                let names = Set(
+                    (chargeNamesByKind[kind] ?? [])
+                        .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                )
+                let label = names.count == 1 ? names.first! : Self.genericChargeName(kind)
+                charges.append(ChargeCut(kind: kind, name: label, amount: cut))
             }
 
             result[id] = ParticipantBreakdown(
@@ -159,9 +166,10 @@ enum SplitItemBreakdown {
         guard item.kind == .item else { return [] }
         let assignees = item.assignedParticipantIDs.filter(participants.contains)
         guard !assignees.isEmpty else { return [] }
-        let perAssignee = item.lineTotal / Double(assignees.count)
-        // Preserve assignment order so avatar ordering is stable.
-        return assignees.map { (participantID: $0, slice: perAssignee) }
+        // Same cent-exact slices as `compute`; assignment order preserved so
+        // avatar ordering is stable and the extra cent sits on the first.
+        let slices = MoneyMath.splitEvenly(item.lineTotal, count: assignees.count)
+        return zip(assignees, slices).map { (participantID: $0, slice: $1) }
     }
 
     /// Per-participant proportional cut of ONE charge line (fee/tip/discount),
@@ -181,14 +189,16 @@ enum SplitItemBreakdown {
         for item in items where item.kind == .item {
             let assignees = item.assignedParticipantIDs.filter(participants.contains)
             guard !assignees.isEmpty else { continue }
-            let perAssignee = item.lineTotal / Double(assignees.count)
-            for id in assignees { directBase[id, default: 0] += perAssignee }
+            let slices = MoneyMath.splitEvenly(item.lineTotal, count: assignees.count)
+            for (id, slice) in zip(assignees, slices) { directBase[id, default: 0] += slice }
             directItemTotal += item.lineTotal
         }
         guard directItemTotal > zeroEpsilon else { return [] }
-        return participants.compactMap { id -> (participantID: String, amount: Double)? in
-            let proportion = (directBase[id] ?? 0) / directItemTotal
-            let amount = charge.lineTotal * proportion
+        // One line's cut, in whole cents. Reconciles with the per-kind row
+        // in `compute` when the kind comes from this single line.
+        let orderedIDs = participants.sorted()
+        let cuts = MoneyMath.allocate(charge.lineTotal, weights: orderedIDs.map { directBase[$0] ?? 0 })
+        return zip(orderedIDs, cuts).compactMap { (id, amount) -> (participantID: String, amount: Double)? in
             guard abs(amount) > zeroEpsilon else { return nil }
             return (participantID: id, amount: amount)
         }

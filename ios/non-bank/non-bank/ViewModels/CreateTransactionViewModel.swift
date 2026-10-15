@@ -170,18 +170,12 @@ class CreateTransactionViewModel: ObservableObject {
         selectedFriends.count + (youIncludedInSplit ? 1 : 0)
     }
 
-    /// Per-person amount for even split: total / participants
+    /// Per-person amount for even split, cent-exact: the share of the
+    /// first slot of `evenShares` (the user when included), which carries
+    /// any leftover cent — so 38.99 / 3 previews as "13.00", not "12.100".
     var perPersonAmountFormatted: String {
-        let total = Double(amount.replacingOccurrences(of: ",", with: ".")) ?? 0
-        let people = Double(max(totalParticipantCount, 1))
-        let perPerson = total / people
-        let intPart = NumberFormatting.integerPart(perPerson)
-        let decimal = perPerson - Double(Int(perPerson))
-        if decimal == 0 {
-            return intPart
-        } else {
-            return intPart + String(format: ".%02d", Int((decimal * 100).rounded()))
-        }
+        let shares = MoneyMath.splitEvenly(parsedAmount, count: max(totalParticipantCount, 1))
+        return NumberFormatting.amount(shares.first ?? 0)
     }
 
     /// Adaptive font size: shrinks as the amount string grows longer
@@ -212,11 +206,20 @@ class CreateTransactionViewModel: ObservableObject {
         Double(amount.replacingOccurrences(of: ",", with: ".")) ?? 0
     }
 
+    /// Even-split shares in cents for the current roster, in slot order:
+    /// the user first (when included in the split), then `selectedFriends`
+    /// in order. Leftover cents land on the first slots, and the shares
+    /// always sum to `parsedAmount` exactly. `buildTransaction` and the
+    /// previews read the same array so what the user sees is what is saved.
+    var evenShares: [Double] {
+        MoneyMath.splitEvenly(parsedAmount, count: totalParticipantCount)
+    }
+
     /// My fair share of the total (evenly split)
     var myShareAmount: Double {
         guard totalParticipantCount > 0 else { return parsedAmount }
         if !youIncludedInSplit { return 0 }
-        return parsedAmount / Double(totalParticipantCount)
+        return evenShares.first ?? 0
     }
 
     /// Net lent amount: positive = I lent, negative = I borrowed
@@ -226,14 +229,7 @@ class CreateTransactionViewModel: ObservableObject {
 
     /// Formatted net lent/owed amount
     var netLentAmountFormatted: String {
-        let value = abs(netLentAmount)
-        let intPart = NumberFormatting.integerPart(value)
-        let decimal = value - Double(Int(value))
-        if decimal == 0 {
-            return intPart
-        } else {
-            return intPart + String(format: ".%02d", Int((decimal * 100).rounded()))
-        }
+        NumberFormatting.amount(netLentAmount)
     }
 
     /// Set default payer to "You" paying the full amount
@@ -502,12 +498,16 @@ class CreateTransactionViewModel: ObservableObject {
                     )
                 }
             } else {
-                let totalPeople = Double(totalParticipantCount)
-                let perPerson = total / totalPeople
-                myShare = youIncludedInSplit ? perPerson : 0
-                friendShares = selectedFriends.map { friend in
+                // Cent-exact even split: `evenShares` is in slot order
+                // (me first when included, then friends), so the shares
+                // sum to `total` with no lost or invented cent.
+                let shares = evenShares
+                let friendOffset = youIncludedInSplit ? 1 : 0
+                myShare = youIncludedInSplit ? (shares.first ?? 0) : 0
+                friendShares = selectedFriends.enumerated().map { (index, friend) in
                     let paidAmount = payers.first(where: { $0.id == friend.id })?.amount ?? 0
-                    return FriendShare(friendID: friend.id, share: perPerson, paidAmount: paidAmount)
+                    let share = index + friendOffset < shares.count ? shares[index + friendOffset] : 0
+                    return FriendShare(friendID: friend.id, share: share, paidAmount: paidAmount)
                 }
             }
 

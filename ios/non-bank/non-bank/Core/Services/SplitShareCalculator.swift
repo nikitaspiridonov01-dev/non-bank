@@ -38,6 +38,11 @@ enum SplitShareCalculator {
     /// participant up by a fraction.
     private static let zeroEpsilon: Double = 0.001
 
+    /// Order in which charge kinds are distributed. Shared with
+    /// `SplitItemBreakdown.chargeOrder`; changing one without the other
+    /// makes the breakdown rows stop reconciling with the shares.
+    static let chargeOrder: [ReceiptItem.Kind] = [.fee, .tip, .discount]
+
     /// Computes shares for a `byItems` split.
     ///
     /// - Parameters:
@@ -49,13 +54,11 @@ enum SplitShareCalculator {
     ///     guard against stale assignments after a participant was
     ///     removed from the split.
     ///
-    /// - Returns: Per-participant shares. Sum of returned values
-    ///   approximates the items' net total (sum of all `lineTotal`s),
-    ///   subject to floating-point arithmetic; small residual due to
-    ///   per-assignee rounding is left in place — callers that need
-    ///   exact balance against a target total should apply the same
-    ///   "give the rounding crumb to the last row" trick used in
-    ///   `WhoPaidPickerView.commitMultiSelect`.
+    /// - Returns: Per-participant shares, each a whole number of cents.
+    ///   Their sum equals the items' net total (sum of all assigned
+    ///   `lineTotal`s plus charges) rounded to cents, exactly: item slices
+    ///   and proportional cuts are allocated with `MoneyMath`, so no cent
+    ///   is lost to `x / n` arithmetic.
     static func compute(
         items: [ReceiptItem],
         participants: Set<String>
@@ -67,12 +70,15 @@ enum SplitShareCalculator {
         var directItemTotal: Double = 0
 
         // Pass 1 — direct items, equal-split between assignees.
+        // Each line is split into whole cents (`MoneyMath.splitEvenly`),
+        // so a 10.00 item shared by three is 3.34 + 3.33 + 3.33, not three
+        // times 3.333…; the leftover cent goes to the first assignee.
         for item in items where item.kind == .item {
             let assignees = item.assignedParticipantIDs.filter(participants.contains)
             guard !assignees.isEmpty else { continue }
-            let perAssignee = item.lineTotal / Double(assignees.count)
-            for id in assignees {
-                shares[id, default: 0] += perAssignee
+            let slices = MoneyMath.splitEvenly(item.lineTotal, count: assignees.count)
+            for (id, slice) in zip(assignees, slices) {
+                shares[id, default: 0] += slice
             }
             directItemTotal += item.lineTotal
         }
@@ -85,17 +91,21 @@ enum SplitShareCalculator {
         // would produce.
         guard directItemTotal > zeroEpsilon else { return shares }
 
-        let chargeKinds: Set<ReceiptItem.Kind> = [.fee, .tip, .discount]
-        let chargeSum = items
-            .filter { chargeKinds.contains($0.kind) }
-            .reduce(0) { $0 + $1.lineTotal }
-
-        guard abs(chargeSum) > zeroEpsilon else { return shares }
-
-        for id in participants {
-            let baseShare = shares[id] ?? 0
-            let proportion = baseShare / directItemTotal
-            shares[id, default: 0] += chargeSum * proportion
+        // Each charge kind is distributed separately, in a fixed order,
+        // in proportion to the pass-1 item base. Cuts are whole cents
+        // (largest remainder); participants are visited in sorted-ID
+        // order so the cent that cannot be split fairly lands on the
+        // same person every time. `SplitItemBreakdown` repeats exactly
+        // this sequence so its per-kind rows add up to these shares.
+        let orderedIDs = participants.sorted()
+        let base = orderedIDs.map { shares[$0] ?? 0 }
+        for kind in chargeOrder {
+            let kindSum = items.filter { $0.kind == kind }.reduce(0) { $0 + $1.lineTotal }
+            guard abs(kindSum) > zeroEpsilon else { continue }
+            let cuts = MoneyMath.allocate(kindSum, weights: base)
+            for (id, cut) in zip(orderedIDs, cuts) {
+                shares[id, default: 0] += cut
+            }
         }
 
         return shares

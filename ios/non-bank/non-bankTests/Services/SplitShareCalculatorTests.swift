@@ -203,6 +203,41 @@ final class SplitShareCalculatorTests: XCTestCase {
         XCTAssertEqual(result["bob"]!, 0, accuracy: 0.001)
     }
 
+    // MARK: - Cent exactness
+
+    func testCompute_sharedItem_splitsIntoWholeCents() {
+        // 10.00 shared by three: 3.34 + 3.33 + 3.33, never 3.333… ×3.
+        let items = [makeItem(name: "Nachos", total: 10, assignees: ["alice", "bob", "carol"])]
+        let result = SplitShareCalculator.compute(
+            items: items,
+            participants: ["alice", "bob", "carol"]
+        )
+        XCTAssertEqual(result["alice"], 3.34)
+        XCTAssertEqual(result["bob"], 3.33)
+        XCTAssertEqual(result["carol"], 3.33)
+        XCTAssertEqual(result.values.reduce(0, +), 10, accuracy: 1e-9)
+    }
+
+    func testCompute_everyShareIsWholeCents_andSumIsExact() {
+        let items = [
+            makeItem(name: "Pizza", total: 18.50, assignees: ["alice", "bob", "carol"]),
+            makeItem(name: "Pasta", total: 14.99, assignees: ["bob"]),
+            makeItem(name: "Wine", total: 22.10, assignees: ["alice", "bob"]),
+            makeItem(name: "Service fee", total: 5.55, assignees: []),
+            makeItem(name: "Tip", total: 4.44, assignees: []),
+            makeItem(name: "Discount", total: -3.33, assignees: [])
+        ]
+        let result = SplitShareCalculator.compute(
+            items: items,
+            participants: ["alice", "bob", "carol"]
+        )
+        for (id, share) in result {
+            XCTAssertEqual(share, MoneyMath.roundedToCents(share), accuracy: 1e-9, "\(id) share must be whole cents")
+        }
+        let expectedTotal = items.reduce(0) { $0 + $1.lineTotal }
+        XCTAssertEqual(MoneyMath.cents(result.values.reduce(0, +)), MoneyMath.cents(expectedTotal))
+    }
+
     func testCompute_sumOfShares_approximatesItemsTotal() {
         // Sanity: result should cover the whole receipt minus the VAT
         // line (within floating-point arithmetic). The charge names are

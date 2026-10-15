@@ -13,24 +13,41 @@ enum NumberFormatting {
         return f
     }()
 
-    /// Formatted absolute integer part with space-separated groups: "1 234"
+    /// Whole cents of `abs(value)`, rounded to the nearest cent. Every piece
+    /// below derives from this one number, so the integer part and the cents
+    /// always describe the same rounded amount: `12.996…` is "13" + ".00",
+    /// never "12" + ".00" or "12" + ".100".
+    private static func absCents(_ value: Double) -> Int {
+        abs(MoneyMath.cents(value))
+    }
+
+    /// Formatted absolute integer part with space-separated groups: "1 234".
+    /// Taken from the amount rounded to cents, so `12.996` → "13".
     static func integerPart(_ value: Double) -> String {
-        let intPart = Int(abs(value))
+        let intPart = absCents(value) / 100
         return groupedFormatter.string(from: NSNumber(value: intPart)) ?? "0"
     }
 
     /// Decimal part with leading dot: ".05"
     static func decimalPart(_ value: Double) -> String {
-        let rounded = (abs(value) * 100).rounded() / 100
-        let decimal = rounded - Double(Int(rounded))
-        return String(format: ".%02d", Int((decimal * 100).rounded()))
+        String(format: ".%02d", absCents(value) % 100)
     }
 
     /// Like `decimalPart` but returns an empty string when the cents are zero.
     /// E.g. 12.50 → ".50", 12.00 → "".
     static func decimalPartIfAny(_ value: Double) -> String {
-        let cents = Int((abs(value) * 100).rounded()) % 100
+        let cents = absCents(value) % 100
         return cents == 0 ? "" : String(format: ".%02d", cents)
+    }
+
+    /// Grouped absolute amount with cents only when non-zero: "1 234.50", "15".
+    static func amount(_ value: Double) -> String {
+        integerPart(value) + decimalPartIfAny(value)
+    }
+
+    /// Grouped absolute amount that always carries two decimals: "1 234.50", "15.00".
+    static func amountWithCents(_ value: Double) -> String {
+        integerPart(value) + decimalPart(value)
     }
 
     /// Balance sign: "+" for positive, "-" for negative/zero

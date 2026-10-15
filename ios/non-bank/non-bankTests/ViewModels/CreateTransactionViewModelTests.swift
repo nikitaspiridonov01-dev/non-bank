@@ -181,6 +181,53 @@ final class CreateTransactionViewModelTests: XCTestCase {
         XCTAssertEqual(tx?.type, .income)
     }
 
+    // MARK: - Even split in whole cents
+
+    func testBuildTransaction_evenSplit_sharesAreWholeCentsAndSumToTotal() {
+        // 38.99 between me and two friends. Before the fix each share was
+        // 12.996666… (shown as "12"); now 13.00 / 13.00 / 12.99.
+        sut.amount = "38.99"
+        sut.selectedCategory = TestFixtures.makeCategory(emoji: "🍽️", title: "Food")
+        sut.isSplitMode = true
+        sut.splitMode = .evenly
+        sut.youIncludedInSplit = true
+        sut.selectedFriends = [Friend(id: "f1", name: "Lera"), Friend(id: "f2", name: "Max")]
+        sut.setDefaultPayer()
+
+        let split = sut.buildTransaction(editingId: nil)?.splitInfo
+        XCTAssertNotNil(split)
+        XCTAssertEqual(split?.myShare, 13.00)
+        XCTAssertEqual(split?.friends.map(\.share), [13.00, 12.99])
+        let sum = (split?.myShare ?? 0) + (split?.friends.reduce(0) { $0 + $1.share } ?? 0)
+        XCTAssertEqual(sum, 38.99, accuracy: 1e-9)
+        XCTAssertEqual(split?.lentAmount ?? 0, 25.99, accuracy: 1e-9)
+    }
+
+    func testBuildTransaction_evenSplit_userExcluded_friendsCarryTheCents() {
+        sut.amount = "100"
+        sut.selectedCategory = TestFixtures.makeCategory()
+        sut.isSplitMode = true
+        sut.splitMode = .evenly
+        sut.youIncludedInSplit = false
+        sut.selectedFriends = [Friend(id: "f1", name: "A"), Friend(id: "f2", name: "B"), Friend(id: "f3", name: "C")]
+        sut.setDefaultPayer()
+
+        let split = sut.buildTransaction(editingId: nil)?.splitInfo
+        XCTAssertEqual(split?.myShare, 0)
+        XCTAssertEqual(split?.friends.map(\.share), [33.34, 33.33, 33.33])
+    }
+
+    func testPerPersonPreview_matchesSavedShare() {
+        sut.amount = "38.99"
+        sut.isSplitMode = true
+        sut.youIncludedInSplit = true
+        sut.selectedFriends = [Friend(id: "f1", name: "Lera"), Friend(id: "f2", name: "Max")]
+        XCTAssertEqual(sut.perPersonAmountFormatted, "13")
+        XCTAssertEqual(sut.myShareAmount, 13.00)
+        sut.setDefaultPayer()
+        XCTAssertEqual(sut.netLentAmountFormatted, "25.99")
+    }
+
     // MARK: - Populate
 
     func testPopulate_fromTransaction() {

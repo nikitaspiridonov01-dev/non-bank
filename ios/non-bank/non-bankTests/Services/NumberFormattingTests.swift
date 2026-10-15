@@ -40,6 +40,39 @@ final class NumberFormattingTests: XCTestCase {
         XCTAssertEqual(NumberFormatting.decimalPart(-50.75), ".75")
     }
 
+    // MARK: - Values with more than two decimals (even-split shares)
+    //
+    // 38.99 / 3 = 12.996666… used to render as "12" + ".00": the integer
+    // part was truncated while the cents were rounded separately. Both
+    // pieces now come from the same rounding, so it reads "13" + ".00".
+
+    func testIntegerPart_roundsUpWhenCentsCarry() {
+        XCTAssertEqual(NumberFormatting.integerPart(12.996666), "13")
+        XCTAssertEqual(NumberFormatting.integerPart(0.996666), "1")
+        XCTAssertEqual(NumberFormatting.integerPart(999.995), "1 000")
+    }
+
+    func testDecimalPart_whenCentsCarry() {
+        XCTAssertEqual(NumberFormatting.decimalPart(12.996666), ".00")
+        XCTAssertEqual(NumberFormatting.decimalPart(33.333333), ".33")
+        XCTAssertEqual(NumberFormatting.decimalPart(16.995), ".00")
+    }
+
+    func testDecimalPartIfAny_whenCentsCarry() {
+        XCTAssertEqual(NumberFormatting.decimalPartIfAny(12.996666), "")
+        XCTAssertEqual(NumberFormatting.decimalPartIfAny(12.50), ".50")
+        XCTAssertEqual(NumberFormatting.decimalPartIfAny(12.004), "")
+        XCTAssertEqual(NumberFormatting.decimalPartIfAny(12.005), ".01")
+    }
+
+    func testAmount_combinesBothPartsConsistently() {
+        XCTAssertEqual(NumberFormatting.amount(12.996666), "13")
+        XCTAssertEqual(NumberFormatting.amount(1234.5), "1 234.50")
+        XCTAssertEqual(NumberFormatting.amount(-7.25), "7.25")
+        XCTAssertEqual(NumberFormatting.amountWithCents(12.996666), "13.00")
+        XCTAssertEqual(NumberFormatting.amountWithCents(1234.5), "1 234.50")
+    }
+
     // MARK: - balanceSign
 
     func testBalanceSign_positive() {

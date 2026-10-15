@@ -1294,14 +1294,7 @@ struct WhoPaidPickerView: View {
     }
 
     static func formatDisplay(_ value: Double) -> String {
-        if value.truncatingRemainder(dividingBy: 1) == 0 {
-            let intVal = Int(value)
-            return NumberFormatting.integerPart(Double(intVal))
-        } else {
-            let intPart = NumberFormatting.integerPart(Double(Int(value)))
-            let decimal = value - Double(Int(value))
-            return intPart + String(format: ".%02d", Int((decimal * 100).rounded()))
-        }
+        NumberFormatting.amount(value)
     }
 
     static func formatForInput(_ value: Double) -> String {

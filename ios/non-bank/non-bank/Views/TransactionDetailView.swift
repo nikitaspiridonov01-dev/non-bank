@@ -1195,19 +1195,11 @@ struct TransactionDetailView: View {
     /// Format amount with decimals if needed
     /// Always includes cents (e.g. "116.80")
     private func formatAmountWithCents(_ value: Double) -> String {
-        let intPart = NumberFormatting.integerPart(value)
-        let cents = Int((abs(value) * 100).rounded()) % 100
-        return "\(intPart).\(String(format: "%02d", cents))"
+        NumberFormatting.amountWithCents(value)
     }
 
     private func formatAmount(_ value: Double) -> String {
-        let intPart = NumberFormatting.integerPart(value)
-        let decimal = abs(value) - Double(Int(abs(value)))
-        if decimal < 0.005 {
-            return intPart
-        }
-        let cents = Int((decimal * 100).rounded())
-        return "\(intPart).\(String(format: "%02d", cents))"
+        NumberFormatting.amount(value)
     }
 
     // MARK: - Receipt items section

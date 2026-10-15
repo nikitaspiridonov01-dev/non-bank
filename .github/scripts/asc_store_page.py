@@ -21,7 +21,7 @@ import requests
 
 BASE = "https://api.appstoreconnect.apple.com/v1"
 BUNDLE_ID = os.environ.get("ASC_BUNDLE_ID", "nikitaspiridonov.non-bank")
-TARGET = os.environ.get("TARGET_VERSION", "1.0.2")
+TARGET = os.environ.get("TARGET_VERSION", "1.0.3")
 MODE = os.environ.get("MODE", "metadata")
 DRY = os.environ.get("DRY_RUN", "0") == "1"
 SECONDARY_CATEGORY = os.environ.get("SECONDARY_CATEGORY", "UTILITIES")
@@ -57,9 +57,9 @@ Non Bank is for people who want to understand their money and settle up with fri
 
 Got an idea, or something you'd love Non Bank to do? Write to nonbankapp@gmail.com — every suggestion shapes what comes next."""
 
-WHATS_NEW_EN = ("• Refreshed App Store page\n"
-                "• Non Bank can now ask for a rating after a split — once, and only if you're enjoying it\n"
-                "• Friend balances reflect only the money that moved between you and that friend")
+WHATS_NEW_EN = ("• Split shares are now exact to the cent — no more lost or rounded-away cents
+"
+                "• Amounts with fractions display consistently on every screen")
 
 LOCALES = {
     "en-US": {
@@ -97,9 +97,8 @@ LOCALES = {
 • Экспорт в CSV или JSON в любой момент
 
 Идеи и пожелания: nonbankapp@gmail.com""",
-        "whatsNew": ("• Обновлённая страница в App Store\n"
-                     "• Приложение может один раз попросить оценку после сплита\n"
-                     "• Баланс с другом учитывает только движение денег между вами"),
+        "whatsNew": ("• Доли при разделении считаются с точностью до копейки, ничего не теряется\n"
+                     "• Суммы с дробной частью показываются одинаково на всех экранах"),
     },
     "es-MX": {
         "name": "Non Bank: Gastos y Cuentas",
@@ -128,9 +127,8 @@ PRIVADO POR DISEÑO
 • Exporta todo en CSV o JSON cuando quieras
 
 ¿Ideas? Escríbenos a nonbankapp@gmail.com""",
-        "whatsNew": ("• Página de App Store renovada\n"
-                     "• La app puede pedirte una valoración una vez después de dividir una cuenta\n"
-                     "• El saldo con un amigo refleja solo el dinero que se movió entre ustedes"),
+        "whatsNew": ("• Las partes de una división ahora son exactas al centavo, sin céntimos perdidos\n"
+                     "• Los importes con decimales se muestran igual en toda la app"),
     },
     "de-DE": {
         "name": "Non Bank: Ausgaben & Teilen",
@@ -159,9 +157,8 @@ PRIVAT BY DESIGN
 • Export als CSV oder JSON jederzeit
 
 Ideen? Schreib an nonbankapp@gmail.com""",
-        "whatsNew": ("• Überarbeitete App-Store-Seite\n"
-                     "• Die App kann nach einer Aufteilung einmal um eine Bewertung bitten\n"
-                     "• Der Saldo mit einem Freund zeigt nur das Geld, das zwischen euch geflossen ist"),
+        "whatsNew": ("• Anteile beim Aufteilen sind jetzt auf den Cent genau, kein Cent geht verloren\n"
+                     "• Beträge mit Nachkommastellen werden überall einheitlich angezeigt"),
     },
     "fr-FR": {
         "name": "Non Bank: Dépenses & Partage",
@@ -190,9 +187,8 @@ PRIVÉ PAR CONCEPTION
 • Export CSV ou JSON à tout moment
 
 Des idées ? Écrivez à nonbankapp@gmail.com""",
-        "whatsNew": ("• Page App Store repensée\n"
-                     "• L'app peut vous demander une note une fois après un partage\n"
-                     "• Le solde avec un ami ne reflète que l'argent échangé entre vous"),
+        "whatsNew": ("• Les parts d'un partage sont désormais exactes au centime, plus de centimes perdus\n"
+                     "• Les montants avec décimales s'affichent de la même façon partout"),
     },
 }
 

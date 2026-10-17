@@ -12,6 +12,8 @@
 //   handleSitemap()      — GET /sitemap.xml
 //   handleOgImage()      — GET /og.png            (1200×630 link-preview card)
 //   handleIcon()         — GET /icon.png, /apple-touch-icon.png, /favicon.ico
+//   handleSiteFile(path) — GET /<IndexNow key>.txt and Google's verification
+//                          file; returns null for any other path
 
 import { OG_PNG_B64, ICON_PNG_B64 } from "./site_assets.ts";
 
@@ -170,4 +172,32 @@ export function handleOgImage(): Response {
 
 export function handleIcon(): Response {
   return pngResponse(ICON_PNG_B64);
+}
+
+/** IndexNow key (https://www.indexnow.org). Public by design: search engines
+ *  fetch `/<key>.txt` to confirm a submission came from the site owner. Used
+ *  by `.github/scripts/indexnow.py` to push URLs to Bing, Yandex, Seznam, Naver. */
+export const INDEXNOW_KEY = "3e18e1e9475715331eba86967071f0ff";
+
+/** Google Search Console HTML-file verification tokens (one per verified
+ *  owner). Public by design: Google fetches the file to confirm ownership,
+ *  and removing it un-verifies that owner. */
+export const GOOGLE_VERIFICATION_FILES: ReadonlyArray<string> = [];
+
+/** Small public text files that prove site ownership to search engines. */
+export function handleSiteFile(path: string): Response | null {
+  const name = path.replace(/^\//, "");
+  if (name === `${INDEXNOW_KEY}.txt`) {
+    return new Response(INDEXNOW_KEY, {
+      status: 200,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": TEXT_CACHE },
+    });
+  }
+  if (GOOGLE_VERIFICATION_FILES.includes(name)) {
+    return new Response(`google-site-verification: ${name}`, {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" },
+    });
+  }
+  return null;
 }

@@ -8,7 +8,7 @@ import { handleSharePage } from "./share.ts";
 import { handlePrivacyPage } from "./privacy.ts";
 import { handleSupportPage } from "./support.ts";
 import { handleLandingPage } from "./landing.ts";
-import { handleRobots, handleSitemap, handleOgImage, handleIcon } from "./seo.ts";
+import { handleRobots, handleSitemap, handleOgImage, handleIcon, handleSiteFile } from "./seo.ts";
 import {
   handleUploadShareItems,
   handleFetchShareItems,
@@ -227,6 +227,8 @@ export default {
           case "/favicon.ico":
             return handleIcon();
         }
+        const siteFile = handleSiteFile(url.pathname);
+        if (siteFile) return siteFile;
       }
       // Server-mediated sync — Phase 0: record a friend pairing after a
       // real user opens a share link. App-Attest-gated + per-IP rate-

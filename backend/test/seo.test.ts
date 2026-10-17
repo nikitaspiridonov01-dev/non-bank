@@ -11,6 +11,8 @@ import {
   SITE_PAGES,
   SITE_URL,
   APP_STORE_ID,
+  INDEXNOW_KEY,
+  handleSiteFile,
 } from "../src/seo.ts";
 
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
@@ -114,5 +116,16 @@ describe("images", () => {
     const bytes = new Uint8Array(await res.arrayBuffer());
     expect(Array.from(bytes.slice(0, 8))).toEqual(PNG_MAGIC);
     expect(bytes.length).toBeGreaterThan(10_000);
+  });
+});
+
+describe("ownership files", () => {
+  it("serves the IndexNow key file and nothing else", async () => {
+    expect(INDEXNOW_KEY).toMatch(/^[0-9a-f]{32}$/);
+    const res = handleSiteFile(`/${INDEXNOW_KEY}.txt`);
+    expect(res).not.toBeNull();
+    expect(await res!.text()).toBe(INDEXNOW_KEY);
+    expect(handleSiteFile("/other.txt")).toBeNull();
+    expect(handleSiteFile("/google0000.html")).toBeNull();
   });
 });

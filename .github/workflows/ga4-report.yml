@@ -13,8 +13,12 @@ on:
         description: "Lookback window in days"
         required: false
         default: "30"
+      owner_email:
+        description: "gsc_owner only: Google account to add as a Search Console owner"
+        required: false
+        default: ""
       report:
-        description: "all | daily | events | versions | friend_detail | screens | audience | retention"
+        description: "all | daily | events | versions | friend_detail | screens | audience | retention | gsc_probe | gsc_token | gsc_verify | gsc_submit | gsc_status | gsc_owner"
         required: false
         default: "all"
   push:
@@ -46,4 +50,11 @@ jobs:
           GA4_PROPERTY_ID: ${{ secrets.GA4_PROPERTY_ID || '540029267' }}
           DAYS: ${{ inputs.days || '30' }}
           REPORT: ${{ inputs.report || 'all' }}
-        run: python .github/scripts/ga4_report.py --days "$DAYS" --report "$REPORT"
+          OWNER_EMAIL: ${{ inputs.owner_email || '' }}
+        run: |
+          # gsc_* modes drive Search Console through the same service account
+          # (see .github/scripts/search_console.py); everything else is GA4.
+          case "$REPORT" in
+            gsc_*) python .github/scripts/search_console.py --mode "${REPORT#gsc_}" ;;
+            *)     python .github/scripts/ga4_report.py --days "$DAYS" --report "$REPORT" ;;
+          esac

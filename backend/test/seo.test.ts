@@ -128,4 +128,10 @@ describe("ownership files", () => {
     expect(handleSiteFile("/other.txt")).toBeNull();
     expect(handleSiteFile("/google0000.html")).toBeNull();
   });
+
+  it("serves Google's verification file with the exact body Google expects", async () => {
+    const res = handleSiteFile("/googleb9b14a1f82881a17.html");
+    expect(res).not.toBeNull();
+    expect(await res!.text()).toBe("google-site-verification: googleb9b14a1f82881a17.html");
+  });
 });

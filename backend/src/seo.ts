@@ -182,7 +182,9 @@ export const INDEXNOW_KEY = "3e18e1e9475715331eba86967071f0ff";
 /** Google Search Console HTML-file verification tokens (one per verified
  *  owner). Public by design: Google fetches the file to confirm ownership,
  *  and removing it un-verifies that owner. */
-export const GOOGLE_VERIFICATION_FILES: ReadonlyArray<string> = [];
+export const GOOGLE_VERIFICATION_FILES: ReadonlyArray<string> = [
+  "googleb9b14a1f82881a17.html", // ga4-reader@non-bank-69eb0 service account (Search Console API)
+];
 
 /** Small public text files that prove site ownership to search engines. */
 export function handleSiteFile(path: string): Response | null {

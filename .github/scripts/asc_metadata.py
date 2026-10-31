@@ -50,6 +50,22 @@ def main():
     cats = {k: (rel.get(k, {}).get("data") or {}).get("id") for k in ("primaryCategory", "secondaryCategory")}
     print(f"appInfo state: {live['attributes'].get('appStoreState')}  categories: {cats}")
     print(f"age rating: {live['attributes'].get('appStoreAgeRating')}")
+    # Age-rating questionnaire for every appInfo (the live one and the one
+    # being edited for the next version). Unanswered questions block "Add
+    # for Review" — print them so they can be answered in App Information.
+    for info in infos:
+        state = info["attributes"].get("appStoreState") or info["attributes"].get("state")
+        try:
+            decl = get(f"/appInfos/{info['id']}/ageRatingDeclaration")["data"]
+        except Exception as e:  # noqa: BLE001 — diagnostics only
+            print(f"\n##### age rating declaration ({state}): unavailable: {e}")
+            continue
+        attrs = decl.get("attributes", {})
+        unanswered = sorted(k for k, v in attrs.items() if v is None)
+        print(f"\n##### age rating declaration for appInfo {info['id']} ({state})")
+        for k in sorted(attrs):
+            print(f"  {k}: {attrs[k]}")
+        print(f"  UNANSWERED: {unanswered or 'none'}")
     for loc in get(f"/appInfos/{live['id']}/appInfoLocalizations")["data"]:
         a = loc["attributes"]
         print(f"\n===== appInfo localization {a['locale']} =====")

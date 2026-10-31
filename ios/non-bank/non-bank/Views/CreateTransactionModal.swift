@@ -1094,15 +1094,11 @@ struct CreateTransactionModal: View {
     }
 
     /// Multi-image gallery scan. Each photo runs through the hybrid
-    /// parser independently, then we stitch the per-image results into
-    /// a single `ParsedReceipt`:
-    ///   - items: concatenated in the order the user picked the photos
-    ///   - totalAmount: sum of per-image totals (best the parser could
-    ///     do for each strip); the review screen lets the user correct
-    ///   - storeName / date / suggestedCategory: first non-nil wins
-    ///   - confidence: lowest seen across the batch (a single low-conf
-    ///     strip should drag the whole receipt down)
-    ///   - source: cloud if any image went through cloud, OCR otherwise
+    /// parser independently, then `ReceiptScanMerger` stitches the
+    /// per-image results into a single `ParsedReceipt`: scroll-overlap
+    /// duplicates removed at each seam, the printed grand total picked
+    /// from the photo that carries it (never a sum of per-photo totals),
+    /// and the total used as a checksum to settle ambiguous lines.
     ///
     /// If every image fails we surface the error from the first one —
     /// partial success (e.g. 2 of 3 succeeded) still continues to the
@@ -1157,68 +1153,10 @@ struct CreateTransactionModal: View {
     }
 
     /// Stitch N per-photo parse results into one consolidated
-    /// `HybridReceiptParser.Result`. Pulled out as a static so it
-    /// stays unit-testable without instantiating the modal.
+    /// `HybridReceiptParser.Result`. Kept as the entry point both scan
+    /// flows call; the logic lives in `ReceiptScanMerger`.
     static func mergeScanResults(_ results: [HybridReceiptParser.Result]) -> HybridReceiptParser.Result {
-        precondition(!results.isEmpty, "Caller must pass at least one result")
-        if results.count == 1 { return results[0] }
-
-        let allItems = results.flatMap { $0.parsedReceipt.items }
-        let totalSum = results.compactMap { $0.parsedReceipt.totalAmount }.reduce(0, +)
-        let firstStoreName = results.compactMap { $0.parsedReceipt.storeName }.first
-        let firstDate = results.compactMap { $0.parsedReceipt.date }.first
-        let firstCurrency = results.compactMap { $0.parsedReceipt.currency }.first
-        let firstCategory = results.compactMap { $0.parsedReceipt.suggestedCategory }.first
-        let lowestConfidence = results.map { $0.confidence }.min(by: { confidenceRank($0) < confidenceRank($1) })
-            ?? .low
-        let anyCloud = results.contains { result in
-            if case .cloud = result.source { return true }
-            return false
-        }
-        let mergedSource: HybridReceiptParser.Source
-        if anyCloud {
-            // Pick the first cloud source so the review screen surfaces
-            // a real provider string instead of an aggregated fake one.
-            mergedSource = results.first(where: { result in
-                if case .cloud = result.source { return true }
-                return false
-            })?.source ?? .ocrFallback
-        } else {
-            mergedSource = .ocrFallback
-        }
-
-        let parsed = ParsedReceipt(
-            storeName: firstStoreName,
-            date: firstDate,
-            items: allItems,
-            totalAmount: totalSum > 0 ? totalSum : nil,
-            currency: firstCurrency,
-            suggestedCategory: firstCategory
-        )
-        return HybridReceiptParser.Result(
-            parsedReceipt: parsed,
-            confidence: lowestConfidence,
-            // Totals are heuristic on multi-image stitches; flag a
-            // mismatch so the review screen tells the user to double
-            // check rather than silently committing the sum.
-            totalsMatch: false,
-            source: mergedSource,
-            // For multi-image stitches the attempts-count is the
-            // worst across the batch — surfaces the messiest cloud
-            // run rather than averaging it away.
-            attemptedProvidersCount: results.map { $0.attemptedProvidersCount }.max() ?? 1
-        )
-    }
-
-    /// Ranking helper for `Confidence` so the multi-image merger can
-    /// pick the lowest value across a batch. Higher number = higher
-    /// confidence — pure ordering, never persisted.
-    static func confidenceRank(_ c: HybridReceiptParser.Confidence) -> Int {
-        switch c {
-        case .low:    return 0
-        case .medium: return 1
-        case .high:   return 2
-        }
+        ReceiptScanMerger.merge(results)
     }
 
     /// Toolbar action button: confirm (checkmark) when an amount has been

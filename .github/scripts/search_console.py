@@ -101,10 +101,41 @@ def submit(s):
     show("sitemaps.submit", s.put(f"{WM}/sites/{enc(SITE)}/sitemaps/{enc(SITEMAP)}"))
 
 
+INSPECT = "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect"
+PAGES = ["https://non-bank.app/", "https://non-bank.app/support", "https://non-bank.app/privacy"]
+
+
 def status(s):
     show("sites.list", s.get(f"{WM}/sites"))
     show("sitemaps.list", s.get(f"{WM}/sites/{enc(SITE)}/sitemaps"))
     show("webResource.list", s.get(f"{SV}/webResource"))
+    # Per-page index state, the same data as "URL inspection" in the UI.
+    for url in PAGES:
+        r = s.post(INSPECT, json={"inspectionUrl": url, "siteUrl": SITE})
+        if not r.ok:
+            show(f"inspect {url}", r)
+            continue
+        idx = r.json().get("inspectionResult", {}).get("indexStatusResult", {})
+        print(f"inspect {url}: verdict={idx.get('verdict')} coverage={idx.get('coverageState')!r} "
+              f"lastCrawl={idx.get('lastCrawlTime')} robots={idx.get('robotsTxtState')} "
+              f"fetch={idx.get('pageFetchState')} canonical={idx.get('googleCanonical')}")
+    # Search performance over the last 28 days (Search Console lags ~2 days).
+    import datetime as dt
+    end = dt.date.today() - dt.timedelta(days=2)
+    start = end - dt.timedelta(days=27)
+    for dim in ("date", "query", "page"):
+        r = s.post(f"{WM}/sites/{enc(SITE)}/searchAnalytics/query", json={
+            "startDate": start.isoformat(), "endDate": end.isoformat(),
+            "dimensions": [dim], "rowLimit": 25,
+        })
+        if not r.ok:
+            show(f"searchAnalytics {dim}", r)
+            continue
+        rows = r.json().get("rows", [])
+        print(f"searchAnalytics by {dim} {start}..{end}: {len(rows)} rows")
+        for row in rows:
+            print(f"  {row['keys'][0]:<40} clicks={row['clicks']:.0f} impressions={row['impressions']:.0f} "
+                  f"position={row['position']:.1f}")
 
 
 def owner(s):

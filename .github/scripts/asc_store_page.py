@@ -21,7 +21,7 @@ import requests
 
 BASE = "https://api.appstoreconnect.apple.com/v1"
 BUNDLE_ID = os.environ.get("ASC_BUNDLE_ID", "nikitaspiridonov.non-bank")
-TARGET = os.environ.get("TARGET_VERSION", "1.0.3")
+TARGET = os.environ.get("TARGET_VERSION", "1.0.4")
 MODE = os.environ.get("MODE", "metadata")
 DRY = os.environ.get("DRY_RUN", "0") == "1"
 SECONDARY_CATEGORY = os.environ.get("SECONDARY_CATEGORY", "UTILITIES")
@@ -57,8 +57,8 @@ Non Bank is for people who want to understand their money and settle up with fri
 
 Got an idea, or something you'd love Non Bank to do? Write to nonbankapp@gmail.com — every suggestion shapes what comes next."""
 
-WHATS_NEW_EN = ("• Split shares are now exact to the cent — no more lost or rounded-away cents\n"
-                "• Amounts with fractions display consistently on every screen")
+WHATS_NEW_EN = ("• Receipts scanned from several screenshots now pick up the real total — no more false \"Prices don't add up\" warnings\n"
+                "• Lines that show up on two screenshots while scrolling are counted once")
 
 LOCALES = {
     "en-US": {
@@ -96,8 +96,8 @@ LOCALES = {
 • Экспорт в CSV или JSON в любой момент
 
 Идеи и пожелания: nonbankapp@gmail.com""",
-        "whatsNew": ("• Доли при разделении считаются с точностью до копейки, ничего не теряется\n"
-                     "• Суммы с дробной частью показываются одинаково на всех экранах"),
+        "whatsNew": ("• Чек из нескольких скриншотов: итог берётся с того скриншота, где он напечатан, без ложного предупреждения о несходящихся суммах\n"
+                     "• Позиции, попавшие на два скриншота при прокрутке, считаются один раз"),
     },
     "es-MX": {
         "name": "Non Bank: Gastos y Cuentas",
@@ -126,8 +126,8 @@ PRIVADO POR DISEÑO
 • Exporta todo en CSV o JSON cuando quieras
 
 ¿Ideas? Escríbenos a nonbankapp@gmail.com""",
-        "whatsNew": ("• Las partes de una división ahora son exactas al centavo, sin céntimos perdidos\n"
-                     "• Los importes con decimales se muestran igual en toda la app"),
+        "whatsNew": ("• Al escanear un recibo en varias capturas se toma el total correcto, sin avisos falsos de importes que no cuadran\n"
+                     "• Los artículos que aparecen en dos capturas al desplazarte se cuentan una sola vez"),
     },
     "de-DE": {
         "name": "Non Bank: Ausgaben & Teilen",
@@ -156,8 +156,8 @@ PRIVAT BY DESIGN
 • Export als CSV oder JSON jederzeit
 
 Ideen? Schreib an nonbankapp@gmail.com""",
-        "whatsNew": ("• Anteile beim Aufteilen sind jetzt auf den Cent genau, kein Cent geht verloren\n"
-                     "• Beträge mit Nachkommastellen werden überall einheitlich angezeigt"),
+        "whatsNew": ("• Beleg aus mehreren Screenshots: Die richtige Gesamtsumme wird erkannt, ohne falsche Warnung, dass die Beträge nicht passen\n"
+                     "• Positionen, die beim Scrollen auf zwei Screenshots landen, werden nur einmal gezählt"),
     },
     "fr-FR": {
         "name": "Non Bank: Dépenses & Partage",
@@ -186,8 +186,8 @@ PRIVÉ PAR CONCEPTION
 • Export CSV ou JSON à tout moment
 
 Des idées ? Écrivez à nonbankapp@gmail.com""",
-        "whatsNew": ("• Les parts d'un partage sont désormais exactes au centime, plus de centimes perdus\n"
-                     "• Les montants avec décimales s'affichent de la même façon partout"),
+        "whatsNew": ("• Ticket sur plusieurs captures : le bon total est retenu, sans fausse alerte de montants qui ne correspondent pas\n"
+                     "• Les articles visibles sur deux captures pendant le défilement ne sont comptés qu'une fois"),
     },
 }
 

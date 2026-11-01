@@ -127,7 +127,9 @@ enum ReceiptScanMerger {
             poolRemaining: results.compactMap(\.poolRemaining).min(),
             poolLow: results.contains { $0.poolLow },
             reconciliationPasses: results.map(\.reconciliationPasses).max() ?? 1,
-            cloudFallbackReason: results.compactMap(\.cloudFallbackReason).first
+            cloudFallbackReason: results.compactMap(\.cloudFallbackReason).first,
+            layout: results.contains(where: { $0.layout == .framed }) ? .framed
+                : results.contains(where: { $0.layout == .tiled }) ? .tiled : .whole
         )
     }
 

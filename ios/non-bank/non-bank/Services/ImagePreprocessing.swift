@@ -1,5 +1,6 @@
 import UIKit
 import CoreImage
+import Vision
 
 /// Shared image-preparation helpers used by every receipt-parsing path
 /// (cloud upload, local Vision OCR, Foundation Models).
@@ -127,6 +128,55 @@ enum ImagePreprocessing {
             bands.append(sharpenedForOCR(scaled))
         }
         return bands.count > 1 ? bands : nil
+    }
+
+    // MARK: - Receipt framing
+
+    /// Long-edge cap for the copy Vision scans to find the receipt. Finding
+    /// text needs only coarse geometry, but the print of a long receipt shot
+    /// from far away is small: 3072 keeps it above the detector's floor
+    /// while bounding the extra buffer (~28 MB) like the other caps do.
+    static let framingProbeMaxDimension: CGFloat = 3072
+
+    /// The receipt cut out of a photo: full height, with the empty table on
+    /// either side cropped away (see `ReceiptFraming`). nil when there is
+    /// nothing worth cropping or Vision can't tell where the receipt is —
+    /// callers then use the photo as it is.
+    static func receiptFramed(_ image: UIImage) -> UIImage? {
+        let normalized = orientationNormalized(image)
+        guard let cg = normalized.cgImage,
+              let rect = receiptFrame(normalized: normalized, pixels: cg),
+              let cropped = cg.cropping(to: rect)
+        else { return nil }
+        return UIImage(cgImage: cropped)
+    }
+
+    /// Pixel rect of the receipt in the orientation-normalised image (what
+    /// `receiptFramed` crops to), or nil.
+    static func receiptFrame(in image: UIImage) -> CGRect? {
+        let normalized = orientationNormalized(image)
+        guard let cg = normalized.cgImage else { return nil }
+        return receiptFrame(normalized: normalized, pixels: cg)
+    }
+
+    private static func receiptFrame(normalized: UIImage, pixels cg: CGImage) -> CGRect? {
+        let size = CGSize(width: cg.width, height: cg.height)
+        guard size.width > 0, size.height > 0,
+              let probe = downscaled(normalized, maxDimension: framingProbeMaxDimension).cgImage
+        else { return nil }
+        // Text *detection*, not recognition: script-agnostic (Cyrillic as
+        // well as Latin) and fast, since only where the text is matters.
+        let request = VNDetectTextRectanglesRequest()
+        let handler = VNImageRequestHandler(cgImage: probe, orientation: .up, options: [:])
+        do { try handler.perform([request]) } catch { return nil }
+        // Vision's boxes are normalised with a bottom-left origin.
+        let boxes = (request.results ?? []).map { observation in
+            let box = observation.boundingBox
+            return CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height)
+        }
+        guard let column = ReceiptFraming.receiptColumn(textBoxes: boxes, imageSize: size) else { return nil }
+        return CGRect(x: column.lowerBound, y: 0,
+                      width: column.upperBound - column.lowerBound, height: size.height).integral
     }
 
     /// Re-render the image upright so `cgImage` pixel cropping aligns

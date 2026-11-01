@@ -292,4 +292,16 @@ final class ReceiptScanMergerTests: XCTestCase {
         XCTAssertEqual(names(merged), ["Apple", "Bread"])
         XCTAssertEqual(merged.parsedReceipt.totalAmount, 999)
     }
+
+    /// Analytics: the merged scan reports the most involved way any of its
+    /// photos went to the AI (framed > tiled > whole).
+    func testLayout_reportsTheMostInvolvedPhoto() {
+        var framed = photo([item("Apple", 100)])
+        framed.layout = .framed
+        var tiled = photo([item("Bread", 200)], total: 300)
+        tiled.layout = .tiled
+        XCTAssertEqual(ReceiptScanMerger.merge([photo([item("Milk", 50)]), framed, tiled]).layout, .framed)
+        XCTAssertEqual(ReceiptScanMerger.merge([photo([item("Milk", 50)]), tiled]).layout, .tiled)
+        XCTAssertEqual(ReceiptScanMerger.merge([photo([item("Milk", 50)]), photo([item("Egg", 20)])]).layout, .whole)
+    }
 }

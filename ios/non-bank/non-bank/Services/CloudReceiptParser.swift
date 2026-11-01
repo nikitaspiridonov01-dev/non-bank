@@ -78,7 +78,8 @@ actor CloudReceiptParser {
         categories: [(name: String, emoji: String?)],
         localeIdentifier: String?,
         excludeProvider: String? = nil,
-        maxUploadDimension: CGFloat? = nil
+        maxUploadDimension: CGFloat? = nil,
+        band: Bool = false
     ) async throws -> Result {
         let endpoint = backendURL.appendingPathComponent("v1/parse-receipt")
         let imageData = try Self.prepareImage(
@@ -97,7 +98,8 @@ actor CloudReceiptParser {
             deviceID: deviceID,
             categories: categories,
             localeIdentifier: localeIdentifier,
-            excludeProvider: excludeProvider
+            excludeProvider: excludeProvider,
+            band: band
         )
 
         // App Attest: attach the device-attestation assertion headers so
@@ -223,13 +225,14 @@ actor CloudReceiptParser {
 
     // MARK: - Multipart body
 
-    private static func buildMultipartBody(
+    static func buildMultipartBody(
         boundary: String,
         imageData: Data,
         deviceID: String,
         categories: [(name: String, emoji: String?)],
         localeIdentifier: String?,
-        excludeProvider: String?
+        excludeProvider: String?,
+        band: Bool = false
     ) -> Data {
         var body = Data()
         let crlf = "\r\n"
@@ -279,6 +282,17 @@ actor CloudReceiptParser {
             body.append(boundaryStart.data(using: .utf8)!)
             body.append("Content-Disposition: form-data; name=\"exclude_provider\"\(crlf)\(crlf)".data(using: .utf8)!)
             body.append(excludeProvider.data(using: .utf8)!)
+            body.append(crlf.data(using: .utf8)!)
+        }
+
+        // band part — the image is one slice of a tall receipt, so "no
+        // items" is a valid answer (header- or footer-only slice) rather
+        // than a misread to retry across every model. Older backends
+        // ignore unknown fields.
+        if band {
+            body.append(boundaryStart.data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"band\"\(crlf)\(crlf)".data(using: .utf8)!)
+            body.append("1".data(using: .utf8)!)
             body.append(crlf.data(using: .utf8)!)
         }
 

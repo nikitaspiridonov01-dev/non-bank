@@ -70,6 +70,15 @@ actor HybridReceiptParser {
         var reconciliationPasses: Int = 1
         /// Set only on the OCR-fallback path: why cloud wasn't used.
         var cloudFallbackReason: CloudFallbackReason? = nil
+        /// How the image went to the AI (analytics only).
+        var layout: Layout = .whole
+    }
+
+    /// How an image went to the AI: in one piece, cut into bands because it
+    /// was tall, or cut into bands after the receipt was cropped out of the
+    /// photo around it (`ReceiptFraming`).
+    enum Layout: String, Sendable {
+        case whole, tiled, framed
     }
 
     /// Built on the main actor by the caller (where `AISettings` and
@@ -109,22 +118,35 @@ actor HybridReceiptParser {
         // overlap-aware dedup. Falls through to the normal single-image
         // path when the receipt isn't tall enough OR every band fails.
         if let config = cloudConfig {
-            let bands = ImagePreprocessing.tallReceiptBands(image)
+            // A long receipt photographed on the camera's 3:4 frame is not
+            // tall as a whole picture — only once the table on either side
+            // of it is cropped away (`ReceiptFraming`). Images that are tall
+            // already (long screenshots) are tiled exactly as before.
+            var source = image
+            var bands = ImagePreprocessing.tallReceiptBands(image)
+            if bands == nil,
+               let framed = ImagePreprocessing.receiptFramed(image),
+               let framedBands = ImagePreprocessing.tallReceiptBands(framed) {
+                source = framed
+                bands = framedBands
+            }
             #if DEBUG
             if let bands {
                 let dims = bands.map { "\(Int($0.size.width))×\(Int($0.size.height))" }.joined(separator: ", ")
-                print("[HybridReceiptParser] tall-receipt tiling: \(bands.count) bands [\(dims)] ← source \(Int(image.size.width))×\(Int(image.size.height)) pt")
+                let framing = source === image ? "" : ", receipt framed to \(Int(source.size.width))×\(Int(source.size.height)) px"
+                print("[HybridReceiptParser] tall-receipt tiling: \(bands.count) bands [\(dims)] ← source \(Int(image.size.width))×\(Int(image.size.height)) pt\(framing)")
             } else {
                 let ar = image.size.height / max(image.size.width, 1)
-                print("[HybridReceiptParser] tiling SKIPPED: source \(Int(image.size.width))×\(Int(image.size.height)) pt, H/W=\(String(format: "%.2f", ar)) ≤ \(ImagePreprocessing.tallReceiptAspectThreshold) threshold")
+                print("[HybridReceiptParser] tiling SKIPPED: source \(Int(image.size.width))×\(Int(image.size.height)) pt, H/W=\(String(format: "%.2f", ar)) ≤ \(ImagePreprocessing.tallReceiptAspectThreshold) threshold, and no narrow receipt found in it")
             }
             #endif
-            if let bands, let tiled = await parseTiledCascade(image: image, bands: bands, config: config, started: started) {
+            if let bands, var tiled = await parseTiledCascade(image: source, bands: bands, config: config, started: started) {
+                tiled.layout = source === image ? .tiled : .framed
                 return tiled
             }
             #if DEBUG
             if bands != nil {
-                print("[HybridReceiptParser] tiling abandoned (a band failed after retry) → whole-image fallback")
+                print("[HybridReceiptParser] tiling abandoned (a band failed after retry, or every band came back empty) → whole-image fallback")
             }
             #endif
         }
@@ -320,15 +342,19 @@ actor HybridReceiptParser {
         var minPoolRemaining: Int? = nil
         var anyPoolLow = false
         for (i, band) in bands.enumerated() {
+            // `band: true` lets the backend answer "no items" for a slice
+            // that holds only the header or the footer, instead of walking
+            // every model and failing the band.
             var parsed = try? await cloud.parse(
                 image: band, backendURL: backendURL, categories: cats, localeIdentifier: locale,
-                excludeProvider: excludeProvider, maxUploadDimension: maxUploadDimension
+                excludeProvider: excludeProvider, maxUploadDimension: maxUploadDimension, band: true
             )
             if parsed == nil {
                 // One retry keeps us on the high-quality tiled path instead of
                 // dropping to the whole-image fallback for a single timeout.
                 parsed = try? await cloud.parse(
-                    image: band, backendURL: backendURL, categories: cats, localeIdentifier: locale
+                    image: band, backendURL: backendURL, categories: cats, localeIdentifier: locale,
+                    band: true
                 )
             }
             guard let parsed else {
@@ -355,6 +381,10 @@ actor HybridReceiptParser {
         let perBand = receipts.map { String($0.items.count) }.joined(separator: "+")
         print("[HybridReceiptParser.parseTiled] merged \(perBand) band items → \(mergedItems.count) after seam-dedup")
         #endif
+        // Single empty bands are normal (header, footer); all of them empty
+        // means the bands missed the receipt, so the caller re-parses the
+        // whole image instead.
+        guard !mergedItems.isEmpty else { return nil }
 
         // The grand-total line is at the BOTTOM of the receipt → the last
         // band. Prefer its total; else the largest non-nil band total;

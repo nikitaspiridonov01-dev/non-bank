@@ -121,7 +121,12 @@ enum AnalyticsEvent {
         /// Set ONLY when `parser == .ocrFallback`: why the cloud path was
         /// not used. Lets us separate capacity-driven fallbacks from user
         /// choice / connectivity.
-        cloudFallbackReason: CloudFallbackReason?
+        cloudFallbackReason: CloudFallbackReason?,
+        /// Cloud path: whether the image went to the AI whole, in bands
+        /// (tall image), or in bands after the receipt was cropped out of
+        /// the photo — compare confidence across these to see what the
+        /// long-receipt framing buys.
+        layout: ScanLayout = .whole
     )
     case receiptScanFailed(errorType: ScanErrorType, source: ReceiptScanSource)
     case receiptItemsEditedInReview(
@@ -492,7 +497,7 @@ extension AnalyticsEvent {
 
         case let .receiptScanStarted(source, num):
             return ["source": source.rawValue, "num_photos": String(num)]
-        case let .receiptScanSucceeded(itemsBucket, confidence, parser, durationBucket, discounts, fees, taxes, provider, attemptedProviders, imageBucket, language, storeCategory, poolRemainingBucket, poolLow, reconciliationPasses, cloudFallbackReason):
+        case let .receiptScanSucceeded(itemsBucket, confidence, parser, durationBucket, discounts, fees, taxes, provider, attemptedProviders, imageBucket, language, storeCategory, poolRemainingBucket, poolLow, reconciliationPasses, cloudFallbackReason, layout):
             var p: [String: String] = [
                 "items_count_bucket": itemsBucket,
                 "confidence": confidence.rawValue,
@@ -515,6 +520,7 @@ extension AnalyticsEvent {
                 if let poolRemainingBucket { p["pool_remaining_bucket"] = poolRemainingBucket }
                 p["pool_low"] = String(poolLow)
                 p["reconciliation_passes"] = String(reconciliationPasses)
+                p["layout"] = layout.rawValue
             } else if parser == .ocrFallback, let reason = cloudFallbackReason {
                 p["fallback_reason"] = reason.rawValue
             }
@@ -753,6 +759,9 @@ enum CloudFallbackReason: String {
     case network
     case cloudError = "cloud_error"
 }
+/// Analytics-only echo of `HybridReceiptParser.Layout`: how the image went
+/// to the AI (whole, in bands, in bands after cropping the receipt out).
+enum ScanLayout: String { case whole, tiled, framed }
 enum ShareLinkSource: String { case detail, postSplitPrompt = "post_split_prompt" }
 enum ShareLinkType: String { case split, singleTx = "single_tx" }
 enum ShareLinkOpenOutcome: String {

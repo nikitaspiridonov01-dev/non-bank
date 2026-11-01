@@ -926,6 +926,10 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
       .map((s) => s.trim().toLowerCase())
       .filter((s) => VALID_PROVIDER_IDS.has(s)),
   );
+  // Optional: the image is one band of a tall receipt the app split into
+  // slices, where an empty item list can be the right answer (see
+  // EMPTY_BAND_AGREEMENT in router.ts). Older app builds never send it.
+  const band = (form.get("band") as string | null)?.trim() === "1";
 
   const deviceLimit =
     Number.parseInt(env.PER_DEVICE_DAILY_LIMIT, 10) || DEFAULT_PER_DEVICE_DAILY;
@@ -961,6 +965,7 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
       env,
       nowSec,
       excludeProviders,
+      { band },
     );
     const response: ParseResponse = {
       receipt: result.receipt,
@@ -987,6 +992,7 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
       // the model truncated (raw_snippet would show that) or
       // `coerceReceipt`'s `isUsableItem` filter dropped some rows.
       items_count: result.receipt.items.length,
+      band,
     });
     return jsonResponse(response, 200, {
       "x-device-remaining": String(deviceCheck.remaining),

@@ -296,7 +296,8 @@ extension AnalyticsServiceProtocol {
             poolRemainingBucket: result.poolRemaining.map(AnalyticsBuckets.poolRemaining),
             poolLow: result.poolLow,
             reconciliationPasses: result.reconciliationPasses,
-            cloudFallbackReason: result.cloudFallbackReason
+            cloudFallbackReason: result.cloudFallbackReason,
+            layout: ScanLayout(rawValue: result.layout.rawValue) ?? .whole
         ))
     }
 }

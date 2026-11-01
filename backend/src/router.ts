@@ -74,6 +74,26 @@ export interface RouteResult {
   triedProviders: Array<{ provider: ProviderId; error: string }>;
 }
 
+// How many models must agree that one band of a tall receipt holds no items
+// before that is the answer. The iOS app splits a tall receipt into
+// overlapping bands and parses each separately, and a band can legitimately
+// be empty: the header above the first line, or the footer under the total
+// (payment details, fiscal block, QR code). Without this, an empty band
+// walked the whole pool: every provider billed, every provider's error
+// streak bumped toward the cooldown (shared by all users), and in the end a
+// 503 that made the app abandon the tiled parse altogether. Two agreeing
+// models is the answer; the first empty one may still be a misread.
+const EMPTY_BAND_AGREEMENT = 2;
+
+export interface RouteOptions {
+  // The image is one band of a tall receipt (multipart field `band=1`):
+  // an empty item list is a valid answer once EMPTY_BAND_AGREEMENT models
+  // agree on it.
+  band?: boolean;
+  // Provider registry override; tests only.
+  providers?: Partial<Record<ProviderId, Provider>>;
+}
+
 // Picks providers in priority order, calls them in turn, gives up when all
 // eligible providers either failed or are rate-limited.
 export async function route(
@@ -86,7 +106,9 @@ export async function route(
   // exclusion would empty the candidate list it's ignored (better to
   // answer with the excluded provider than fail the request outright).
   excludeProviders?: ReadonlySet<string>,
+  options: RouteOptions = {},
 ): Promise<RouteResult> {
+  const registry = options.providers ?? PROVIDERS;
   const quotas = await loadProviderQuotas(env.DB, nowSec);
   const allRanked = rankProviders(quotas, nowSec);
   const ranked =
@@ -94,12 +116,41 @@ export async function route(
       ? allRanked.filter((r) => !excludeProviders.has(r.provider))
       : allRanked;
   const candidates = ranked.length > 0 ? ranked : allRanked;
-  const tried: Array<{ provider: ProviderId; error: string }> = [];
+  type Attempt = { provider: ProviderId; error: string };
+  const tried: Attempt[] = [];
+  const emptyBand: Array<{ attempt: Attempt; receipt: ProviderResult["receipt"] }> = [];
+  // The latest empty answer, as a success like any other.
+  const emptyBandResult = (): RouteResult => {
+    const last = emptyBand[emptyBand.length - 1];
+    const remaining = poolRemaining(quotas, last.attempt.provider);
+    return {
+      provider: last.attempt.provider,
+      receipt: {
+        ...last.receipt,
+        // A footer band still carries the grand total: keep the first
+        // reading of it, from the higher-ranked model.
+        totalAmount: emptyBand.find((a) => a.receipt.totalAmount !== null)?.receipt.totalAmount ?? null,
+      },
+      poolRemaining: remaining,
+      poolLow: remaining < 20,
+      triedProviders: tried.filter((t) => t !== last.attempt),
+    };
+  };
 
   for (const candidate of candidates) {
-    const provider = PROVIDERS[candidate.provider];
+    const provider = registry[candidate.provider];
+    if (!provider) continue;
     try {
       const result = await provider.parse(req, env);
+      if (result.receipt.items.length === 0 && options.band) {
+        // A real, billed answer: count it as one, without an error streak.
+        await recordSuccess(env.DB, candidate.provider, nowSec);
+        const attempt: Attempt = { provider: candidate.provider, error: "empty items array" };
+        tried.push(attempt);
+        emptyBand.push({ attempt, receipt: result.receipt });
+        if (emptyBand.length >= EMPTY_BAND_AGREEMENT) return emptyBandResult();
+        continue;
+      }
       // Validate that we got at least one item — empty results from a
       // healthy 200 response are usually a misread image, not a quota
       // issue. Try the next provider before giving up.
@@ -134,6 +185,10 @@ export async function route(
       if (fatal) break;
     }
   }
+
+  // A band one model called empty, with no second model left to confirm it:
+  // that answer still beats a 503 that would sink the whole tiled parse.
+  if (emptyBand.length > 0) return emptyBandResult();
 
   throw new RouterExhaustedError(tried);
 }

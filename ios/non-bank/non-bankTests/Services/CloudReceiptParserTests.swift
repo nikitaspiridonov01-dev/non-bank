@@ -83,4 +83,21 @@ final class CloudReceiptParserTests: XCTestCase {
         let second = try CloudReceiptParser.prepareImage(firstImage)
         XCTAssertLessThan(second.count, 5_000_000)
     }
+
+    // MARK: - Multipart body
+
+    /// Band parses (slices of a tall receipt) tell the backend that "no
+    /// items" is a valid answer; whole-image parses don't send the field.
+    func testMultipartBody_bandFieldOnlyForBands() {
+        func body(band: Bool) -> String {
+            let data = CloudReceiptParser.buildMultipartBody(
+                boundary: "B", imageData: Data("jpeg".utf8), deviceID: "device",
+                categories: [], localeIdentifier: "sr_RS", excludeProvider: nil, band: band
+            )
+            return String(decoding: data, as: UTF8.self)
+        }
+        XCTAssertTrue(body(band: true).contains("name=\"band\"\r\n\r\n1\r\n"))
+        XCTAssertTrue(body(band: true).hasSuffix("--B--\r\n"))
+        XCTAssertFalse(body(band: false).contains("name=\"band\""))
+    }
 }

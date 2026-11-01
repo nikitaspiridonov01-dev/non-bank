@@ -197,7 +197,10 @@ actor HybridReceiptParser {
         #if DEBUG
         print("[HybridReceiptParser] whole image Σ≠total → receipt framed to \(Int(framed.size.width))×\(Int(framed.size.height)) px, \(bands.count) bands")
         #endif
-        guard var tiled = await parseTiledCascade(image: framed, bands: bands, config: config, started: started) else {
+        guard var tiled = await parseTiledCascade(
+            image: framed, bands: bands, config: config, started: started,
+            fallbackTotal: whole.parsedReceipt.totalAmount
+        ) else {
             return whole
         }
         tiled.layout = .framed
@@ -282,13 +285,16 @@ actor HybridReceiptParser {
     ///      `priceTotalMismatch` banner flags the residual gap.
     /// Returns nil only when pass 1 itself fails every band (caller then
     /// takes the whole-image path).
+    /// `fallbackTotal`: the printed total from another read of the same
+    /// receipt, used when no band reads one (see `parseTiled`).
     private func parseTiledCascade(
         image: UIImage,
         bands: [UIImage],
         config: CloudParseConfig,
-        started: Date
+        started: Date,
+        fallbackTotal: Double? = nil
     ) async -> Result? {
-        guard let pass1 = await parseTiled(bands: bands, config: config, started: started) else {
+        guard let pass1 = await parseTiled(bands: bands, config: config, started: started, fallbackTotal: fallbackTotal) else {
             return nil
         }
         guard Self.hasTotalMismatch(pass1) else { return pass1 }
@@ -300,7 +306,8 @@ actor HybridReceiptParser {
         if let upBands = ImagePreprocessing.tallReceiptBands(image, upscaleFactor: 1.6),
            var pass2 = await parseTiled(
                bands: upBands, config: config, started: started,
-               maxUploadDimension: ImagePreprocessing.upscaledBandUploadDimension),
+               maxUploadDimension: ImagePreprocessing.upscaledBandUploadDimension,
+               fallbackTotal: fallbackTotal),
            !Self.hasTotalMismatch(pass2) {
             pass2.reconciliationPasses = 2
             #if DEBUG
@@ -316,7 +323,8 @@ actor HybridReceiptParser {
         }()
         if var pass3 = await parseTiled(
                bands: bands, config: config, started: started,
-               excludeProvider: firstProvider),
+               excludeProvider: firstProvider,
+               fallbackTotal: fallbackTotal),
            !Self.hasTotalMismatch(pass3) {
             pass3.reconciliationPasses = 3
             #if DEBUG
@@ -377,7 +385,8 @@ actor HybridReceiptParser {
         config: CloudParseConfig,
         started: Date,
         excludeProvider: String? = nil,
-        maxUploadDimension: CGFloat? = nil
+        maxUploadDimension: CGFloat? = nil,
+        fallbackTotal: Double? = nil
     ) async -> Result? {
         let cats = config.categories.map { ($0.name, $0.emoji) }
         let backendURL = config.backendURL
@@ -434,10 +443,15 @@ actor HybridReceiptParser {
         guard !mergedItems.isEmpty else { return nil }
 
         // The grand-total line is at the BOTTOM of the receipt → the last
-        // band. Prefer its total; else the largest non-nil band total;
-        // else nil so downstream falls back to the items sum.
+        // band. Prefer its total; else the whole-image read's
+        // (`fallbackTotal`); else the largest non-nil band total; else nil
+        // so downstream falls back to the items sum.
         let total: Double? = {
             if let last = receipts.last?.totalAmount, last > 0 { return last }
+            // A last slice can still come back without the total (a model
+            // set it to 0 although the line was inside it); the whole-image
+            // read of the same receipt, when there was one, read it there.
+            if let fallbackTotal, fallbackTotal > 0 { return fallbackTotal }
             return receipts.compactMap { $0.totalAmount }.filter { $0 > 0 }.max()
         }()
 

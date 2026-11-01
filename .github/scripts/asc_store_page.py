@@ -57,8 +57,8 @@ Non Bank is for people who want to understand their money and settle up with fri
 
 Got an idea, or something you'd love Non Bank to do? Write to nonbankapp@gmail.com — every suggestion shapes what comes next."""
 
-WHATS_NEW_EN = ("• Long, narrow receipts photographed in one shot are read more accurately: the app finds the receipt in the photo and reads it piece by piece at full resolution\n"
-                "• Long receipts and screenshots are read more reliably end to end, including the part with the total")
+WHATS_NEW_EN = ("• Receipts that print each price on the line under the item name (Serbian fiscal receipts and many supermarket tapes) no longer shift prices onto the next item\n"
+                "• Long receipts photographed in one shot are read more reliably: if the items don't add up to the printed total, the app finds the receipt in the photo and reads it piece by piece at full resolution")
 
 LOCALES = {
     "en-US": {
@@ -96,8 +96,8 @@ LOCALES = {
 • Экспорт в CSV или JSON в любой момент
 
 Идеи и пожелания: nonbankapp@gmail.com""",
-        "whatsNew": ("• Длинные узкие чеки, снятые одним кадром, распознаются точнее: приложение находит чек на фото и читает его по частям в полном разрешении\n"
-                     "• Длинные чеки и скриншоты надёжнее читаются целиком, включая низ с итоговой суммой"),
+        "whatsNew": ("• Чеки, где цена напечатана строкой ниже названия (сербские фискальные чеки и многие супермаркеты), больше не сдвигают цены на соседнюю позицию\n"
+                     "• Длинные чеки, снятые одним кадром, читаются надёжнее: если позиции не сходятся с итогом, приложение находит чек на фото и читает его по частям в полном разрешении"),
     },
     "es-MX": {
         "name": "Non Bank: Gastos y Cuentas",
@@ -126,8 +126,8 @@ PRIVADO POR DISEÑO
 • Exporta todo en CSV o JSON cuando quieras
 
 ¿Ideas? Escríbenos a nonbankapp@gmail.com""",
-        "whatsNew": ("• Los tickets largos y estrechos fotografiados de una sola vez se leen con más precisión: la app encuentra el ticket en la foto y lo lee por partes a resolución completa\n"
-                     "• Los tickets y capturas largos se leen de forma más fiable de principio a fin, incluida la parte con el total"),
+        "whatsNew": ("• Los tickets que imprimen el precio en la línea debajo del nombre (como los tickets fiscales de Serbia y muchos supermercados) ya no desplazan los precios al artículo siguiente\n"
+                     "• Los tickets largos fotografiados de una sola vez se leen de forma más fiable: si los artículos no cuadran con el total, la app encuentra el ticket en la foto y lo lee por partes a resolución completa"),
     },
     "de-DE": {
         "name": "Non Bank: Ausgaben & Teilen",
@@ -156,8 +156,8 @@ PRIVAT BY DESIGN
 • Export als CSV oder JSON jederzeit
 
 Ideen? Schreib an nonbankapp@gmail.com""",
-        "whatsNew": ("• Lange, schmale Belege, die mit einem Foto aufgenommen wurden, werden genauer erkannt: Die App findet den Beleg im Foto und liest ihn abschnittsweise in voller Auflösung\n"
-                     "• Lange Belege und Screenshots werden zuverlässiger vollständig gelesen, einschließlich des Teils mit der Gesamtsumme"),
+        "whatsNew": ("• Belege, die den Preis in der Zeile unter dem Artikelnamen drucken (etwa serbische Fiskalbelege und viele Supermärkte), verschieben die Preise nicht mehr auf den nächsten Artikel\n"
+                     "• Lange Belege, mit einem Foto aufgenommen, werden zuverlässiger gelesen: Passen die Positionen nicht zur Gesamtsumme, findet die App den Beleg im Foto und liest ihn abschnittsweise in voller Auflösung"),
     },
     "fr-FR": {
         "name": "Non Bank: Dépenses & Partage",
@@ -186,8 +186,8 @@ PRIVÉ PAR CONCEPTION
 • Export CSV ou JSON à tout moment
 
 Des idées ? Écrivez à nonbankapp@gmail.com""",
-        "whatsNew": ("• Les tickets longs et étroits photographiés en une seule prise sont lus plus précisément : l'app repère le ticket sur la photo et le lit par morceaux en pleine résolution\n"
-                     "• Les tickets et captures longs sont lus de bout en bout de façon plus fiable, y compris la partie avec le total"),
+        "whatsNew": ("• Les tickets qui impriment le prix sur la ligne sous le nom de l'article (tickets fiscaux serbes et de nombreux supermarchés) ne décalent plus les prix sur l'article suivant\n"
+                     "• Les tickets longs photographiés en une seule prise sont lus de façon plus fiable : si les articles ne correspondent pas au total, l'app repère le ticket sur la photo et le lit par morceaux en pleine résolution"),
     },
 }
 

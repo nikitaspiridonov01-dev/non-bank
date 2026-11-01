@@ -21,7 +21,7 @@ import requests
 
 BASE = "https://api.appstoreconnect.apple.com/v1"
 BUNDLE_ID = os.environ.get("ASC_BUNDLE_ID", "nikitaspiridonov.non-bank")
-TARGET = os.environ.get("TARGET_VERSION", "1.0.4")
+TARGET = os.environ.get("TARGET_VERSION", "1.0.5")
 MODE = os.environ.get("MODE", "metadata")
 DRY = os.environ.get("DRY_RUN", "0") == "1"
 SECONDARY_CATEGORY = os.environ.get("SECONDARY_CATEGORY", "UTILITIES")
@@ -57,8 +57,8 @@ Non Bank is for people who want to understand their money and settle up with fri
 
 Got an idea, or something you'd love Non Bank to do? Write to nonbankapp@gmail.com — every suggestion shapes what comes next."""
 
-WHATS_NEW_EN = ("• Receipts scanned from several screenshots now pick up the real total — no more false \"Prices don't add up\" warnings\n"
-                "• Lines that show up on two screenshots while scrolling are counted once")
+WHATS_NEW_EN = ("• Long, narrow receipts photographed in one shot are read more accurately: the app finds the receipt in the photo and reads it piece by piece at full resolution\n"
+                "• Long receipts and screenshots are read more reliably end to end, including the part with the total")
 
 LOCALES = {
     "en-US": {
@@ -96,8 +96,8 @@ LOCALES = {
 • Экспорт в CSV или JSON в любой момент
 
 Идеи и пожелания: nonbankapp@gmail.com""",
-        "whatsNew": ("• Чек из нескольких скриншотов: итог берётся с того скриншота, где он напечатан, без ложного предупреждения о несходящихся суммах\n"
-                     "• Позиции, попавшие на два скриншота при прокрутке, считаются один раз"),
+        "whatsNew": ("• Длинные узкие чеки, снятые одним кадром, распознаются точнее: приложение находит чек на фото и читает его по частям в полном разрешении\n"
+                     "• Длинные чеки и скриншоты надёжнее читаются целиком, включая низ с итоговой суммой"),
     },
     "es-MX": {
         "name": "Non Bank: Gastos y Cuentas",
@@ -126,8 +126,8 @@ PRIVADO POR DISEÑO
 • Exporta todo en CSV o JSON cuando quieras
 
 ¿Ideas? Escríbenos a nonbankapp@gmail.com""",
-        "whatsNew": ("• Al escanear un recibo en varias capturas se toma el total correcto, sin avisos falsos de importes que no cuadran\n"
-                     "• Los artículos que aparecen en dos capturas al desplazarte se cuentan una sola vez"),
+        "whatsNew": ("• Los tickets largos y estrechos fotografiados de una sola vez se leen con más precisión: la app encuentra el ticket en la foto y lo lee por partes a resolución completa\n"
+                     "• Los tickets y capturas largos se leen de forma más fiable de principio a fin, incluida la parte con el total"),
     },
     "de-DE": {
         "name": "Non Bank: Ausgaben & Teilen",
@@ -156,8 +156,8 @@ PRIVAT BY DESIGN
 • Export als CSV oder JSON jederzeit
 
 Ideen? Schreib an nonbankapp@gmail.com""",
-        "whatsNew": ("• Beleg aus mehreren Screenshots: Die richtige Gesamtsumme wird erkannt, ohne falsche Warnung, dass die Beträge nicht passen\n"
-                     "• Positionen, die beim Scrollen auf zwei Screenshots landen, werden nur einmal gezählt"),
+        "whatsNew": ("• Lange, schmale Belege, die mit einem Foto aufgenommen wurden, werden genauer erkannt: Die App findet den Beleg im Foto und liest ihn abschnittsweise in voller Auflösung\n"
+                     "• Lange Belege und Screenshots werden zuverlässiger vollständig gelesen, einschließlich des Teils mit der Gesamtsumme"),
     },
     "fr-FR": {
         "name": "Non Bank: Dépenses & Partage",
@@ -186,8 +186,8 @@ PRIVÉ PAR CONCEPTION
 • Export CSV ou JSON à tout moment
 
 Des idées ? Écrivez à nonbankapp@gmail.com""",
-        "whatsNew": ("• Ticket sur plusieurs captures : le bon total est retenu, sans fausse alerte de montants qui ne correspondent pas\n"
-                     "• Les articles visibles sur deux captures pendant le défilement ne sont comptés qu'une fois"),
+        "whatsNew": ("• Les tickets longs et étroits photographiés en une seule prise sont lus plus précisément : l'app repère le ticket sur la photo et le lit par morceaux en pleine résolution\n"
+                     "• Les tickets et captures longs sont lus de bout en bout de façon plus fiable, y compris la partie avec le total"),
     },
 }
 

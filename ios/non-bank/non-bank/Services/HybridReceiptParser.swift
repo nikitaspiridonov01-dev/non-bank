@@ -122,10 +122,14 @@ actor HybridReceiptParser {
             // tall as a whole picture — only once the table on either side
             // of it is cropped away (`ReceiptFraming`). Images that are tall
             // already (long screenshots) are tiled exactly as before.
-            var source = image
-            var bands = ImagePreprocessing.tallReceiptBands(image)
+            // Rotate a sideways-stored camera photo upright once, for both
+            // checks below (each crops pixels and would otherwise re-render
+            // the full-resolution photo itself). A no-op for upright images.
+            let upright = ImagePreprocessing.orientationNormalized(image)
+            var source = upright
+            var bands = ImagePreprocessing.tallReceiptBands(upright)
             if bands == nil,
-               let framed = ImagePreprocessing.receiptFramed(image),
+               let framed = ImagePreprocessing.receiptFramed(upright),
                let framedBands = ImagePreprocessing.tallReceiptBands(framed) {
                 source = framed
                 bands = framedBands
@@ -133,7 +137,7 @@ actor HybridReceiptParser {
             #if DEBUG
             if let bands {
                 let dims = bands.map { "\(Int($0.size.width))×\(Int($0.size.height))" }.joined(separator: ", ")
-                let framing = source === image ? "" : ", receipt framed to \(Int(source.size.width))×\(Int(source.size.height)) px"
+                let framing = source === upright ? "" : ", receipt framed to \(Int(source.size.width))×\(Int(source.size.height)) px"
                 print("[HybridReceiptParser] tall-receipt tiling: \(bands.count) bands [\(dims)] ← source \(Int(image.size.width))×\(Int(image.size.height)) pt\(framing)")
             } else {
                 let ar = image.size.height / max(image.size.width, 1)
@@ -141,7 +145,7 @@ actor HybridReceiptParser {
             }
             #endif
             if let bands, var tiled = await parseTiledCascade(image: source, bands: bands, config: config, started: started) {
-                tiled.layout = source === image ? .tiled : .framed
+                tiled.layout = source === upright ? .tiled : .framed
                 return tiled
             }
             #if DEBUG

@@ -3,7 +3,7 @@ import { coerceReceipt, extractJSON } from "./base.ts";
 import type { ProviderRequest, ProviderResult } from "../types.ts";
 import { ProviderError } from "../types.ts";
 import {
-  RECEIPT_SYSTEM_PROMPT,
+  receiptSystemPrompt,
   buildUserPrompt,
 } from "../prompt.ts";
 import { toBase64 } from "../lib/bytes.ts";
@@ -53,14 +53,14 @@ export const huggingfaceProvider: Provider = {
       // 4096 covers ~65 items (see cloudflare.ts for rationale).
       max_tokens: 8192,
       messages: [
-        { role: "system", content: RECEIPT_SYSTEM_PROMPT },
+        { role: "system", content: receiptSystemPrompt(req) },
         {
           role: "user",
           content: [
             {
               type: "text",
               text:
-                buildUserPrompt(req.categories, req.localeHint) +
+                buildUserPrompt(req.categories, req.localeHint, req.slice) +
                 "\n\nReturn ONLY a single JSON object. No prose, no markdown fences.",
             },
             { type: "image_url", image_url: { url: dataUri } },

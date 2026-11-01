@@ -347,6 +347,84 @@ Only after all passes, emit the JSON.
 
 Output: ONE JSON object. No \`\`\` fences. No prose. No explanation. The response starts with \`{\` and ends with \`}\`.`;
 
+// ── Two-line rows ──────────────────────────────────────────────────────────
+// Serbian fiscal receipts (and many supermarket tapes elsewhere) print each
+// product as its NAME, possibly wrapped over several lines, followed by a
+// line holding only numbers: unit price, quantity, line total. The prompt
+// above has no rule for that layout — worse, its restaurant section says a
+// name and its total "MUST come from the SAME printed row", which no row
+// satisfies here. Models then pair a name with the numbers line ABOVE it
+// (the previous product's), shifting every later product onto its
+// neighbour's price — observed on a real 15-item Veropoulos receipt, both
+// whole and cut into slices. This revision adds the rule and narrows the
+// two same-row statements to the layout they were written for.
+const TWO_LINE_ROWS_SECTION = `# Two-line rows — a NUMBERS-ONLY line belongs to the name ABOVE it
+
+Many fiscal receipts print each product over two or more lines: the product NAME first (it may wrap onto further lines, sometimes leaving a lone \`)\` or tax mark on its own line), then ONE line that holds only numbers — unit price, quantity and line total. Serbian fiscal receipts with the column header \`Назив Цена Кол. Укупно\` (\`Naziv Cena Kol. Ukupno\`) always look like this; many Russian, Polish, German and other supermarket tapes do too.
+
+In this layout:
+- A numbers-only line belongs to the product name DIRECTLY ABOVE it — never to the name below it.
+- The FIRST product takes the first numbers line after its name. The LAST numbers line before the grand total belongs to the LAST product. The number of items equals the number of numbers-only lines.
+- \`total\` is the rightmost number of that numbers line; \`quantity\` and \`price\` come from the same line.
+- This is the one layout where a name and its amount sit on consecutive rows by design. The same-row rule further below is about bills that print the amount on the name's own row.
+
+Worked example (Serbian fiscal receipt):
+
+  Printed on receipt                              →  items
+  ------------------                                 -----
+  Назив  Цена  Кол.  Укупно
+  JOGURT 2,8%MM 1KG  [KOM] (E                        name: "JOGURT 2,8%MM 1KG", quantity: 1, total: 139.99
+  )
+          139,99    1,000     139,99
+  HLEB BELI TOST 500G SAVA  [KOM] (Ђ)                name: "HLEB BELI TOST 500G SAVA", quantity: 2, total: 179.98
+           89,99    2,000     179,98
+  DETERDZENT ZA SUDOVE LIMUN 4                       name: "DETERDZENT ZA SUDOVE LIMUN 450ML", quantity: 1, total: 249.99
+  50ML  [KOM] (Ђ)
+          249,99    1,000     249,99
+
+  → 3 items: 139.99, 179.98, 249.99.
+
+Anti-pattern (the most damaging mistake on this layout):
+- ❌ "HLEB BELI TOST 500G SAVA" = 139.99 — \`139,99\` is the numbers line ABOVE that name; it belongs to the yogurt. Taking the line above shifts every later product onto its neighbour's price and leaves the last price without a product.`;
+
+const MULTILINE_HEADER = "# Multi-line item names & indented add-ons — bind each name to ITS OWN amount";
+const SAME_ROW_RULE =
+  "- A \`name\` and its \`total\` MUST come from the SAME printed row. Never carry a running dish-name down onto a later priced line.";
+const SAME_ROW_RULE_NARROWED =
+  "- On these bills — where an amount is printed on the same row as its name — a \`name\` and its \`total\` MUST come from the SAME printed row. Never carry a running dish-name down onto a later priced line. (Receipts that print a numbers-only line under each name follow the two-line rule above instead.)";
+const PRECHECK_INTRO = "re-scan your items list for three specific failure modes:";
+const PRECHECK_3_TAIL = "The item count must equal the count of amount-bearing lines on the receipt.";
+const PRECHECK_4 =
+  "4. **Two-line rows.** If the receipt prints a numbers-only line under each name, verify that the FIRST product took the numbers line directly below its name, that the LAST product took the last numbers line before the total, and that no product took the numbers line printed ABOVE its name.";
+
+function replaceOnce(text: string, find: string, replacement: string): string {
+  const at = text.indexOf(find);
+  if (at < 0 || text.indexOf(find, at + 1) >= 0) {
+    throw new Error(`prompt anchor not found exactly once: ${find.slice(0, 60)}`);
+  }
+  return text.slice(0, at) + replacement + text.slice(at + find.length);
+}
+
+export const RECEIPT_SYSTEM_PROMPT_TWO_LINE_ROWS = [
+  (p: string) => replaceOnce(p, MULTILINE_HEADER, `${TWO_LINE_ROWS_SECTION}\n\n${MULTILINE_HEADER}`),
+  (p: string) => replaceOnce(p, SAME_ROW_RULE, SAME_ROW_RULE_NARROWED),
+  (p: string) => replaceOnce(p, PRECHECK_INTRO, "re-scan your items list for four specific failure modes:"),
+  (p: string) => replaceOnce(p, PRECHECK_3_TAIL, `${PRECHECK_3_TAIL}\n${PRECHECK_4}`),
+].reduce((p, edit) => edit(p), RECEIPT_SYSTEM_PROMPT);
+
+/** The system prompt for a request: the two-line-row revision when the
+ *  request opts in (`twoLineRows`), the original otherwise. */
+export function receiptSystemPrompt(req: { twoLineRows?: boolean }): string {
+  return req.twoLineRows ? RECEIPT_SYSTEM_PROMPT_TWO_LINE_ROWS : RECEIPT_SYSTEM_PROMPT;
+}
+
+/** Added to the user prompt for one slice of a tall receipt. */
+export const SLICE_NOTE = `This image is ONE SLICE of a longer receipt: the app cut the receipt into overlapping horizontal slices and reads each one separately, then joins them. Rows at the top and bottom edge of this slice can belong to products that are completed in the neighbouring slice:
+- TOP EDGE: a numbers-only line (unit price, quantity, total) with no product name above it inside this slice belongs to a product in the PREVIOUS slice. Skip it — do NOT give it to the name below it.
+- BOTTOM EDGE: a product name whose numbers line is not inside this slice is read from the NEXT slice. Skip it.
+- A row cut through by the image edge: skip it.
+Extract every other product in full. Set totalAmount only when the grand-total line is inside this slice; otherwise set it to 0.`;
+
 // Used by Gemini's responseSchema and by our local validator after parsing
 // any provider's JSON. Note: Gemini's schema dialect is OpenAPI-3.0 subset,
 // so no `oneOf`/`$ref`. We keep this intentionally simple.
@@ -436,6 +514,7 @@ export function sanitizePromptText(input: string, maxLength: number): string {
 export function buildUserPrompt(
   categories: Array<{ name: string; emoji?: string }>,
   localeHint?: string,
+  slice = false,
 ): string {
   // Defense-in-depth: even if a future caller forgets to pre-sanitize at
   // the request boundary, the prompt builder enforces the rules itself.
@@ -454,7 +533,8 @@ export function buildUserPrompt(
         .join("\n")
     : "(no categories provided — set suggestedCategory to null)";
   const locale = safeLocale ? `\n\nUser locale hint: ${safeLocale}` : "";
-  return `Extract the receipt from the attached image.
+  const sliceNote = slice ? `\n\n${SLICE_NOTE}` : "";
+  return `Extract the receipt from the attached image.${sliceNote}
 
 User's existing categories — pick the best match for suggestedCategory:
 ${list}${locale}`;

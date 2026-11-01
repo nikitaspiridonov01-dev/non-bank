@@ -930,6 +930,11 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
   // slices, where an empty item list can be the right answer (see
   // EMPTY_BAND_AGREEMENT in router.ts). Older app builds never send it.
   const band = (form.get("band") as string | null)?.trim() === "1";
+  // The two-line-row prompt revision (prompt.ts) goes to band requests —
+  // only app builds with band tiling send them — and to requests that ask
+  // for it explicitly (`prompt_rev=2`), so it can be compared with the
+  // original prompt on the same image before it becomes the default.
+  const twoLineRows = band || (form.get("prompt_rev") as string | null)?.trim() === "2";
 
   const deviceLimit =
     Number.parseInt(env.PER_DEVICE_DAILY_LIMIT, 10) || DEFAULT_PER_DEVICE_DAILY;
@@ -961,7 +966,7 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
 
   try {
     const result = await route(
-      { imageBytes, imageMime: mime, categories, localeHint },
+      { imageBytes, imageMime: mime, categories, localeHint, slice: band, twoLineRows },
       env,
       nowSec,
       excludeProviders,
@@ -993,6 +998,7 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
       // `coerceReceipt`'s `isUsableItem` filter dropped some rows.
       items_count: result.receipt.items.length,
       band,
+      two_line_rows: twoLineRows,
     });
     return jsonResponse(response, 200, {
       "x-device-remaining": String(deviceCheck.remaining),

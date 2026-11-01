@@ -69,6 +69,13 @@ export interface ProviderRequest {
   // Locale hint from iOS (`Locale.current.identifier`) — helps the model
   // pick the right currency symbol family for ambiguous receipts.
   localeHint?: string;
+  // The image is one slice of a tall receipt the app cut into overlapping
+  // bands (multipart `band=1`): the user prompt says which edge rows
+  // belong to the neighbouring slice (see `buildUserPrompt`).
+  slice?: boolean;
+  // Use the system prompt with the two-line-row rules (a numbers-only line
+  // belongs to the name above it; see `receiptSystemPrompt`).
+  twoLineRows?: boolean;
 }
 
 export interface ProviderResult {

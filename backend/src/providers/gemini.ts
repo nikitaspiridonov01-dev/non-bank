@@ -3,7 +3,7 @@ import { coerceReceipt } from "./base.ts";
 import type { ProviderRequest, ProviderResult } from "../types.ts";
 import { ProviderError } from "../types.ts";
 import {
-  RECEIPT_SYSTEM_PROMPT,
+  receiptSystemPrompt,
   RECEIPT_JSON_SCHEMA,
   buildUserPrompt,
 } from "../prompt.ts";
@@ -31,12 +31,12 @@ export const geminiProvider: Provider = {
       );
     }
     const body = {
-      systemInstruction: { parts: [{ text: RECEIPT_SYSTEM_PROMPT }] },
+      systemInstruction: { parts: [{ text: receiptSystemPrompt(req) }] },
       contents: [
         {
           role: "user",
           parts: [
-            { text: buildUserPrompt(req.categories, req.localeHint) },
+            { text: buildUserPrompt(req.categories, req.localeHint, req.slice) },
             {
               inline_data: {
                 mime_type: req.imageMime,

@@ -3,7 +3,7 @@ import { coerceReceipt, extractJSON } from "./base.ts";
 import type { ProviderRequest, ProviderResult } from "../types.ts";
 import { ProviderError } from "../types.ts";
 import {
-  RECEIPT_SYSTEM_PROMPT,
+  receiptSystemPrompt,
   buildUserPrompt,
 } from "../prompt.ts";
 
@@ -30,7 +30,7 @@ export const cloudflareProvider: Provider = {
       );
     }
     const userPrompt =
-      buildUserPrompt(req.categories, req.localeHint) +
+      buildUserPrompt(req.categories, req.localeHint, req.slice) +
       "\n\nReturn ONLY a single JSON object. No prose, no markdown fences.";
 
     let result: { response?: string };
@@ -39,7 +39,7 @@ export const cloudflareProvider: Provider = {
       // separate top-level `image` field (not inside messages) per CF docs.
       result = (await env.AI.run(MODEL, {
         messages: [
-          { role: "system", content: RECEIPT_SYSTEM_PROMPT },
+          { role: "system", content: receiptSystemPrompt(req) },
           { role: "user", content: userPrompt },
         ],
         image: Array.from(req.imageBytes),

@@ -134,4 +134,74 @@ final class HybridReceiptParserTilingTests: XCTestCase {
         XCTAssertEqual(cleaned.items.count, 2)
         XCTAssertEqual(cleaned.items.map(\.name), ["Nutella sladoled", "Rib eye steak"])
     }
+
+    // MARK: - A real Serbian receipt (Veropoulos, 15 items) read in slices
+
+    /// Seam items as two slices read them: one dropped an "M", one split
+    /// "PREMIUM", one wrote "GAUDА" with a Cyrillic А. Each pair is the same
+    /// printed line and must be counted once.
+    func testMergeDedupesSeamItemsReadWithSmallDifferences() {
+        let bandA = [item("KIKIRIKI JUMBO SUVOPECENI OLJUSTENI SLANI 180G", 169.99),
+                     item("MUSLI PROTEIN 250GR FUN & FIT", 374.99),
+                     item("CIPS DORITOS SWEET CHILI 160GR M ARBO", 197.99)]
+        let bandB = [item("MUSLI PROTEIN 250GR FUN & FIT", 374.99),
+                     item("CIPS DORITOS SWEET CHILI 160GR ARBO", 197.99),
+                     item("SOK VOCNI 100% JABUKA CR.GROZDE ARONIJA", 217.99)]
+        XCTAssertEqual(HybridReceiptParser.mergeBandItems([bandA, bandB]).map(\.lineTotal),
+                       [169.99, 374.99, 197.99, 217.99])
+
+        let bandC = [item("SIR BISER SELEKTA TRAPIST PREMIUM 45% MM 200", 607.99),
+                     item("SIR GAUDA MLEKOVITA SECENA 150GR", 219.99)]
+        let bandD = [item("SIR BISER SELEKTA TRAPIST PREMIU M 45% MM 20", 607.99),
+                     item("SIR GAUD\u{0410} MLEKOVITA SECENA 150GR", 219.99),
+                     item("LIMUNTUS 6/1 60GR CENTROPROIZVOD", 124.99)]
+        XCTAssertEqual(HybridReceiptParser.mergeBandItems([bandC, bandD]).map(\.lineTotal),
+                       [607.99, 219.99, 124.99])
+    }
+
+    // MARK: - Whole image first, framed bands only when closer to the total
+
+    private func result(_ totals: [Double], total: Double?) -> HybridReceiptParser.Result {
+        HybridReceiptParser.Result(
+            parsedReceipt: ParsedReceipt(
+                storeName: nil, date: nil,
+                items: totals.enumerated().map { item("Item \($0.offset)", $0.element) },
+                totalAmount: total, currency: "RSD"
+            ),
+            confidence: .medium, totalsMatch: false,
+            source: .cloud(provider: "test"), attemptedProvidersCount: 1
+        )
+    }
+
+    func testTotalGap() {
+        XCTAssertEqual(HybridReceiptParser.totalGap(result([100, 50.5], total: 150.5)), 0, accuracy: 1e-9)
+        XCTAssertEqual(HybridReceiptParser.totalGap(result([100, 60], total: 150)), 10, accuracy: 1e-9)
+        XCTAssertEqual(HybridReceiptParser.totalGap(result([100], total: nil)), .infinity)
+        XCTAssertEqual(HybridReceiptParser.totalGap(result([100], total: 0)), .infinity)
+    }
+
+    /// The reported 1.0.5 case: the bands read 5 848.77 against a printed
+    /// 3 805.83, the whole photo (prompt revision 2) exactly 3 805.83 — the
+    /// whole read is kept.
+    func testCloserToTotal_keepsTheWholeReadWhenItAddsUp() {
+        let whole = result([449.98, 184.99, 169.99, 374.99, 197.99, 217.99, 399.99, 169.99,
+                            35.98, 52.99, 506.99, 607.99, 219.99, 124.99, 90.99], total: 3805.83)
+        let bands = result([449.98, 184.99, 184.99, 169.99, 374.99, 197.99, 169.99, 374.99, 197.99,
+                            217.99, 399.99, 169.99, 35.98, 52.99, 506.99, 607.99, 506.99, 607.99,
+                            219.99, 124.99, 90.99], total: 3805.83)
+        XCTAssertEqual(HybridReceiptParser.totalGap(whole), 0, accuracy: 0.001)
+        XCTAssertEqual(HybridReceiptParser.totalGap(bands), 2042.94, accuracy: 0.001)
+        XCTAssertFalse(HybridReceiptParser.closerToTotal(bands, than: whole))
+    }
+
+    func testCloserToTotal_takesBandsThatAddUpWhenTheWholeReadDoesNot() {
+        let whole = result([449.98, 184.99, 184.99, 169.99], total: 805.0)
+        let bands = result([449.98, 184.99, 169.99], total: 804.96)
+        XCTAssertTrue(HybridReceiptParser.closerToTotal(bands, than: whole))
+    }
+
+    func testCloserToTotal_tieOrNoTotalKeepsTheWholeRead() {
+        XCTAssertFalse(HybridReceiptParser.closerToTotal(result([10, 20], total: 31), than: result([10, 22], total: 31)))
+        XCTAssertFalse(HybridReceiptParser.closerToTotal(result([10, 20], total: nil), than: result([10, 25], total: 31)))
+    }
 }

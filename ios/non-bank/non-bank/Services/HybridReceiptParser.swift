@@ -106,52 +106,35 @@ actor HybridReceiptParser {
         self.ocr = ocr
     }
 
+    /// - Parameter isWholeReceipt: the image shows the whole receipt (a
+    ///   one-photo scan), so its printed total is a checksum for its own
+    ///   items. False for each photo of a multi-photo scan — the total is
+    ///   on one photo, the items spread over all of them.
     func parse(
         image: UIImage,
-        cloudConfig: CloudParseConfig? = nil
+        cloudConfig: CloudParseConfig? = nil,
+        isWholeReceipt: Bool = true
     ) async throws -> Result {
         let started = Date()
         // Tall-receipt tiling (cloud path only): a very tall supermarket
         // tape compressed into a single vision-model pass loses small
         // text and drops lines. Split it into overlapping bands, parse
-        // each at full width in parallel, and stitch the results with
-        // overlap-aware dedup. Falls through to the normal single-image
-        // path when the receipt isn't tall enough OR every band fails.
-        if let config = cloudConfig {
-            // A long receipt photographed on the camera's 3:4 frame is not
-            // tall as a whole picture — only once the table on either side
-            // of it is cropped away (`ReceiptFraming`). Images that are tall
-            // already (long screenshots) are tiled exactly as before.
-            // Rotate a sideways-stored camera photo upright once, for both
-            // checks below (each crops pixels and would otherwise re-render
-            // the full-resolution photo itself). A no-op for upright images.
-            let upright = ImagePreprocessing.orientationNormalized(image)
-            var source = upright
-            var bands = ImagePreprocessing.tallReceiptBands(upright)
-            if bands == nil,
-               let framed = ImagePreprocessing.receiptFramed(upright),
-               let framedBands = ImagePreprocessing.tallReceiptBands(framed) {
-                source = framed
-                bands = framedBands
-            }
+        // each at full width, one after another, and stitch the results
+        // with overlap-aware dedup. Falls through to the normal
+        // single-image path when the receipt isn't tall enough OR every
+        // band fails.
+        let tallBands = cloudConfig == nil ? nil : ImagePreprocessing.tallReceiptBands(image)
+        if let config = cloudConfig, let bands = tallBands {
             #if DEBUG
-            if let bands {
-                let dims = bands.map { "\(Int($0.size.width))×\(Int($0.size.height))" }.joined(separator: ", ")
-                let framing = source === upright ? "" : ", receipt framed to \(Int(source.size.width))×\(Int(source.size.height)) px"
-                print("[HybridReceiptParser] tall-receipt tiling: \(bands.count) bands [\(dims)] ← source \(Int(image.size.width))×\(Int(image.size.height)) pt\(framing)")
-            } else {
-                let ar = image.size.height / max(image.size.width, 1)
-                print("[HybridReceiptParser] tiling SKIPPED: source \(Int(image.size.width))×\(Int(image.size.height)) pt, H/W=\(String(format: "%.2f", ar)) ≤ \(ImagePreprocessing.tallReceiptAspectThreshold) threshold, and no narrow receipt found in it")
-            }
+            let dims = bands.map { "\(Int($0.size.width))×\(Int($0.size.height))" }.joined(separator: ", ")
+            print("[HybridReceiptParser] tall-receipt tiling: \(bands.count) bands [\(dims)] ← source \(Int(image.size.width))×\(Int(image.size.height)) pt")
             #endif
-            if let bands, var tiled = await parseTiledCascade(image: source, bands: bands, config: config, started: started) {
-                tiled.layout = source === upright ? .tiled : .framed
+            if var tiled = await parseTiledCascade(image: image, bands: bands, config: config, started: started) {
+                tiled.layout = .tiled
                 return tiled
             }
             #if DEBUG
-            if bands != nil {
-                print("[HybridReceiptParser] tiling abandoned (a band failed after retry, or every band came back empty) → whole-image fallback")
-            }
+            print("[HybridReceiptParser] tiling abandoned (a band failed after retry, or every band came back empty) → whole-image fallback")
             #endif
         }
         // Downscale up front so every parser path (cloud upload,
@@ -169,7 +152,11 @@ actor HybridReceiptParser {
         var fallbackReason: CloudFallbackReason = .cloudOff
         if let config = cloudConfig {
             do {
-                return try await cloudParse(image: prepared, config: config, started: started)
+                let whole = try await cloudParse(image: prepared, config: config, started: started)
+                // A tall image already had its band passes above; a photo
+                // that shows only part of the receipt has no checksum.
+                guard tallBands == nil, isWholeReceipt else { return whole }
+                return await retryFramedIfOff(whole: whole, image: image, config: config, started: started)
             } catch {
                 fallbackReason = Self.fallbackReason(for: error)
                 #if DEBUG
@@ -181,6 +168,62 @@ actor HybridReceiptParser {
             }
         }
         return try await fallbackParse(image: prepared, started: started, cloudFallbackReason: fallbackReason)
+    }
+
+    /// A photo that isn't tall as a whole is read in one piece first: one
+    /// request, and the read that gets most receipts right. Only when its
+    /// items don't add up to the printed total is the receipt cut out of
+    /// the photo (`ReceiptFraming`) and read in bands at full resolution —
+    /// a long receipt shot in one frame is a narrow strip, and its print
+    /// may have been too small for the whole-image read. Whichever result
+    /// comes closer to its total is kept; the whole-image one on a tie,
+    /// since it can't suffer from slice edges. (Slicing first misread a
+    /// real Serbian receipt that the whole-image read got right.)
+    private func retryFramedIfOff(
+        whole: Result,
+        image: UIImage,
+        config: CloudParseConfig,
+        started: Date
+    ) async -> Result {
+        guard Self.hasTotalMismatch(whole) else { return whole }
+        guard let framed = ImagePreprocessing.receiptFramed(image),
+              let bands = ImagePreprocessing.tallReceiptBands(framed)
+        else {
+            #if DEBUG
+            print("[HybridReceiptParser] whole image Σ≠total, no narrow receipt to cut out → keeping it")
+            #endif
+            return whole
+        }
+        #if DEBUG
+        print("[HybridReceiptParser] whole image Σ≠total → receipt framed to \(Int(framed.size.width))×\(Int(framed.size.height)) px, \(bands.count) bands")
+        #endif
+        guard var tiled = await parseTiledCascade(image: framed, bands: bands, config: config, started: started) else {
+            return whole
+        }
+        tiled.layout = .framed
+        tiled.reconciliationPasses += 1  // the whole-image read ran first
+        let useBands = Self.closerToTotal(tiled, than: whole)
+        #if DEBUG
+        print("[HybridReceiptParser] gap to total: framed bands \(Self.totalGap(tiled)), whole \(Self.totalGap(whole)) → keeping \(useBands ? "bands" : "whole")")
+        #endif
+        if useBands { return tiled }
+        var kept = whole
+        kept.reconciliationPasses = tiled.reconciliationPasses
+        return kept
+    }
+
+    /// How far Σ(items) is from the receipt's own printed total; infinity
+    /// when there is no total to compare against.
+    static func totalGap(_ result: Result) -> Double {
+        guard let total = result.parsedReceipt.totalAmount, total > 0 else { return .infinity }
+        let sum = result.parsedReceipt.items.reduce(0.0) { $0 + $1.lineTotal }
+        return abs(sum - total)
+    }
+
+    /// True when `candidate` adds up to its total more closely than
+    /// `baseline` does. A tie keeps the baseline.
+    static func closerToTotal(_ candidate: Result, than baseline: Result) -> Bool {
+        totalGap(candidate) < totalGap(baseline)
     }
 
     // MARK: - Cloud (Tier 0)
@@ -488,38 +531,23 @@ actor HybridReceiptParser {
     }
 
     /// Seam-dedup fuzzy equality. Name comparison folds diacritics/case and
-    /// keeps only alphanumerics, then accepts an exact match OR a solid
-    /// shared prefix (one band truncating a long name at its crop edge).
+    /// keeps only alphanumerics, then accepts an exact match, a solid
+    /// shared prefix (one band truncating a long name at its crop edge), or
+    /// on long names a misread letter or two (`ReceiptNameMatch`).
     /// A clearly different price still means a different line — so two
     /// same-named items with diverging totals are kept (this is what stops
     /// genuine repeat purchases from collapsing). A missing price on a cut
     /// partial doesn't veto an otherwise-strong name match.
     static func fuzzyItemMatch(_ x: ReceiptItem, _ y: ReceiptItem) -> Bool {
-        let nx = foldedName(x.name), ny = foldedName(y.name)
-        guard !nx.isEmpty, !ny.isEmpty else { return false }
-        let nameMatch: Bool
-        if nx == ny {
-            nameMatch = true
-        } else {
-            let shorter = nx.count <= ny.count ? nx : ny
-            let longer = nx.count <= ny.count ? ny : nx
-            nameMatch = shorter.count >= 4 && longer.hasPrefix(shorter)
+        // Folded names ("Mammi Ćufte sa pire kro." vs "mammi cufte sa pire
+        // krompirom"): equal, cut short, or one misread letter apart — see
+        // `ReceiptNameMatch`.
+        guard ReceiptNameMatch.similarKeys(ReceiptNameMatch.key(x.name), ReceiptNameMatch.key(y.name)) else {
+            return false
         }
-        guard nameMatch else { return false }
         let px = x.lineTotal, py = y.lineTotal
         if px == 0 || py == 0 { return true }
         return abs(px - py) <= max(0.05, abs(px) * 0.01)
-    }
-
-    /// Lowercased, diacritic-folded, alphanumerics-only form of a name so
-    /// "Mammi Ćufte sa pire kro." and "mammi cufte sa pire krompirom"
-    /// compare as a clean prefix and Serbian/diacritic spelling wobble
-    /// across bands doesn't break the seam match.
-    private static func foldedName(_ s: String) -> String {
-        String(
-            s.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
-                .filter { $0.isLetter || $0.isNumber }
-        )
     }
 
     // MARK: - Fallback (Tier 1: OCR + regex)

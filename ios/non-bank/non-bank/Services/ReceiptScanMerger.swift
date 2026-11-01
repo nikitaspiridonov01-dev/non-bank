@@ -394,10 +394,7 @@ enum ReceiptScanMerger {
 
         init(_ item: ReceiptItem) {
             self.item = item
-            self.key = String(
-                item.name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
-                    .filter { $0.isLetter || $0.isNumber }
-            )
+            self.key = ReceiptNameMatch.key(item.name)
             self.amount = item.lineTotal
         }
     }
@@ -407,17 +404,17 @@ enum ReceiptScanMerger {
     }
 
     /// The same receipt line read on two photos. Same rule as the tiling
-    /// merge (`HybridReceiptParser.fuzzyItemMatch`: diacritic-folded name,
-    /// exact or long-prefix match, price within tolerance or missing on a
-    /// cut partial), plus: a name contained in the other one when both
-    /// prices are present and equal — a long bilingual delivery-app name
-    /// ("Krem čorba od bundeve (Крем-суп …)") is often read in full on one
-    /// photo and in part on the next.
+    /// merge (`HybridReceiptParser.fuzzyItemMatch`: names equal, cut short
+    /// or a misread letter apart per `ReceiptNameMatch`, price within
+    /// tolerance or missing on a cut partial), plus: a name contained in
+    /// the other one when both prices are present and equal — a long
+    /// bilingual delivery-app name ("Krem čorba od bundeve (Крем-суп …)")
+    /// is often read in full on one photo and in part on the next.
     private static func sameLine(_ x: Line, _ y: Line) -> Bool {
         guard !x.key.isEmpty, !y.key.isEmpty else { return false }
         let shorter = x.key.count <= y.key.count ? x.key : y.key
         let longer = x.key.count <= y.key.count ? y.key : x.key
-        if x.key == y.key || (shorter.count >= 4 && longer.hasPrefix(shorter)) {
+        if ReceiptNameMatch.similarKeys(x.key, y.key) {
             if x.amount == 0 || y.amount == 0 { return true }
             return abs(x.amount - y.amount) <= max(0.05, abs(x.amount) * 0.01)
         }

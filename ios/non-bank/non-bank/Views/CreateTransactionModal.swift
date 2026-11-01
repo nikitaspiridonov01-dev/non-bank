@@ -1118,7 +1118,8 @@ struct CreateTransactionModal: View {
                 do {
                     let result = try await hybridParser.parse(
                         image: image,
-                        cloudConfig: cloudConfig
+                        cloudConfig: cloudConfig,
+                        isWholeReceipt: images.count == 1
                     )
                     perImageResults.append(result)
                 } catch {

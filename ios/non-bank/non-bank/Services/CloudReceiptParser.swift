@@ -225,6 +225,13 @@ actor CloudReceiptParser {
 
     // MARK: - Multipart body
 
+    /// Receipt-prompt revision sent with every parse request. "2" adds the
+    /// two-line-row rule — on receipts that print a numbers-only line under
+    /// each name (Serbian fiscal receipts), that line belongs to the name
+    /// above it — which fixed a real receipt that revision 1 read one
+    /// product off from the third line on.
+    static let promptRevision = "2"
+
     static func buildMultipartBody(
         boundary: String,
         imageData: Data,
@@ -295,6 +302,13 @@ actor CloudReceiptParser {
             body.append("1".data(using: .utf8)!)
             body.append(crlf.data(using: .utf8)!)
         }
+
+        // prompt_rev part — the backend prompt revision this build was
+        // tested against (`backend/src/prompt.ts`). Older backends ignore it.
+        body.append(boundaryStart.data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"prompt_rev\"\(crlf)\(crlf)".data(using: .utf8)!)
+        body.append(promptRevision.data(using: .utf8)!)
+        body.append(crlf.data(using: .utf8)!)
 
         body.append(boundaryEnd.data(using: .utf8)!)
         return body

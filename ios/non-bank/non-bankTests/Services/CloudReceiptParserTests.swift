@@ -100,4 +100,16 @@ final class CloudReceiptParserTests: XCTestCase {
         XCTAssertTrue(body(band: true).hasSuffix("--B--\r\n"))
         XCTAssertFalse(body(band: false).contains("name=\"band\""))
     }
+
+    /// Every request names the prompt revision this build was tested with.
+    func testMultipartBody_alwaysSendsPromptRevision() {
+        for band in [false, true] {
+            let data = CloudReceiptParser.buildMultipartBody(
+                boundary: "B", imageData: Data("jpeg".utf8), deviceID: "device",
+                categories: [], localeIdentifier: nil, excludeProvider: nil, band: band
+            )
+            XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("name=\"prompt_rev\"\r\n\r\n2\r\n"))
+        }
+        XCTAssertEqual(CloudReceiptParser.promptRevision, "2")
+    }
 }

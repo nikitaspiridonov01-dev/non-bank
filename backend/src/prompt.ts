@@ -418,9 +418,20 @@ export function receiptSystemPrompt(req: { twoLineRows?: boolean }): string {
   return req.twoLineRows ? RECEIPT_SYSTEM_PROMPT_TWO_LINE_ROWS : RECEIPT_SYSTEM_PROMPT;
 }
 
+/** Name the slice note asks the model to give a slice's orphan top line.
+ *  Told only "skip it", models still pinned that line on the first name
+ *  below it (a real Serbian receipt, slices 2 and 3); given a place to put
+ *  it, they don't have to. Dropped before the response (`dropCutPlaceholders`). */
+export const CUT_PLACEHOLDER = "(cut)";
+
+/** A slice's items without the orphan-line placeholders. */
+export function dropCutPlaceholders<T extends { name: string }>(items: T[]): T[] {
+  return items.filter((i) => i.name.trim().toLowerCase() !== CUT_PLACEHOLDER);
+}
+
 /** Added to the user prompt for one slice of a tall receipt. */
 export const SLICE_NOTE = `This image is ONE SLICE of a longer receipt: the app cut the receipt into overlapping horizontal slices and reads each one separately, then joins them. Rows at the top and bottom edge of this slice can belong to products that are completed in the neighbouring slice:
-- TOP EDGE: a numbers-only line (unit price, quantity, total) with no product name above it inside this slice belongs to a product in the PREVIOUS slice. Skip it — do NOT give it to the name below it.
+- TOP EDGE: if the slice STARTS with a numbers-only line (unit price, quantity, total) that has no product name above it inside this slice, that line belongs to a product in the PREVIOUS slice. Output it FIRST, as an item named exactly "${CUT_PLACEHOLDER}" with that line's total, so that the first name below it gets ITS OWN numbers line — the one printed under it. Never give the orphan line to the name below it.
 - BOTTOM EDGE: a product name whose numbers line is not inside this slice is read from the NEXT slice. Skip it.
 - A row cut through by the image edge: skip it.
 Extract every other product in full. Set totalAmount only when the grand-total line is inside this slice; otherwise set it to 0.`;

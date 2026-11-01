@@ -51,6 +51,7 @@ import {
   MAX_CATEGORY_NAME,
   MAX_CATEGORY_EMOJI,
   MAX_LOCALE_HINT,
+  dropCutPlaceholders,
   sanitizePromptText,
 } from "./prompt.ts";
 import type { ParseResponse, ProviderRequest } from "./types.ts";
@@ -972,6 +973,9 @@ async function handleParseReceipt(req: Request, env: Env): Promise<Response> {
       excludeProviders,
       { band },
     );
+    // A slice's orphan top line, parked under the placeholder name the
+    // slice note gives it, is not an item of this slice.
+    if (band) result.receipt.items = dropCutPlaceholders(result.receipt.items);
     const response: ParseResponse = {
       receipt: result.receipt,
       provider: result.provider,

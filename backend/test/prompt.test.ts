@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  CUT_PLACEHOLDER,
   RECEIPT_SYSTEM_PROMPT,
   RECEIPT_SYSTEM_PROMPT_TWO_LINE_ROWS,
   SLICE_NOTE,
   buildUserPrompt,
+  dropCutPlaceholders,
   receiptSystemPrompt,
 } from "../src/prompt.ts";
 
@@ -63,5 +65,22 @@ describe("slice note in the user prompt", () => {
     expect(p).toContain(SLICE_NOTE);
     expect(p.indexOf(SLICE_NOTE)).toBeLessThan(p.indexOf("User's existing categories"));
     expect(p).toContain("- 🛒 Groceries");
+  });
+});
+
+describe("orphan top line of a slice", () => {
+  it("is parked under the placeholder name instead of the next product's", () => {
+    expect(SLICE_NOTE).toContain(`named exactly "${CUT_PLACEHOLDER}"`);
+    expect(SLICE_NOTE).toContain("Never give the orphan line to the name below it.");
+  });
+
+  it("is dropped from the slice's items, whatever the model's casing or spacing", () => {
+    const items = [
+      { name: "(cut)", total: 169.99 },
+      { name: " (CUT) ", total: 506.99 },
+      { name: "MUSLI PROTEIN 250GR", total: 374.99 },
+      { name: "Cut flowers (cut)", total: 299 },
+    ];
+    expect(dropCutPlaceholders(items).map((i) => i.total)).toEqual([374.99, 299]);
   });
 });

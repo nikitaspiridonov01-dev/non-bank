@@ -281,7 +281,8 @@ struct ReceiptItemsReadOnlySheet: View {
                 ReceiptItemAmountText(
                     amount: item.lineTotal,
                     currency: currency,
-                    isDiscount: isDiscount
+                    isDiscount: isDiscount,
+                    copyable: true
                 )
                 if let qty = item.quantity, qty > 1, let price = item.price {
                     Text("\(ReceiptItem.formatQuantity(qty)) × \(ReceiptItem.formatAmount(price)) \(currency)")
@@ -372,7 +373,8 @@ struct ReceiptItemsReadOnlySheet: View {
             ReceiptItemAmountText(
                 amount: value,
                 currency: currency,
-                isDiscount: value < 0
+                isDiscount: value < 0,
+                copyable: true
             )
         }
     }
@@ -495,7 +497,8 @@ struct PerItemClaimantsSheet: View {
                                     ReceiptItemAmountText(
                                         amount: entry.slice,
                                         currency: currency,
-                                        isDiscount: false
+                                        isDiscount: false,
+                                        copyable: true
                                     )
                                 }
                                 .padding(.horizontal, 14)
@@ -594,7 +597,8 @@ struct PerChargeDistributionSheet: View {
                                     ReceiptItemAmountText(
                                         amount: entry.slice,
                                         currency: currency,
-                                        isDiscount: charge.kind == .discount
+                                        isDiscount: charge.kind == .discount,
+                                        copyable: true
                                     )
                                 }
                                 .padding(.horizontal, 14)

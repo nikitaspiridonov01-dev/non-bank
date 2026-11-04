@@ -233,6 +233,8 @@ struct ShareDistributionView: View {
                         .padding(.leading, 3)
                 }
                 .fixedSize(horizontal: true, vertical: false)
+                // Long-press copies the share; a tap still opens the card.
+                .copyableAmount(sharer.amount, currency: currency)
             }
 
             bar(fraction: fraction)
@@ -376,7 +378,7 @@ private struct ParticipantBreakdownSheet: View {
                 .foregroundColor(AppColors.textPrimary)
                 .lineLimit(2)
             Spacer(minLength: 8)
-            ReceiptItemAmountText(amount: slice.slice, currency: currency, isDiscount: false)
+            ReceiptItemAmountText(amount: slice.slice, currency: currency, isDiscount: false, copyable: true)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.rowVertical)
@@ -403,7 +405,8 @@ private struct ParticipantBreakdownSheet: View {
             ReceiptItemAmountText(
                 amount: cut.amount,
                 currency: currency,
-                isDiscount: cut.kind == .discount
+                isDiscount: cut.kind == .discount,
+                copyable: true
             )
         }
         .padding(.horizontal, 14)
@@ -422,7 +425,7 @@ private struct ParticipantBreakdownSheet: View {
                 .font(AppFonts.bodyEmphasized)
                 .foregroundColor(AppColors.textPrimary)
             Spacer()
-            ReceiptItemAmountText(amount: totalShare, currency: currency, isDiscount: totalShare < 0)
+            ReceiptItemAmountText(amount: totalShare, currency: currency, isDiscount: totalShare < 0, copyable: true)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.md)

@@ -611,20 +611,8 @@ struct TransactionDetailView: View {
                             // and pasting back into the create
                             // screen's amount field stays clean
                             // (the parser strips currency codes
-                            // either way). `contentShape` ensures
-                            // the press registers even on the gaps
-                            // between glyphs.
-                            .contentShape(Rectangle())
-                            .contextMenu {
-                                Button {
-                                    let int = NumberFormatting.integerPart(primaryDisplayAmount)
-                                    let dec = NumberFormatting.decimalPartIfAny(primaryDisplayAmount)
-                                    UIPasteboard.general.string =
-                                        "\(int)\(dec) \(transaction.currency)"
-                                } label: {
-                                    Label("Copy amount", systemImage: "doc.on.doc")
-                                }
-                            }
+                            // either way).
+                            .copyableAmount(primaryDisplayAmount, currency: transaction.currency)
                         }
 
                         // Split card: "of X USD / purchase in split →"

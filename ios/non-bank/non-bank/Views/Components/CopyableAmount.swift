@@ -9,7 +9,24 @@ extension View {
     /// - Parameter negative: prefix the "-" the row shows (a discount line),
     ///   so the clipboard holds what's on screen.
     func copyableAmount(_ amount: Double, currency: String, negative: Bool = false) -> some View {
-        modifier(CopyableAmountModifier(text: CopyableAmount.text(amount, currency: currency, negative: negative)))
+        copyableAmount(amount, currency: currency, negative: negative, in: Rectangle())
+    }
+
+    /// For a whole row: apply it to the row (after its `.glassEffect`), with
+    /// the row's outline as `shape`. The press then lands anywhere on the
+    /// row, not just on the small figure, and the lifted preview keeps the
+    /// row's corners. On a glass row the menu has to sit on the row itself:
+    /// one attached to the amount inside the glass never opens.
+    func copyableAmount<S: Shape>(
+        _ amount: Double,
+        currency: String,
+        negative: Bool = false,
+        in shape: S
+    ) -> some View {
+        modifier(CopyableAmountModifier(
+            text: CopyableAmount.text(amount, currency: currency, negative: negative),
+            shape: shape
+        ))
     }
 }
 
@@ -23,13 +40,15 @@ enum CopyableAmount {
     }
 }
 
-private struct CopyableAmountModifier: ViewModifier {
+private struct CopyableAmountModifier<S: Shape>: ViewModifier {
     let text: String
+    let shape: S
 
     func body(content: Content) -> some View {
         content
-            // The press registers on the gaps between glyphs too.
-            .contentShape(Rectangle())
+            // The press registers on the gaps between glyphs too; also the
+            // outline of the lifted preview.
+            .contentShape(shape)
             .contextMenu {
                 Button {
                     UIPasteboard.general.string = text

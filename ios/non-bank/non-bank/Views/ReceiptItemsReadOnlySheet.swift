@@ -281,8 +281,7 @@ struct ReceiptItemsReadOnlySheet: View {
                 ReceiptItemAmountText(
                     amount: item.lineTotal,
                     currency: currency,
-                    isDiscount: isDiscount,
-                    copyable: true
+                    isDiscount: isDiscount
                 )
                 if let qty = item.quantity, qty > 1, let price = item.price {
                     Text("\(ReceiptItem.formatQuantity(qty)) × \(ReceiptItem.formatAmount(price)) \(currency)")
@@ -316,6 +315,9 @@ struct ReceiptItemsReadOnlySheet: View {
                 selectedChargeForDistribution = item
             }
         }
+        // Long-press anywhere on the row copies its amount; a tap still
+        // opens the per-person sheet.
+        .copyableAmount(item.lineTotal, currency: currency, negative: isDiscount, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
     }
 
     /// Claimants driving a row's avatar pile + detail sheet: equal-split
@@ -358,6 +360,7 @@ struct ReceiptItemsReadOnlySheet: View {
         // totals card reads as one of the cards rather than a
         // contrasting solid block.
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+        .copyableAmount(grandTotal, currency: currency, negative: grandTotal < 0, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
         .padding(.horizontal, AppSpacing.pageHorizontal)
     }
 
@@ -373,8 +376,7 @@ struct ReceiptItemsReadOnlySheet: View {
             ReceiptItemAmountText(
                 amount: value,
                 currency: currency,
-                isDiscount: value < 0,
-                copyable: true
+                isDiscount: value < 0
             )
         }
     }
@@ -497,8 +499,7 @@ struct PerItemClaimantsSheet: View {
                                     ReceiptItemAmountText(
                                         amount: entry.slice,
                                         currency: currency,
-                                        isDiscount: false,
-                                        copyable: true
+                                        isDiscount: false
                                     )
                                 }
                                 .padding(.horizontal, 14)
@@ -508,6 +509,7 @@ struct PerItemClaimantsSheet: View {
                                     in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
                                 )
                                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                                .copyableAmount(entry.slice, currency: currency, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
                             }
                         }
                     }
@@ -597,8 +599,7 @@ struct PerChargeDistributionSheet: View {
                                     ReceiptItemAmountText(
                                         amount: entry.slice,
                                         currency: currency,
-                                        isDiscount: charge.kind == .discount,
-                                        copyable: true
+                                        isDiscount: charge.kind == .discount
                                     )
                                 }
                                 .padding(.horizontal, 14)
@@ -608,6 +609,12 @@ struct PerChargeDistributionSheet: View {
                                     in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
                                 )
                                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                                .copyableAmount(
+                                    entry.slice,
+                                    currency: currency,
+                                    negative: charge.kind == .discount,
+                                    in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+                                )
                             }
                         }
                     }

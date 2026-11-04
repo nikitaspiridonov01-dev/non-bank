@@ -17,19 +17,8 @@ struct ReceiptItemAmountText: View {
     /// success-green and prepend an explicit "-" since
     /// `NumberFormatting.integerPart` strips signs.
     var isDiscount: Bool = false
-    /// Long-press → "Copy amount" (`copyableAmount`). Off by default: the
-    /// editing screens that show this view own their long presses.
-    var copyable: Bool = false
 
     var body: some View {
-        if copyable {
-            label.copyableAmount(amount, currency: currency, negative: isDiscount)
-        } else {
-            label
-        }
-    }
-
-    private var label: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             if isDiscount {
                 Text("-")

@@ -233,8 +233,6 @@ struct ShareDistributionView: View {
                         .padding(.leading, 3)
                 }
                 .fixedSize(horizontal: true, vertical: false)
-                // Long-press copies the share; a tap still opens the card.
-                .copyableAmount(sharer.amount, currency: currency)
             }
 
             bar(fraction: fraction)
@@ -265,6 +263,9 @@ struct ShareDistributionView: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             itemsSheetTarget = sharer
         }
+        // Long-press anywhere on the card copies the share; a tap still
+        // opens the person's items.
+        .copyableAmount(sharer.amount, currency: currency, in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(showsItemsButton ? .isButton : [])
     }
@@ -378,7 +379,7 @@ private struct ParticipantBreakdownSheet: View {
                 .foregroundColor(AppColors.textPrimary)
                 .lineLimit(2)
             Spacer(minLength: 8)
-            ReceiptItemAmountText(amount: slice.slice, currency: currency, isDiscount: false, copyable: true)
+            ReceiptItemAmountText(amount: slice.slice, currency: currency, isDiscount: false)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.rowVertical)
@@ -389,6 +390,7 @@ private struct ParticipantBreakdownSheet: View {
             in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
         )
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+        .copyableAmount(slice.slice, currency: currency, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
     }
 
     private func chargeRow(_ cut: SplitItemBreakdown.ChargeCut) -> some View {
@@ -405,8 +407,7 @@ private struct ParticipantBreakdownSheet: View {
             ReceiptItemAmountText(
                 amount: cut.amount,
                 currency: currency,
-                isDiscount: cut.kind == .discount,
-                copyable: true
+                isDiscount: cut.kind == .discount
             )
         }
         .padding(.horizontal, 14)
@@ -417,6 +418,7 @@ private struct ParticipantBreakdownSheet: View {
             in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
         )
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+        .copyableAmount(cut.amount, currency: currency, negative: cut.kind == .discount, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
     }
 
     private var totalRow: some View {
@@ -425,7 +427,7 @@ private struct ParticipantBreakdownSheet: View {
                 .font(AppFonts.bodyEmphasized)
                 .foregroundColor(AppColors.textPrimary)
             Spacer()
-            ReceiptItemAmountText(amount: totalShare, currency: currency, isDiscount: totalShare < 0, copyable: true)
+            ReceiptItemAmountText(amount: totalShare, currency: currency, isDiscount: totalShare < 0)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.md)
@@ -435,5 +437,11 @@ private struct ParticipantBreakdownSheet: View {
             in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
         )
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+        .copyableAmount(
+            totalShare,
+            currency: currency,
+            negative: totalShare < 0,
+            in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+        )
     }
 }

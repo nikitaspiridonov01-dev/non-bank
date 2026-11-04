@@ -51,6 +51,7 @@ enum WhoPaidPurpose: Equatable {
 struct WhoPaidPickerView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var friendStore: FriendStore
+    @EnvironmentObject var transactionStore: TransactionStore
 
     let participants: [WhoPaidParticipant]
     let totalAmount: Double
@@ -465,6 +466,7 @@ struct WhoPaidPickerView: View {
                 handleFriendPickerResult(selectedFriends, youSelected: youSelected)
             }
             .environmentObject(friendStore)
+            .environmentObject(transactionStore)
         }
     }
 

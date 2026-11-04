@@ -1644,6 +1644,7 @@ struct CreateTransactionModal: View {
                     }
                 }
                 .environmentObject(friendStore)
+                .environmentObject(transactionStore)
             }
             .sheet(isPresented: $showFriendForm, onDismiss: {
                 // If friend form dismissed with no friends selected, revert to expense

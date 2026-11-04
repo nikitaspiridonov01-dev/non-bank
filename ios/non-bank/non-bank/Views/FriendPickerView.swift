@@ -4,6 +4,8 @@ import UIKit
 struct FriendPickerView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var friendStore: FriendStore
+    /// Only read, to put the friends you split with most often first.
+    @EnvironmentObject var transactionStore: TransactionStore
 
     /// Currently selected friend IDs (toggle set)
     @State private var selection: Set<String>
@@ -90,7 +92,10 @@ struct FriendPickerView: View {
                 $0.groups.contains(where: { $0.lowercased().contains(query) })
             }
         }
-        return result
+        // The people you split with most often first — no scrolling past
+        // the alphabet to reach them. Display order only: the confirmed
+        // selection keeps the store's order.
+        return FriendUsageRanking.sorted(result, by: FriendUsageRanking.usage(in: transactionStore.transactions))
     }
 
     /// "You" row is hidden when the caller explicitly excludes the

@@ -11,11 +11,12 @@ import Foundation
 ///   trip with the same people), then leaves on its own.
 /// - Nothing used for 60 days: no shortcuts.
 ///
-/// Settle-ups are left out. Only your own splits count: a friend's split
-/// shared with you (it carries a payload checksum) or an occurrence of a
-/// recurring one isn't a setup you picked. Counted from the transactions
-/// themselves, so the existing history counts from the start, and deleting
-/// or editing a transaction shows in the shortcuts.
+/// Settle-ups and recurring transactions (the recurring one itself and
+/// its occurrences) are left out. Only your own splits count: a friend's
+/// split shared with you (it carries a payload checksum) isn't a setup you
+/// picked. Counted from the transactions themselves, so the existing
+/// history counts from the start, and deleting or editing a transaction
+/// shows in the shortcuts.
 enum RecentSplitUsage {
 
     static let window: TimeInterval = 30 * 86_400
@@ -72,11 +73,12 @@ enum RecentSplitUsage {
         transaction.date <= now ? transaction.date : min(transaction.lastModified, now)
     }
 
-    /// The setup a transaction was split with, or nil when it isn't one of
-    /// your own splits: no split, a settle-up, a friend's shared split, an
-    /// occurrence of a recurring transaction, or no recorded mode.
+    /// The setup a transaction was split with, or nil when it doesn't
+    /// count: no split, a settle-up, a recurring transaction or one of its
+    /// occurrences, a friend's shared split, or no recorded mode.
     static func setup(of transaction: Transaction, usedAt: Date) -> RecentSplitOption? {
         guard transaction.payloadChecksum == nil,
+              transaction.repeatInterval == nil,
               transaction.parentReminderID == nil,
               let split = transaction.splitInfo,
               let mode = split.splitMode, mode != .settleUp

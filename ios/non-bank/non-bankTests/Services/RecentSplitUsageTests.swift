@@ -17,6 +17,7 @@ final class RecentSplitUsageTests: XCTestCase {
         you: Bool = true,
         paidBy payer: String? = nil,
         checksum: String? = nil,
+        repeats: RepeatInterval? = nil,
         parentReminderID: Int? = nil,
         savedDaysAgo: Double? = nil
     ) -> Transaction {
@@ -36,6 +37,7 @@ final class RecentSplitUsageTests: XCTestCase {
             type: .expenses,
             tags: nil,
             lastModified: savedDaysAgo.map { now.addingTimeInterval(-$0 * 86_400) } ?? date,
+            repeatInterval: repeats,
             parentReminderID: parentReminderID,
             splitInfo: SplitInfo(
                 totalAmount: 50,
@@ -165,18 +167,31 @@ final class RecentSplitUsageTests: XCTestCase {
         XCTAssertNil(RecentSplitUsage.setup(of: transactions[0], usedAt: now))
     }
 
-    /// A friend's split shared with you, and occurrences of a recurring
-    /// split, aren't setups you picked.
+    /// A friend's split shared with you isn't a setup you picked.
     func testOnlyYourOwnSplitsCount() {
         let transactions = [
             split(1, daysAgo: 1, with: ["miha"], checksum: "abc"),
             split(2, daysAgo: 2, with: ["miha"], checksum: "def"),
-            split(3, daysAgo: 1, with: ["denis"], parentReminderID: 7),
-            split(4, daysAgo: 2, with: ["denis"], parentReminderID: 7),
-            split(5, daysAgo: 20, with: ["alia"]),
-            TestFixtures.makeTransaction(id: 6, date: now),  // no split
+            split(3, daysAgo: 20, with: ["alia"]),
+            TestFixtures.makeTransaction(id: 4, date: now),  // no split
         ]
         XCTAssertEqual(people(transactions), [["alia"]])
+    }
+
+    /// Recurring splits are left out: the recurring transaction itself
+    /// and each of its occurrences.
+    func testRecurringSplitsAreLeftOut() {
+        let monthly = RepeatInterval.monthly(hour: 9, minute: 0, daysOfMonth: [1])
+        let transactions = [
+            split(1, daysAgo: 1, with: ["miha"], repeats: monthly),
+            split(2, daysAgo: 2, with: ["miha"], repeats: monthly),
+            split(3, daysAgo: 1, with: ["denis"], parentReminderID: 1),
+            split(4, daysAgo: 2, with: ["denis"], parentReminderID: 1),
+            split(5, daysAgo: 20, with: ["alia"]),
+        ]
+        XCTAssertEqual(people(transactions), [["alia"]])
+        XCTAssertNil(RecentSplitUsage.setup(of: transactions[0], usedAt: now))
+        XCTAssertNil(RecentSplitUsage.setup(of: transactions[2], usedAt: now))
     }
 
     func testSplitWithoutARecordedModeIsSkipped() {

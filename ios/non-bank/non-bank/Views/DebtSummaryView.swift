@@ -486,7 +486,30 @@ struct DebtRowView: View {
     /// been updated render with the safe legacy treatment.
     var isConnected: Bool = false
 
+    /// The amount owed either way; nil when the balance is settled.
+    private var amount: Double? {
+        switch kind {
+        case .balancesOut: return nil
+        case .youLent(_, _, let amount), .youBorrow(_, _, let amount): return amount
+        }
+    }
+
+    @ViewBuilder
     var body: some View {
+        // Long-press anywhere on the row copies the amount owed (the
+        // transaction's "Debts to settle up", Debts, the friend pages).
+        if let amount {
+            row.copyableAmount(
+                amount,
+                currency: currency,
+                in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous)
+            )
+        } else {
+            row
+        }
+    }
+
+    private var row: some View {
         HStack(spacing: AppSpacing.md) {
             avatar
             label

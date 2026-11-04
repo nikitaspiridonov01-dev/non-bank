@@ -157,6 +157,31 @@ final class CopyableAmountMenuTests: XCTestCase {
         XCTAssertTrue(points.contains { $0.x < 100 }, summary(points, in: window))
     }
 
+    /// "Debts to settle up" on a split transaction: "You lent Miha 1 325.02".
+    func testDebtRow_pressAnywhereCopiesTheAmountOwed() throws {
+        let window = try show(
+            DebtRowView(
+                kind: .youLent(friendID: "miha", friendName: "Miha", amount: 1325.02),
+                currency: "RSD",
+                isConnected: true
+            )
+            .padding(.horizontal, 16)
+        )
+        let points = probe("debt row", window)
+        XCTAssertTrue(points.contains { $0.x < 100 }, summary(points, in: window))
+        XCTAssertTrue(points.contains { $0.x > 300 }, summary(points, in: window))
+    }
+
+    /// A settled balance has no amount to copy.
+    func testDebtRow_balancedOutHasNoMenu() throws {
+        let window = try show(
+            DebtRowView(kind: .balancesOut(friendID: "miha", friendName: "Miha"), currency: "RSD")
+                .padding(.horizontal, 16)
+        )
+        let points = probe("balanced-out debt row", window)
+        XCTAssertTrue(points.isEmpty, summary(points, in: window))
+    }
+
     /// "Receipt items" from the transaction card: item, discount and fee
     /// rows (tappable, with avatar piles) and the total.
     func testReceiptItemsSheet_pressAnywhereOnARowCopies() throws {

@@ -21,7 +21,7 @@ import requests
 
 BASE = "https://api.appstoreconnect.apple.com/v1"
 BUNDLE_ID = os.environ.get("ASC_BUNDLE_ID", "nikitaspiridonov.non-bank")
-TARGET = os.environ.get("TARGET_VERSION", "1.0.5")
+TARGET = os.environ.get("TARGET_VERSION", "1.0.6")
 MODE = os.environ.get("MODE", "metadata")
 DRY = os.environ.get("DRY_RUN", "0") == "1"
 SECONDARY_CATEGORY = os.environ.get("SECONDARY_CATEGORY", "UTILITIES")
@@ -57,8 +57,9 @@ Non Bank is for people who want to understand their money and settle up with fri
 
 Got an idea, or something you'd love Non Bank to do? Write to nonbankapp@gmail.com — every suggestion shapes what comes next."""
 
-WHATS_NEW_EN = ("• Receipts that print each price on the line under the item name (Serbian fiscal receipts and many supermarket tapes) no longer shift prices onto the next item\n"
-                "• Long receipts photographed in one shot are read more reliably: if the items don't add up to the printed total, the app finds the receipt in the photo and reads it piece by piece at full resolution")
+WHATS_NEW_EN = ("• Long-press an amount to copy it on the split screens too: each person's share, receipt items and the per-person breakdown\n"
+                "• Friend lists start with the people you split with most often, so there's no scrolling to find them\n"
+                "• “Recently used” now shows the split setups you use most; ones you haven't used in a while disappear on their own")
 
 LOCALES = {
     "en-US": {
@@ -96,8 +97,9 @@ LOCALES = {
 • Экспорт в CSV или JSON в любой момент
 
 Идеи и пожелания: nonbankapp@gmail.com""",
-        "whatsNew": ("• Чеки, где цена напечатана строкой ниже названия (сербские фискальные чеки и многие супермаркеты), больше не сдвигают цены на соседнюю позицию\n"
-                     "• Длинные чеки, снятые одним кадром, читаются надёжнее: если позиции не сходятся с итогом, приложение находит чек на фото и читает его по частям в полном разрешении"),
+        "whatsNew": ("• Сумму можно скопировать долгим нажатием и на экранах сплита: долю каждого участника, позиции чека и разбивку по людям\n"
+                     "• В списках друзей первыми идут те, с кем вы делите расходы чаще всего, — листать больше не нужно\n"
+                     "• Блок «Recently used» показывает варианты сплита, которыми вы пользуетесь чаще всего, а давно не используемые исчезают сами"),
     },
     "es-MX": {
         "name": "Non Bank: Gastos y Cuentas",
@@ -126,8 +128,9 @@ PRIVADO POR DISEÑO
 • Exporta todo en CSV o JSON cuando quieras
 
 ¿Ideas? Escríbenos a nonbankapp@gmail.com""",
-        "whatsNew": ("• Los tickets que imprimen el precio en la línea debajo del nombre (como los tickets fiscales de Serbia y muchos supermercados) ya no desplazan los precios al artículo siguiente\n"
-                     "• Los tickets largos fotografiados de una sola vez se leen de forma más fiable: si los artículos no cuadran con el total, la app encuentra el ticket en la foto y lo lee por partes a resolución completa"),
+        "whatsNew": ("• Mantén presionado un monto para copiarlo también en las pantallas de división: la parte de cada persona, los artículos del ticket y el desglose por persona\n"
+                     "• Las listas de amigos empiezan por las personas con las que más divides gastos, sin tener que desplazarte\n"
+                     "• “Recently used” muestra las divisiones que más usas; las que no usas desde hace tiempo desaparecen solas"),
     },
     "de-DE": {
         "name": "Non Bank: Ausgaben & Teilen",
@@ -156,8 +159,9 @@ PRIVAT BY DESIGN
 • Export als CSV oder JSON jederzeit
 
 Ideen? Schreib an nonbankapp@gmail.com""",
-        "whatsNew": ("• Belege, die den Preis in der Zeile unter dem Artikelnamen drucken (etwa serbische Fiskalbelege und viele Supermärkte), verschieben die Preise nicht mehr auf den nächsten Artikel\n"
-                     "• Lange Belege, mit einem Foto aufgenommen, werden zuverlässiger gelesen: Passen die Positionen nicht zur Gesamtsumme, findet die App den Beleg im Foto und liest ihn abschnittsweise in voller Auflösung"),
+        "whatsNew": ("• Beträge lassen sich jetzt auch auf den Aufteilungs-Bildschirmen per langem Drücken kopieren: der Anteil jeder Person, Belegpositionen und die Aufschlüsselung pro Person\n"
+                     "• Freundeslisten beginnen mit den Personen, mit denen du am häufigsten teilst – kein Scrollen mehr\n"
+                     "• „Recently used“ zeigt die Aufteilungen, die du am häufigsten nutzt; lange nicht genutzte verschwinden von selbst"),
     },
     "fr-FR": {
         "name": "Non Bank: Dépenses & Partage",
@@ -186,8 +190,9 @@ PRIVÉ PAR CONCEPTION
 • Export CSV ou JSON à tout moment
 
 Des idées ? Écrivez à nonbankapp@gmail.com""",
-        "whatsNew": ("• Les tickets qui impriment le prix sur la ligne sous le nom de l'article (tickets fiscaux serbes et de nombreux supermarchés) ne décalent plus les prix sur l'article suivant\n"
-                     "• Les tickets longs photographiés en une seule prise sont lus de façon plus fiable : si les articles ne correspondent pas au total, l'app repère le ticket sur la photo et le lit par morceaux en pleine résolution"),
+        "whatsNew": ("• Un appui long sur un montant permet aussi de le copier sur les écrans de partage : la part de chacun, les articles du ticket et le détail par personne\n"
+                     "• Les listes d'amis commencent par les personnes avec qui vous partagez le plus souvent, sans avoir à faire défiler\n"
+                     "• « Recently used » affiche les partages que vous utilisez le plus ; ceux que vous n'utilisez plus depuis un moment disparaissent d'eux-mêmes"),
     },
 }
 

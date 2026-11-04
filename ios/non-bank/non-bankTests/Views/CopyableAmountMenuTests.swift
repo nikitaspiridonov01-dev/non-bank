@@ -61,21 +61,25 @@ final class CopyableAmountMenuTests: XCTestCase {
     }
 
     /// Of `points` (window coordinates), the ones where a long press would
-    /// open a context menu. Gives up after a time budget so a slow probe
-    /// can't stall the run.
+    /// open a context menu, routed the way a touch is: hit-test the window,
+    /// then ask the menu interactions on the hit view and its ancestors.
+    /// Gives up after a time budget so a slow probe can't stall the run.
     private func menuPoints(_ points: [CGPoint], in window: UIWindow) -> [CGPoint] {
-        let found = menuInteractions(in: window)
         let deadline = Date().addingTimeInterval(30)
         var opening: [CGPoint] = []
         for point in points {
             guard Date() < deadline else { break }
-            let opens = found.contains { entry in
-                let local = entry.view.convert(point, from: window)
-                guard entry.view.bounds.contains(local) else { return false }
-                return entry.interaction.delegate?.contextMenuInteraction(
-                    entry.interaction,
-                    configurationForMenuAtLocation: local
-                ) != nil
+            var view = window.hitTest(point, with: nil)
+            var opens = false
+            while let current = view, !opens {
+                for case let interaction as UIContextMenuInteraction in current.interactions {
+                    let local = current.convert(point, from: window)
+                    if interaction.delegate?.contextMenuInteraction(interaction, configurationForMenuAtLocation: local) != nil {
+                        opens = true
+                        break
+                    }
+                }
+                view = current.superview
             }
             if opens { opening.append(point) }
         }
@@ -165,6 +169,24 @@ final class CopyableAmountMenuTests: XCTestCase {
         let points = probe("whole glass row", window, at: rowPoints)
         XCTAssertTrue(points.contains { $0.x < 100 }, summary(points, in: window))
         XCTAssertTrue(points.contains { $0.x > 300 }, summary(points, in: window))
+    }
+
+    /// The same row as a glass card of its own, no container around it
+    /// (how the debt rows sit).
+    func testMenuOnAStandaloneGlassRowOpensFromTheName() throws {
+        let window = try showRow(
+            HStack {
+                Text("You")
+                Spacer()
+                amount
+            }
+            .padding(14)
+            .glassEffect(.regular, in: shape)
+            .copyableAmount(83.84, currency: "RSD", in: shape)
+            .padding(.horizontal, 16)
+        )
+        let points = probe("standalone glass row", window, at: rowPoints)
+        XCTAssertTrue(points.contains { $0.x < 100 }, summary(points, in: window))
     }
 
     // MARK: - The screens

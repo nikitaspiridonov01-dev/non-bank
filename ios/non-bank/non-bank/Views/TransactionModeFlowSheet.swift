@@ -42,7 +42,6 @@ struct TransactionModeFlowSheet: View {
     @EnvironmentObject var friendStore: FriendStore
     @EnvironmentObject var transactionStore: TransactionStore
     @EnvironmentObject var categoryStore: CategoryStore
-    @EnvironmentObject var recentSplitOptionsStore: RecentSplitOptionsStore
 
     @State private var path: [Step]
 
@@ -523,7 +522,10 @@ struct TransactionModeFlowSheet: View {
             amount: vm.parsedAmount,
             currency: currency,
             onSelect: handleModeSelection,
-            recentOptions: recentSplitOptionsStore.options,
+            recentOptions: RecentSplitUsage.options(
+                from: transactionStore.transactions,
+                knownFriendIDs: Set(friendStore.friends.map(\.id))
+            ),
             onSelectRecent: handleRecentSelection
         )
         .navigationTitle("How to track")
@@ -1875,9 +1877,10 @@ struct ModePickerStep: View {
     let amount: Double
     let currency: String
     let onSelect: (Choice) -> Void
-    /// Recently-used split shortcuts (max 2, newest-first). Resolved
-    /// LIVE against `friendStore` at render — any option referencing a
-    /// deleted friend (id no longer resolving) is dropped entirely.
+    /// Recently-used split shortcuts (max 2, most used first — see
+    /// `RecentSplitUsage`). Resolved LIVE against `friendStore` at
+    /// render — any option referencing a deleted friend (id no longer
+    /// resolving) is dropped entirely.
     var recentOptions: [RecentSplitOption] = []
     /// Replays a recent shortcut. Wiring differs per phase (P1 routes
     /// through the normal flow with the mode preselected; P2/P3 add the
@@ -1964,8 +1967,8 @@ struct ModePickerStep: View {
     /// `friendStore`. Any option that references a friend id which no
     /// longer resolves is DROPPED (omitted from the result) so it can
     /// neither render nor be tapped — the locked deleted-friend rule.
-    /// Order is preserved (store is already newest-first); the section
-    /// renders up to the store's 2-entry cap.
+    /// Order is preserved (already most used first); the section
+    /// renders up to `RecentSplitUsage.maxShown` (2) entries.
     private var resolvedRecents: [ResolvedRecent] {
         recentOptions.compactMap { option in
             // Resolve every selected friend. A single failure drops the

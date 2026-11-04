@@ -5,10 +5,9 @@ import Foundation
 /// a recent split (same mode + same people) without walking the whole
 /// flow again.
 ///
-/// Recorded on transaction SAVE (create only — never on edit) for any
-/// mode except pay-for-yourself. Persisted newest-first, capped at 2,
-/// and deduped by `dedupKey` so re-saving the same configuration just
-/// bumps it to the top instead of stacking duplicates.
+/// Worked out from your own split transactions by `RecentSplitUsage`
+/// (most used first, at most 2, stale ones dropped, settle-ups left
+/// out); transactions with the same `dedupKey` count as one setup.
 ///
 /// Participant identity is stored as raw IDs only — names / avatars /
 /// connected-state are resolved LIVE from `FriendStore` at render time

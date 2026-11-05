@@ -57,7 +57,7 @@ Non Bank is for people who want to understand their money and settle up with fri
 
 Got an idea, or something you'd love Non Bank to do? Write to nonbankapp@gmail.com — every suggestion shapes what comes next."""
 
-WHATS_NEW_EN = ("• Long-press an amount to copy it on the split screens too: each person's share, receipt items and the per-person breakdown\n"
+WHATS_NEW_EN = ("• Long-press an amount to copy it on the split screens too: each person's share, debts to settle up, receipt items and the per-person breakdown\n"
                 "• Friend lists start with the people you split with most often, so there's no scrolling to find them\n"
                 "• “Recently used” now shows the split setups you use most; ones you haven't used in a while disappear on their own")
 
@@ -97,7 +97,7 @@ LOCALES = {
 • Экспорт в CSV или JSON в любой момент
 
 Идеи и пожелания: nonbankapp@gmail.com""",
-        "whatsNew": ("• Сумму можно скопировать долгим нажатием и на экранах сплита: долю каждого участника, позиции чека и разбивку по людям\n"
+        "whatsNew": ("• Сумму можно скопировать долгим нажатием и на экранах сплита: долю каждого участника, долги, позиции чека и разбивку по людям\n"
                      "• В списках друзей первыми идут те, с кем вы делите расходы чаще всего, — листать больше не нужно\n"
                      "• Блок «Recently used» показывает варианты сплита, которыми вы пользуетесь чаще всего, а давно не используемые исчезают сами"),
     },
@@ -128,7 +128,7 @@ PRIVADO POR DISEÑO
 • Exporta todo en CSV o JSON cuando quieras
 
 ¿Ideas? Escríbenos a nonbankapp@gmail.com""",
-        "whatsNew": ("• Mantén presionado un monto para copiarlo también en las pantallas de división: la parte de cada persona, los artículos del ticket y el desglose por persona\n"
+        "whatsNew": ("• Mantén presionado un monto para copiarlo también en las pantallas de división: la parte de cada persona, las deudas, los artículos del ticket y el desglose por persona\n"
                      "• Las listas de amigos empiezan por las personas con las que más divides gastos, sin tener que desplazarte\n"
                      "• “Recently used” muestra las divisiones que más usas; las que no usas desde hace tiempo desaparecen solas"),
     },
@@ -159,7 +159,7 @@ PRIVAT BY DESIGN
 • Export als CSV oder JSON jederzeit
 
 Ideen? Schreib an nonbankapp@gmail.com""",
-        "whatsNew": ("• Beträge lassen sich jetzt auch auf den Aufteilungs-Bildschirmen per langem Drücken kopieren: der Anteil jeder Person, Belegpositionen und die Aufschlüsselung pro Person\n"
+        "whatsNew": ("• Beträge lassen sich jetzt auch auf den Aufteilungs-Bildschirmen per langem Drücken kopieren: der Anteil jeder Person, offene Schulden, Belegpositionen und die Aufschlüsselung pro Person\n"
                      "• Freundeslisten beginnen mit den Personen, mit denen du am häufigsten teilst – kein Scrollen mehr\n"
                      "• „Recently used“ zeigt die Aufteilungen, die du am häufigsten nutzt; lange nicht genutzte verschwinden von selbst"),
     },
@@ -190,7 +190,7 @@ PRIVÉ PAR CONCEPTION
 • Export CSV ou JSON à tout moment
 
 Des idées ? Écrivez à nonbankapp@gmail.com""",
-        "whatsNew": ("• Un appui long sur un montant permet aussi de le copier sur les écrans de partage : la part de chacun, les articles du ticket et le détail par personne\n"
+        "whatsNew": ("• Un appui long sur un montant permet aussi de le copier sur les écrans de partage : la part de chacun, les dettes à régler, les articles du ticket et le détail par personne\n"
                      "• Les listes d'amis commencent par les personnes avec qui vous partagez le plus souvent, sans avoir à faire défiler\n"
                      "• « Recently used » affiche les partages que vous utilisez le plus ; ceux que vous n'utilisez plus depuis un moment disparaissent d'eux-mêmes"),
     },

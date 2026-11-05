@@ -15,8 +15,12 @@ extension View {
     /// For a whole row: apply it to the row (after its `.glassEffect`), with
     /// the row's outline as `shape`. The press then lands anywhere on the
     /// row, not just on the small figure, and the lifted preview keeps the
-    /// row's corners. On a glass row the menu has to sit on the row itself:
-    /// one attached to the amount inside the glass never opens.
+    /// row's corners.
+    ///
+    /// On a glass row the menu has to sit on the row itself, and the row
+    /// must be its own glass, not inside a `GlassEffectContainer`: a menu on
+    /// the amount inside the glass, or on a row inside a container, doesn't
+    /// open (1.0.6 build 16). `CopyableAmountMenuTests` checks the screens.
     func copyableAmount<S: Shape>(
         _ amount: Double,
         currency: String,

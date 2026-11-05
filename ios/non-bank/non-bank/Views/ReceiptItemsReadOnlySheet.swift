@@ -231,13 +231,12 @@ struct ReceiptItemsReadOnlySheet: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 40)
         } else {
-            // Apple-required grouping so sibling row glass stays
-            // mutually consistent (each row keeps its own `.glassEffect`).
-            GlassEffectContainer {
-                VStack(spacing: AppSpacing.sm) {
-                    ForEach(items) { item in
-                        row(item)
-                    }
+            // Each row is its own glass card, no GlassEffectContainer: a
+            // long-press menu on a row inside a container doesn't open, and
+            // every row here copies its amount (see `copyableAmount`).
+            VStack(spacing: AppSpacing.sm) {
+                ForEach(items) { item in
+                    row(item)
                 }
             }
             .padding(.horizontal, AppSpacing.pageHorizontal)
@@ -476,41 +475,40 @@ struct PerItemClaimantsSheet: View {
                             .foregroundColor(AppColors.textTertiary)
                     }
 
-                    // Grouped so sibling claimant-row glass stays
-                    // mutually consistent, each over a uniform under-fill.
-                    GlassEffectContainer {
-                        VStack(spacing: AppSpacing.sm) {
-                            ForEach(claimants) { entry in
-                                HStack(spacing: AppSpacing.md) {
-                                    PixelCatView(
-                                        id: entry.participant.isMe ? UserIDService.currentID() : entry.participant.id,
-                                        size: 36,
-                                        blackAndWhite: !entry.participant.isConnected
-                                    )
-                                    .clipShape(Circle())
-
-                                    Text(entry.participant.isMe ? "You" : entry.participant.name)
-                                        .font(AppFonts.labelPrimary)
-                                        .foregroundColor(AppColors.textPrimary)
-                                        .lineLimit(1)
-
-                                    Spacer(minLength: 8)
-
-                                    ReceiptItemAmountText(
-                                        amount: entry.slice,
-                                        currency: currency,
-                                        isDiscount: false
-                                    )
-                                }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, AppSpacing.rowVertical)
-                                .background(
-                                    colorContext.glassUnderFill,
-                                    in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+                    // Each row its own glass card over a uniform under-fill;
+                    // no GlassEffectContainer, so the rows' long-press copy
+                    // menus open (see `copyableAmount`).
+                    VStack(spacing: AppSpacing.sm) {
+                        ForEach(claimants) { entry in
+                            HStack(spacing: AppSpacing.md) {
+                                PixelCatView(
+                                    id: entry.participant.isMe ? UserIDService.currentID() : entry.participant.id,
+                                    size: 36,
+                                    blackAndWhite: !entry.participant.isConnected
                                 )
-                                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
-                                .copyableAmount(entry.slice, currency: currency, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                                .clipShape(Circle())
+
+                                Text(entry.participant.isMe ? "You" : entry.participant.name)
+                                    .font(AppFonts.labelPrimary)
+                                    .foregroundColor(AppColors.textPrimary)
+                                    .lineLimit(1)
+
+                                Spacer(minLength: 8)
+
+                                ReceiptItemAmountText(
+                                    amount: entry.slice,
+                                    currency: currency,
+                                    isDiscount: false
+                                )
                             }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, AppSpacing.rowVertical)
+                            .background(
+                                colorContext.glassUnderFill,
+                                in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+                            )
+                            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                            .copyableAmount(entry.slice, currency: currency, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
                         }
                     }
 
@@ -578,44 +576,42 @@ struct PerChargeDistributionSheet: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    GlassEffectContainer {
-                        VStack(spacing: AppSpacing.sm) {
-                            ForEach(claimants) { entry in
-                                HStack(spacing: AppSpacing.md) {
-                                    PixelCatView(
-                                        id: entry.participant.isMe ? UserIDService.currentID() : entry.participant.id,
-                                        size: 36,
-                                        blackAndWhite: !entry.participant.isConnected
-                                    )
-                                    .clipShape(Circle())
-
-                                    Text(entry.participant.isMe ? "You" : entry.participant.name)
-                                        .font(AppFonts.labelPrimary)
-                                        .foregroundColor(AppColors.textPrimary)
-                                        .lineLimit(1)
-
-                                    Spacer(minLength: 8)
-
-                                    ReceiptItemAmountText(
-                                        amount: entry.slice,
-                                        currency: currency,
-                                        isDiscount: charge.kind == .discount
-                                    )
-                                }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, AppSpacing.rowVertical)
-                                .background(
-                                    colorContext.glassUnderFill,
-                                    in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+                    VStack(spacing: AppSpacing.sm) {
+                        ForEach(claimants) { entry in
+                            HStack(spacing: AppSpacing.md) {
+                                PixelCatView(
+                                    id: entry.participant.isMe ? UserIDService.currentID() : entry.participant.id,
+                                    size: 36,
+                                    blackAndWhite: !entry.participant.isConnected
                                 )
-                                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
-                                .copyableAmount(
-                                    entry.slice,
+                                .clipShape(Circle())
+
+                                Text(entry.participant.isMe ? "You" : entry.participant.name)
+                                    .font(AppFonts.labelPrimary)
+                                    .foregroundColor(AppColors.textPrimary)
+                                    .lineLimit(1)
+
+                                Spacer(minLength: 8)
+
+                                ReceiptItemAmountText(
+                                    amount: entry.slice,
                                     currency: currency,
-                                    negative: charge.kind == .discount,
-                                    in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+                                    isDiscount: charge.kind == .discount
                                 )
                             }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, AppSpacing.rowVertical)
+                            .background(
+                                colorContext.glassUnderFill,
+                                in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+                            )
+                            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                            .copyableAmount(
+                                entry.slice,
+                                currency: currency,
+                                negative: charge.kind == .discount,
+                                in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
+                            )
                         }
                     }
 

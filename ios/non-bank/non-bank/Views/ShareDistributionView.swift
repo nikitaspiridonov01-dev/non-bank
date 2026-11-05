@@ -178,13 +178,12 @@ struct ShareDistributionView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 40)
         } else {
-            // Apple-required grouping so sibling row glass stays
-            // mutually consistent (each row keeps its own `.glassEffect`).
-            GlassEffectContainer {
-                VStack(spacing: AppSpacing.md) {
-                    ForEach(Array(sharers.enumerated()), id: \.offset) { _, sharer in
-                        row(sharer)
-                    }
+            // Each row is its own glass card, no GlassEffectContainer: a
+            // long-press menu on a row inside a container doesn't open, and
+            // every row here copies its share (see `copyableAmount`).
+            VStack(spacing: AppSpacing.md) {
+                ForEach(Array(sharers.enumerated()), id: \.offset) { _, sharer in
+                    row(sharer)
                 }
             }
             .padding(.horizontal, AppSpacing.pageHorizontal)
@@ -328,21 +327,19 @@ private struct ParticipantBreakdownSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: AppSpacing.sm) {
-                    // Apple-required grouping so all sibling row glass
-                    // (items, charges, total) stays mutually consistent;
-                    // each row keeps its own `.glassEffect` over a uniform
-                    // under-fill.
-                    GlassEffectContainer {
-                        VStack(spacing: AppSpacing.sm) {
-                            ForEach(breakdown.items) { slice in
-                                itemRow(slice)
-                            }
-                            ForEach(breakdown.charges) { cut in
-                                chargeRow(cut)
-                            }
-                            totalRow
-                                .padding(.top, AppSpacing.xs)
+                    // Each row (items, charges, total) is its own glass card
+                    // over a uniform under-fill; no GlassEffectContainer, so
+                    // the rows' long-press copy menus open (see
+                    // `copyableAmount`).
+                    VStack(spacing: AppSpacing.sm) {
+                        ForEach(breakdown.items) { slice in
+                            itemRow(slice)
                         }
+                        ForEach(breakdown.charges) { cut in
+                            chargeRow(cut)
+                        }
+                        totalRow
+                            .padding(.top, AppSpacing.xs)
                     }
                     Spacer().frame(height: 40)
                 }

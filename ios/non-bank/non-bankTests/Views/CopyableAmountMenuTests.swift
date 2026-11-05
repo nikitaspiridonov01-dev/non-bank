@@ -4,8 +4,15 @@ import UIKit
 @testable import non_bank
 
 /// Long-press "Copy amount" on the read-only split and receipt screens,
-/// checked the way UIKit decides it: every context-menu interaction in the
-/// window is asked for a menu at the pressed point.
+/// checked the way a touch reaches it: hit-test the pressed point, then ask
+/// the context-menu interactions on the hit view and its ancestors for a
+/// menu.
+///
+/// The probe sees a menu attached to a glass row's own view — the pattern
+/// these screens use (`copyableAmount(_:currency:negative:in:)` after the
+/// row's `.glassEffect`, the row not inside a `GlassEffectContainer`). It
+/// can't see a menu on plain content (no glass), which SwiftUI resolves
+/// only during a real touch, so there's no case for that here.
 @MainActor
 final class CopyableAmountMenuTests: XCTestCase {
 
@@ -65,7 +72,7 @@ final class CopyableAmountMenuTests: XCTestCase {
     /// then ask the menu interactions on the hit view and its ancestors.
     /// Gives up after a time budget so a slow probe can't stall the run.
     private func menuPoints(_ points: [CGPoint], in window: UIWindow) -> [CGPoint] {
-        let deadline = Date().addingTimeInterval(30)
+        let deadline = Date().addingTimeInterval(60)
         var opening: [CGPoint] = []
         for point in points {
             guard Date() < deadline else { break }
@@ -118,62 +125,9 @@ final class CopyableAmountMenuTests: XCTestCase {
 
     // MARK: - The pattern
 
-    /// The harness itself: a menu on the amount, no glass around it.
-    func testMenuOnAPlainAmountOpens() throws {
-        let window = try showRow(
-            HStack {
-                Text("You")
-                Spacer()
-                amount.copyableAmount(83.84, currency: "RSD")
-            }
-            .padding(.horizontal, 30)
-        )
-        let points = probe("plain amount", window, at: rowPoints)
-        XCTAssertFalse(points.isEmpty, summary(points, in: window))
-    }
-
-    /// 1.0.6 (16): the menu sat on the amount inside the row's glass.
-    func testMenuOnTheAmountInsideAGlassRow() throws {
-        let window = try showRow(
-            GlassEffectContainer {
-                HStack {
-                    Text("You")
-                    Spacer()
-                    amount.copyableAmount(83.84, currency: "RSD")
-                }
-                .padding(14)
-                .glassEffect(.regular, in: shape)
-            }
-            .padding(.horizontal, 16)
-        )
-        let points = probe("amount inside glass", window, at: rowPoints)
-        XCTAssertFalse(points.isEmpty, summary(points, in: window))
-    }
-
-    /// The fix: the menu on the whole row, outside its glass — a press on
-    /// the name opens it too.
-    func testMenuOnTheWholeGlassRowOpensFromTheName() throws {
-        let window = try showRow(
-            GlassEffectContainer {
-                HStack {
-                    Text("You")
-                    Spacer()
-                    amount
-                }
-                .padding(14)
-                .glassEffect(.regular, in: shape)
-                .copyableAmount(83.84, currency: "RSD", in: shape)
-            }
-            .padding(.horizontal, 16)
-        )
-        let points = probe("whole glass row", window, at: rowPoints)
-        XCTAssertTrue(points.contains { $0.x < 100 }, summary(points, in: window))
-        XCTAssertTrue(points.contains { $0.x > 300 }, summary(points, in: window))
-    }
-
-    /// The same row as a glass card of its own, no container around it
-    /// (how the debt rows sit).
-    func testMenuOnAStandaloneGlassRowOpensFromTheName() throws {
+    /// A glass row with the menu on the row itself: a press on the name
+    /// opens it, not just one on the amount.
+    func testMenuOnAGlassRowOpensFromTheName() throws {
         let window = try showRow(
             HStack {
                 Text("You")

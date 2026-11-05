@@ -178,9 +178,9 @@ struct ShareDistributionView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 40)
         } else {
-            // Each row is its own glass card, no GlassEffectContainer: a
-            // long-press menu on a row inside a container doesn't open, and
-            // every row here copies its share (see `copyableAmount`).
+            // Each row is its own glass card, no GlassEffectContainer, so
+            // nothing groups the rows' glass around their long-press copy
+            // menus (see `copyableAmount`).
             VStack(spacing: AppSpacing.md) {
                 ForEach(Array(sharers.enumerated()), id: \.offset) { _, sharer in
                     row(sharer)
@@ -251,6 +251,9 @@ struct ShareDistributionView: View {
         // rows in the debt summary so all Split list rows read as
         // one frosted family.
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous))
+        // Long-press anywhere on the card copies the share; a tap still
+        // opens the person's items (the tap handler wraps the menu layer).
+        .copyableAmount(sharer.amount, currency: currency, in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous))
         // The WHOLE card is the tap target (not just the small "N items"
         // chip) when there's an item breakdown to open. Rows without one
         // (recipient side of a shared tx) stay inert — the guard no-ops and
@@ -262,9 +265,6 @@ struct ShareDistributionView: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             itemsSheetTarget = sharer
         }
-        // Long-press anywhere on the card copies the share; a tap still
-        // opens the person's items.
-        .copyableAmount(sharer.amount, currency: currency, in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(showsItemsButton ? .isButton : [])
     }

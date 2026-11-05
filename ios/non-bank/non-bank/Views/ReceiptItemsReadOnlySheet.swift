@@ -231,9 +231,9 @@ struct ReceiptItemsReadOnlySheet: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 40)
         } else {
-            // Each row is its own glass card, no GlassEffectContainer: a
-            // long-press menu on a row inside a container doesn't open, and
-            // every row here copies its amount (see `copyableAmount`).
+            // Each row is its own glass card, no GlassEffectContainer, so
+            // nothing groups the rows' glass around their long-press copy
+            // menus (see `copyableAmount`).
             VStack(spacing: AppSpacing.sm) {
                 ForEach(items) { item in
                     row(item)
@@ -303,6 +303,9 @@ struct ReceiptItemsReadOnlySheet: View {
         // iOS-26 Liquid Glass — same modifier the transaction card
         // uses for its Notes block and timeline rows.
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+        // Long-press anywhere on the row copies its amount; a tap still
+        // opens the per-person sheet (the tap handler wraps the menu layer).
+        .copyableAmount(item.lineTotal, currency: currency, negative: isDiscount, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture {
             // Only rows with someone to attribute to are interactive.
@@ -314,9 +317,6 @@ struct ReceiptItemsReadOnlySheet: View {
                 selectedChargeForDistribution = item
             }
         }
-        // Long-press anywhere on the row copies its amount; a tap still
-        // opens the per-person sheet.
-        .copyableAmount(item.lineTotal, currency: currency, negative: isDiscount, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
     }
 
     /// Claimants driving a row's avatar pile + detail sheet: equal-split

@@ -12,18 +12,37 @@ extension View {
     /// - Parameter negative: prefix the "-" the row shows (a discount line),
     ///   so the clipboard holds what's on screen.
     func copyableAmount(_ amount: Double, currency: String, negative: Bool = false) -> some View {
-        modifier(CopyableAmountModifier(text: CopyableAmount.text(amount, currency: currency, negative: negative)))
+        copyableAmount(amount, currency: currency, negative: negative, outline: Rectangle())
     }
 
-    /// For a whole row, `shape` being its outline: a long press anywhere on
-    /// the row opens the menu, with the amount shown large above it. Apply
-    /// it after the row's `.glassEffect`, and before an `.onTapGesture` so
-    /// taps still reach that.
+    /// The same menu on a whole row of plain content — glass, if any, as a
+    /// `.background` behind it, not a `.glassEffect` around it (the debt
+    /// rows). `outline` is the row's shape: the press lands anywhere on the
+    /// row and the row lifts with its own corners.
+    func copyableAmount<S: Shape>(
+        _ amount: Double,
+        currency: String,
+        negative: Bool = false,
+        outline: S
+    ) -> some View {
+        modifier(CopyableAmountModifier(
+            text: CopyableAmount.text(amount, currency: currency, negative: negative),
+            shape: outline
+        ))
+    }
+
+    /// For a row whose content sits inside its `.glassEffect`, `shape`
+    /// being its outline: a long press anywhere on the row opens the menu,
+    /// with the amount shown large above it. Apply it after the row's
+    /// `.glassEffect`, and before an `.onTapGesture` so taps still reach
+    /// that.
     ///
     /// The menu sits on a clear layer over the row rather than in the row:
     /// a menu inside a glass row didn't open (1.0.6 build 16). Over the
-    /// glass it's plain content, like the hero amount.
-    func copyableAmount<S: Shape>(
+    /// glass it's plain content, like the hero amount. Works on the sheets'
+    /// rows; on the transaction card's debt row it didn't (build 17), which
+    /// now keeps its content out of the glass instead.
+    func copyableAmountOverGlass<S: Shape>(
         _ amount: Double,
         currency: String,
         negative: Bool = false,
@@ -64,13 +83,15 @@ private struct CopyAmountButton: View {
     }
 }
 
-private struct CopyableAmountModifier: ViewModifier {
+private struct CopyableAmountModifier<S: Shape>: ViewModifier {
     let text: String
+    let shape: S
 
     func body(content: Content) -> some View {
         content
-            // The press registers on the gaps between glyphs too.
-            .contentShape(Rectangle())
+            // The press registers on the gaps between glyphs too; also the
+            // outline the lifted preview keeps.
+            .contentShape(shape)
             .contextMenu {
                 CopyAmountButton(text: text)
             }

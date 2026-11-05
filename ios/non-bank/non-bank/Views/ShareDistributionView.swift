@@ -253,7 +253,7 @@ struct ShareDistributionView: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous))
         // Long-press anywhere on the card copies the share; a tap still
         // opens the person's items (the tap handler wraps the menu layer).
-        .copyableAmount(sharer.amount, currency: currency, in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous))
+        .copyableAmountOverGlass(sharer.amount, currency: currency, in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous))
         // The WHOLE card is the tap target (not just the small "N items"
         // chip) when there's an item breakdown to open. Rows without one
         // (recipient side of a shared tx) stay inert — the guard no-ops and
@@ -387,7 +387,7 @@ private struct ParticipantBreakdownSheet: View {
             in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
         )
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
-        .copyableAmount(slice.slice, currency: currency, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+        .copyableAmountOverGlass(slice.slice, currency: currency, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
     }
 
     private func chargeRow(_ cut: SplitItemBreakdown.ChargeCut) -> some View {
@@ -415,7 +415,7 @@ private struct ParticipantBreakdownSheet: View {
             in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
         )
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
-        .copyableAmount(cut.amount, currency: currency, negative: cut.kind == .discount, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+        .copyableAmountOverGlass(cut.amount, currency: currency, negative: cut.kind == .discount, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
     }
 
     private var totalRow: some View {
@@ -434,7 +434,7 @@ private struct ParticipantBreakdownSheet: View {
             in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
         )
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
-        .copyableAmount(
+        .copyableAmountOverGlass(
             totalShare,
             currency: currency,
             negative: totalShare < 0,

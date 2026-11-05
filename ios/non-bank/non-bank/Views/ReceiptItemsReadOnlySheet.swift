@@ -305,7 +305,7 @@ struct ReceiptItemsReadOnlySheet: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
         // Long-press anywhere on the row copies its amount; a tap still
         // opens the per-person sheet (the tap handler wraps the menu layer).
-        .copyableAmount(item.lineTotal, currency: currency, negative: isDiscount, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+        .copyableAmountOverGlass(item.lineTotal, currency: currency, negative: isDiscount, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture {
             // Only rows with someone to attribute to are interactive.
@@ -359,7 +359,7 @@ struct ReceiptItemsReadOnlySheet: View {
         // totals card reads as one of the cards rather than a
         // contrasting solid block.
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
-        .copyableAmount(grandTotal, currency: currency, negative: grandTotal < 0, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+        .copyableAmountOverGlass(grandTotal, currency: currency, negative: grandTotal < 0, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
         .padding(.horizontal, AppSpacing.pageHorizontal)
     }
 
@@ -508,7 +508,7 @@ struct PerItemClaimantsSheet: View {
                                 in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
                             )
                             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
-                            .copyableAmount(entry.slice, currency: currency, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
+                            .copyableAmountOverGlass(entry.slice, currency: currency, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
                         }
                     }
 
@@ -606,7 +606,7 @@ struct PerChargeDistributionSheet: View {
                                 in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous)
                             )
                             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.medium, style: .continuous))
-                            .copyableAmount(
+                            .copyableAmountOverGlass(
                                 entry.slice,
                                 currency: currency,
                                 negative: charge.kind == .discount,

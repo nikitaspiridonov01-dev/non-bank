@@ -499,15 +499,13 @@ struct DebtRowView: View {
         // Long-press anywhere on the row copies the amount owed (the
         // transaction's "Debts to settle up", Debts, the friend pages).
         if let amount {
-            row.copyableAmount(
-                amount,
-                currency: currency,
-                in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous)
-            )
+            row.copyableAmount(amount, currency: currency, outline: Self.shape)
         } else {
             row
         }
     }
+
+    private static let shape = RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous)
 
     private var row: some View {
         HStack(spacing: AppSpacing.md) {
@@ -519,12 +517,16 @@ struct DebtRowView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, AppSpacing.rowVertical)
         .frame(maxWidth: .infinity)
-        // `.glassEffect(.regular, in:)` — iOS 26 native Liquid
-        // Glass that matches the toolbar Close / Edit pills. The
-        // older `.regularMaterial` rendered visibly darker; this
-        // API gives the same near-white frosted weight on the
-        // lavender Split page.
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AppRadius.large, style: .continuous))
+        // iOS 26 Liquid Glass that matches the toolbar Close / Edit
+        // pills (the older `.regularMaterial` rendered visibly darker),
+        // as a backdrop BEHIND the row rather than a `.glassEffect`
+        // around it: the row's content stays plain, so its long-press
+        // copy menu opens like the hero amount's. With the content
+        // inside the glass the menu didn't open on the transaction
+        // card (1.0.6 build 17).
+        .background {
+            Color.clear.glassEffect(.regular, in: Self.shape)
+        }
     }
 
     // MARK: - Avatar

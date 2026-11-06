@@ -8,6 +8,7 @@ once registered as event-scoped custom dimensions in GA4 Admin — the
 friend_detail report says so instead of failing the whole run.
 """
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -165,13 +166,17 @@ def report_audience(tok, prop, days):
 
 def report_retention(tok, prop, days):
     # Weekly acquisition cohorts, users still active on day 1 / 7 / 14 / 28.
+    # Cohort date ranges only take YYYY-MM-DD ("7daysAgo" is refused there).
     weeks = max(1, min(6, days // 7))
+    today = datetime.date.today()
     cohorts = []
     for i in range(weeks):
+        start = today - datetime.timedelta(days=(i + 1) * 7)
+        end = today - datetime.timedelta(days=i * 7 + 1)
         cohorts.append({
             "name": f"w-{i}",
             "dimension": "firstSessionDate",
-            "dateRange": {"startDate": f"{(i + 1) * 7}daysAgo", "endDate": f"{i * 7 + 1}daysAgo"},
+            "dateRange": {"startDate": start.isoformat(), "endDate": end.isoformat()},
         })
     body = {
         "dimensions": [{"name": "cohort"}, {"name": "cohortNthDay"}],
@@ -198,8 +203,36 @@ def report_retention(tok, prop, days):
         print(f"{c['name']:<7} {rng}  " + "  ".join(f"{r.get(d, '-'):>3}" for d in days_of_interest))
 
 
+def report_devices(tok, prop, days):
+    # Which devices the users are on: simulators (CI test runs, dev builds)
+    # show up here next to real iPhones.
+    body = {
+        "dateRanges": date_range(days),
+        "dimensions": [{"name": "deviceModel"}, {"name": "operatingSystemVersion"}],
+        "metrics": [{"name": "activeUsers"}, {"name": "newUsers"}, {"name": "sessions"}],
+        "orderBys": [{"metric": {"metricName": "activeUsers"}, "desc": True}],
+        "limit": 40,
+    }
+    print_table(run_report(tok, prop, body), f"Devices, last {days} days")
+
+
+def report_first_opens(tok, prop, days):
+    # New installs by day and country, to line up against CI runs and store downloads.
+    body = {
+        "dateRanges": date_range(days),
+        "dimensions": [{"name": "date"}, {"name": "country"}, {"name": "deviceModel"}],
+        "metrics": [{"name": "eventCount"}],
+        "dimensionFilter": {"filter": {"fieldName": "eventName", "stringFilter": {"value": "first_open"}}},
+        "orderBys": [{"dimension": {"dimensionName": "date"}}],
+        "limit": 200,
+    }
+    print_table(run_report(tok, prop, body), f"first_open by day, country, device, last {days} days")
+
+
 REPORTS = {
     "daily": report_daily,
+    "devices": report_devices,
+    "first_opens": report_first_opens,
     "screens": report_screens,
     "audience": report_audience,
     "retention": report_retention,

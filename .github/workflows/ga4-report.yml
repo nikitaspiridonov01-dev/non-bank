@@ -18,7 +18,7 @@ on:
         required: false
         default: ""
       report:
-        description: "all | daily | events | versions | friend_detail | screens | audience | retention | gsc_probe | gsc_token | gsc_verify | gsc_submit | gsc_status | gsc_owner"
+        description: "all | daily | devices | first_opens | events | versions | friend_detail | screens | audience | retention | gsc_probe | gsc_token | gsc_verify | gsc_submit | gsc_status | gsc_owner"
         required: false
         default: "all"
   push:

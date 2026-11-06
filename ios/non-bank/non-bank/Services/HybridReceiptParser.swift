@@ -111,11 +111,18 @@ actor HybridReceiptParser {
     ///   items. False for each photo of a multi-photo scan — the total is
     ///   on one photo, the items spread over all of them.
     func parse(
-        image: UIImage,
+        image original: UIImage,
         cloudConfig: CloudParseConfig? = nil,
         isWholeReceipt: Bool = true
     ) async throws -> Result {
         let started = Date()
+        // Text upright first: a receipt shot sideways or upside down (phone
+        // flat over the table) was read badly or not at all — the long-
+        // receipt check, the bands and the models all expect upright lines.
+        // On-device, off the main actor; an upright photo passes through.
+        let image = await Task.detached(priority: .userInitiated) {
+            ReceiptOrientation.uprighted(original)
+        }.value
         // Tall-receipt tiling (cloud path only): a very tall supermarket
         // tape compressed into a single vision-model pass loses small
         // text and drops lines. Split it into overlapping bands, parse

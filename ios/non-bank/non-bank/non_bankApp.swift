@@ -44,8 +44,15 @@ struct non_bankApp: App {
         // service — `Analytics.logEvent` will silently no-op until
         // `FirebaseApp.configure()` has run. Guarded so the build still
         // succeeds when the SDK isn't linked.
+        //
+        // Firebase is here for Analytics only, and only App Store installs
+        // report: not started at all for test runs, debug builds,
+        // TestFlight and App Review, so it can't log their automatic
+        // first_open / session events either (see `BuildChannel`).
         #if canImport(FirebaseCore)
-        FirebaseApp.configure()
+        if BuildChannel.current.collectsAnalytics {
+            FirebaseApp.configure()
+        }
         #endif
 
         DIContainer.shared.registerDefaults()

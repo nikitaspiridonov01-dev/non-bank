@@ -1,0 +1,136 @@
+import XCTest
+import UIKit
+import ImageIO
+@testable import non_bank
+
+/// A receipt photographed sideways or upside down is turned upright before
+/// it's read; an upright one, or a photo without text, is left alone.
+@MainActor
+final class ReceiptOrientationTests: XCTestCase {
+
+    private static let lines = [
+        "MAXI SUPERMARKET",
+        "BULEVAR OSLOBODJENJA 12",
+        "PIB 100000001",
+        "MLEKO 2.8% 1L          149.99",
+        "HLEB BELI 500G          89.99",
+        "JOGURT 1KG             179.99",
+        "BANANE KG              219.99",
+        "JAJA 10 KOM            299.99",
+        "SIR GAUDA 300G         459.99",
+        "SAPUN TECNI 1L         329.99",
+        "CAJ KAMILICA            99.99",
+        "KAFA 200G              389.99",
+        "PAPIR TOALETNI         549.99",
+        "VODA 1.5L               69.99",
+        "SOK JABUKA 1L          189.99",
+        "COKOLADA 100G          159.99",
+        "KEKS 200G              129.99",
+        "PASTA 500G             139.99",
+        "ULJE 1L                249.99",
+        "SECER 1KG              119.99",
+        "UKUPNO                4157.78",
+        "GOTOVINA              5000.00",
+        "HVALA NA POSETI",
+    ]
+
+    /// The receipt as printed: black monospaced lines on white.
+    private func receipt() -> UIImage {
+        let size = CGSize(width: 640, height: 1040)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.monospacedSystemFont(ofSize: 26, weight: .regular),
+            .foregroundColor: UIColor.black,
+        ]
+        return render(size) { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            for (index, line) in Self.lines.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 30, y: 40 + CGFloat(index) * 42), withAttributes: attributes)
+            }
+        }
+    }
+
+    /// `image`'s pixels turned the way `orientation` displays them.
+    private func turned(_ image: UIImage, _ orientation: UIImage.Orientation) -> UIImage {
+        let flagged = UIImage(cgImage: image.cgImage!, scale: 1, orientation: orientation)
+        return render(flagged.size) { _ in flagged.draw(in: CGRect(origin: .zero, size: flagged.size)) }
+    }
+
+    private func render(_ size: CGSize, _ draw: (UIGraphicsImageRendererContext) -> Void) -> UIImage {
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image(actions: draw)
+    }
+
+    private func orientation(of image: UIImage) -> CGImagePropertyOrientation {
+        ReceiptOrientation.textOrientation(of: image.cgImage!)
+    }
+
+    func testUprightReceiptIsLeftAsItIs() {
+        let original = receipt()
+        XCTAssertEqual(orientation(of: original), .up)
+        XCTAssertTrue(ReceiptOrientation.uprighted(original) === original)
+    }
+
+    /// Turned a quarter one way, the receipt reads upright a quarter the
+    /// other way.
+    func testQuarterTurnedReceiptIsFound() {
+        XCTAssertEqual(orientation(of: turned(receipt(), .right)), .left)
+        XCTAssertEqual(orientation(of: turned(receipt(), .left)), .right)
+    }
+
+    func testUpsideDownReceiptIsFound() {
+        XCTAssertEqual(orientation(of: turned(receipt(), .down)), .down)
+    }
+
+    func testTurnedReceiptComesBackUpright() {
+        let original = receipt()
+        for turn in [UIImage.Orientation.right, .left, .down] {
+            let upright = ReceiptOrientation.uprighted(turned(original, turn))
+            XCTAssertEqual(upright.size, original.size, "\(turn.rawValue)")
+            XCTAssertEqual(orientation(of: upright), .up, "\(turn.rawValue)")
+        }
+    }
+
+    /// A receipt that fills only part of a full-size camera photo, lying
+    /// across the frame: found on the downscaled copy, turned at full size.
+    func testReceiptAcrossALargePhotoIsTurned() {
+        let photoSize = CGSize(width: 3000, height: 4000)
+        let receiptImage = receipt()
+        let photo = render(photoSize) { context in
+            UIColor(white: 0.55, alpha: 1).setFill()
+            context.fill(CGRect(origin: .zero, size: photoSize))
+            let size = CGSize(width: receiptImage.size.width * 2.6, height: receiptImage.size.height * 2.6)
+            receiptImage.draw(in: CGRect(
+                x: (photoSize.width - size.width) / 2,
+                y: (photoSize.height - size.height) / 2,
+                width: size.width,
+                height: size.height
+            ))
+        }
+        let sideways = turned(photo, .right)
+        XCTAssertEqual(orientation(of: sideways), .left)
+        let upright = ReceiptOrientation.uprighted(sideways)
+        XCTAssertEqual(upright.size, photoSize)
+    }
+
+    /// The camera's own orientation flag is applied first: a photo whose
+    /// flag already shows it upright isn't turned any further.
+    func testCameraFlagIsAppliedFirst() {
+        let pixelsSideways = turned(receipt(), .left)
+        let flagged = UIImage(cgImage: pixelsSideways.cgImage!, scale: 1, orientation: .right)
+        let upright = ReceiptOrientation.uprighted(flagged)
+        XCTAssertEqual(upright.size, receipt().size)
+        XCTAssertEqual(orientation(of: upright), .up)
+    }
+
+    func testPhotoWithoutTextIsLeftAlone() {
+        let blank = render(CGSize(width: 900, height: 1200)) { context in
+            UIColor(white: 0.9, alpha: 1).setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 900, height: 1200))
+        }
+        XCTAssertEqual(orientation(of: blank), .up)
+        XCTAssertEqual(orientation(of: turned(blank, .right)), .up)
+    }
+}

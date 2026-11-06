@@ -1840,23 +1840,29 @@ struct CreateTransactionModal: View {
                     // is approximate — adds/deletes shift positions —
                     // but it's the cheapest defensible heuristic for
                     // "did the user have to correct text vs digits."
-                    if itemsActuallyChanged {
-                        let original = parsedReceiptResult?.parsedReceipt.items ?? []
+                    // Sent only when the confirmed list differs from the
+                    // parser's: `itemsActuallyChanged` alone is true on every
+                    // first confirm (nothing was applied yet), so it fired
+                    // after every scan, edited or not.
+                    if itemsActuallyChanged, let parsed = parsedReceiptResult?.parsedReceipt {
+                        let original = parsed.items
                         let added = max(0, items.count - original.count)
                         let deleted = max(0, original.count - items.count)
                         let pairs = zip(original, items)
                         let nameEdits = pairs.filter { $0.0.name != $0.1.name }.count
                         let priceEdits = pairs.filter { abs(($0.0.total ?? 0) - ($0.1.total ?? 0)) > 0.001 }.count
                         let quantityEdits = pairs.filter { ($0.0.quantity ?? 0) != ($0.1.quantity ?? 0) }.count
-                        let totalChanged = abs((parsedReceiptResult?.parsedReceipt.totalAmount ?? newItemsSum) - total) > 0.001
-                        analytics.track(.receiptItemsEditedInReview(
-                            itemsAdded: added,
-                            itemsDeleted: deleted,
-                            nameEdits: nameEdits,
-                            priceEdits: priceEdits,
-                            quantityEdits: quantityEdits,
-                            totalChanged: totalChanged
-                        ))
+                        let totalChanged = abs((parsed.totalAmount ?? newItemsSum) - total) > 0.001
+                        if added + deleted + nameEdits + priceEdits + quantityEdits > 0 || totalChanged {
+                            analytics.track(.receiptItemsEditedInReview(
+                                itemsAdded: added,
+                                itemsDeleted: deleted,
+                                nameEdits: nameEdits,
+                                priceEdits: priceEdits,
+                                quantityEdits: quantityEdits,
+                                totalChanged: totalChanged
+                            ))
+                        }
                     }
 
                     vm.applyReceiptItems(

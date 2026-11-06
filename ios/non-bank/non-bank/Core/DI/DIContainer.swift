@@ -86,23 +86,16 @@ final class DIContainer {
         // Services
         register(CurrencyServiceProtocol.self, instance: CurrencyService())
 
-        // Analytics — Firebase if the SDK is linked, NoOp otherwise.
-        // The `FirebaseAnalyticsService` initialiser already gates on
-        // `canImport(FirebaseAnalytics)` and falls back to a NoOp
-        // internally, so a single registration line works whether the
-        // SDK is present or not.
+        // Analytics — Firebase on App Store installs (Firebase is only
+        // started there, see `BuildChannel`), NoOp everywhere else: test
+        // runs, debug builds, TestFlight, App Review, or no SDK linked.
         let analytics: AnalyticsServiceProtocol
-        if AnalyticsAvailability.isFirebaseLinked {
+        if AnalyticsAvailability.isFirebaseLinked && BuildChannel.current.collectsAnalytics {
             analytics = FirebaseAnalyticsService(enabled: true)
         } else {
-            // DEBUG-only console logging while the SDK isn't linked
-            // yet so we can verify event taxonomy before paying for
-            // the Firebase wiring.
-            #if DEBUG
-            analytics = NoOpAnalyticsService(logToConsole: true)
-            #else
-            analytics = NoOpAnalyticsService(logToConsole: false)
-            #endif
+            // Debug builds print events to the console, so the event
+            // taxonomy can still be checked from Xcode.
+            analytics = NoOpAnalyticsService(logToConsole: BuildChannel.current == .debug)
         }
         register(AnalyticsServiceProtocol.self, instance: analytics)
     }

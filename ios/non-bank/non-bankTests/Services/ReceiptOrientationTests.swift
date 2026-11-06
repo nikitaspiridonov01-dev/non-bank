@@ -84,13 +84,48 @@ final class ReceiptOrientationTests: XCTestCase {
         XCTAssertEqual(orientation(of: turned(receipt(), .down)), .down)
     }
 
+    /// Turned back, the receipt reads as printed: amounts on the right.
     func testTurnedReceiptComesBackUpright() {
         let original = receipt()
         for turn in [UIImage.Orientation.right, .left, .down] {
             let upright = ReceiptOrientation.uprighted(turned(original, turn))
             XCTAssertEqual(upright.size, original.size, "\(turn.rawValue)")
-            XCTAssertEqual(orientation(of: upright), .up, "\(turn.rawValue)")
+            let reading = ReceiptOrientation.reading(of: upright.cgImage!, orientation: .up)
+            XCTAssertGreaterThanOrEqual(reading.amountsRight, 10, "\(turn.rawValue)")
+            XCTAssertEqual(reading.amountsLeft, 0, "\(turn.rawValue)")
         }
+    }
+
+    // MARK: - What the decision rests on
+
+    /// Amounts close the receipt's lines, right-aligned: read upright,
+    /// they're on the right.
+    func testUprightReadingHasTheAmountsOnTheRight() {
+        let reading = ReceiptOrientation.reading(of: receipt().cgImage!, orientation: .up)
+        XCTAssertGreaterThanOrEqual(reading.amountsRight, 10)
+        XCTAssertEqual(reading.amountsLeft, 0)
+    }
+
+    /// Vision's coordinates are those of the image turned the way it was
+    /// asked to read it: an upside-down receipt read upside down has its
+    /// amounts on the right too.
+    func testReadingTurnedTheRightWayHasTheAmountsOnTheRight() {
+        let reading = ReceiptOrientation.reading(of: turned(receipt(), .down).cgImage!, orientation: .down)
+        XCTAssertGreaterThanOrEqual(reading.amountsRight, 10)
+    }
+
+    func testTrailingAmount() {
+        func amount(_ line: String) -> String? {
+            ReceiptOrientation.trailingAmount(in: line).map { String(line[$0]) }
+        }
+        XCTAssertEqual(amount("MLEKO 2.8% 1L          149.99"), "149.99")
+        XCTAssertEqual(amount("UKUPNO 4.157,78 A"), "4.157,78")
+        XCTAssertEqual(amount("GOTOVINA 5000.00"), "5000.00")
+        XCTAssertEqual(amount("89,99"), "89,99")
+        XCTAssertEqual(amount("TOTAL 12.50 EUR"), "12.50")
+        XCTAssertNil(amount("HVALA NA POSETI"))
+        XCTAssertNil(amount("PIB 100000001"))
+        XCTAssertNil(amount("JAJA 10 KOM"))
     }
 
     /// A receipt that fills only part of a full-size camera photo, lying

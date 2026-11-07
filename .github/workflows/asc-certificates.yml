@@ -1,0 +1,39 @@
+# Lists the team's signing certificates, or revokes the development ones CI
+# left behind (each release run's GitHub-hosted Mac makes one, and its
+# private key goes with the machine). Manual dispatch only; dry run by
+# default. Same ASC API key as release.yml. Distribution certificates and
+# certificates made in Xcode with an Apple ID are never touched.
+name: ASC certificates
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "list | revoke-ci"
+        required: false
+        default: "list"
+      dry_run:
+        description: "1 = print what would be revoked, revoke nothing"
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  certificates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet "PyJWT[crypto]" requests
+      - env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          MODE: ${{ inputs.mode || 'list' }}
+          DRY_RUN: ${{ inputs.dry_run || '1' }}
+        run: python .github/scripts/asc_certificates.py

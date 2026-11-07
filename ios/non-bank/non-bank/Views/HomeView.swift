@@ -17,9 +17,11 @@ struct HomeView: View {
     
     @State private var selectedTransaction: Transaction? = nil
     @State private var showTransactionDetail: Bool = false
-    // Gallery-first receipt scan (top-right scan icon): tap → photo
-    // library, long-press → camera. Picked/captured images are routed
-    // into the create modal, which parses them before showing the form.
+    // Receipt scan (top-right scan icon): tap → the "Scan a receipt"
+    // sheet, which leads on to the camera or the photo library.
+    // Picked/captured images are routed into the create modal, which
+    // parses them before showing the form.
+    @State private var showScanSourcePicker: Bool = false
     @State private var showScanPhotosPicker: Bool = false
     @State private var scanPhotosItems: [PhotosPickerItem] = []
     @State private var showScanCamera: Bool = false
@@ -307,9 +309,25 @@ struct HomeView: View {
                 scanReceiptButton
             }
         }
-        // Gallery-first receipt scan, attached once at the body level
-        // (the scan icon renders in two mutually-exclusive overlays).
-        // Tap opens this picker; long-press opens the camera.
+        // Receipt scan, attached once at the body level (the scan icon
+        // renders in two mutually-exclusive overlays). The icon opens
+        // the same "Scan a receipt" sheet as the create modal's scan
+        // button; its rows lead on to the camera or the library below.
+        .sheet(isPresented: $showScanSourcePicker) {
+            ReceiptSourcePickerView(
+                wrapInNavigationStack: true,
+                onPickCamera: {
+                    showScanSourcePicker = false
+                    openScanCamera()
+                },
+                onPickLibrary: {
+                    showScanSourcePicker = false
+                    showScanPhotosPicker = true
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
         .photosPicker(
             isPresented: $showScanPhotosPicker,
             selection: $scanPhotosItems,
@@ -646,36 +664,30 @@ struct HomeView: View {
         .padding(.leading, AppSpacing.md)
     }
 
-    @ViewBuilder
     private var scanReceiptButton: some View {
-        // Tap → system photo library directly (gallery-first). Long-press
-        // → camera for an in-the-moment shot. iOS's PHPicker can't host a
-        // camera button, so the camera lives on a separate gesture of the
-        // same control (with a VoiceOver action for accessibility).
-        Image(systemName: "viewfinder")
-            .font(AppFonts.bodyEmphasized)
-            .foregroundColor(AppColors.textSecondary)
-            .frame(width: Self.headerChipSize, height: Self.headerChipSize)
-            .glassEffect(.regular, in: .circle)
-            .contentShape(Circle())
-            .onTapGesture {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                showScanPhotosPicker = true
-            }
-            .onLongPressGesture(minimumDuration: 0.35) { openScanCamera() }
-            .accessibilityElement()
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel("Scan receipt")
-            .accessibilityHint("Opens your photo library. Use the Take photo action for the camera.")
-            .accessibilityAction(named: "Take photo") { openScanCamera() }
-            .padding(.top, 6)
-            .padding(.trailing, AppSpacing.md)
+        // Tap → the "Scan a receipt" sheet: camera or photo library,
+        // the same choice the create modal's scan button offers.
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showScanSourcePicker = true
+        } label: {
+            Image(systemName: "viewfinder")
+                .font(AppFonts.bodyEmphasized)
+                .foregroundColor(AppColors.textSecondary)
+                .frame(width: Self.headerChipSize, height: Self.headerChipSize)
+                .glassEffect(.regular, in: .circle)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Scan receipt")
+        .accessibilityHint("Take a photo of a receipt or pick one from your library.")
+        .padding(.top, 6)
+        .padding(.trailing, AppSpacing.md)
     }
 
     /// Open the camera for an in-the-moment receipt shot. Falls back to
     /// the photo library when no camera is available (e.g. Simulator).
     private func openScanCamera() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
             showScanPhotosPicker = true
             return

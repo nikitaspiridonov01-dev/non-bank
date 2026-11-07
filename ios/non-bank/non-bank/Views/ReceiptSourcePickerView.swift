@@ -6,14 +6,15 @@ import SwiftUI
 /// `WhoPaidPickerView`): 32pt bold title, two icon + label + help-text
 /// rows the user taps to advance.
 ///
-/// Two consumers:
+/// Three consumers:
 /// - The byItems-without-receipt path inside `TransactionModeFlowSheet`
 ///   pushes this as a step in its NavigationStack
 ///   (`wrapInNavigationStack: false`). Cancel routing is handled by the
 ///   orchestrator's outer toolbar.
 /// - The toolbar scan button on `CreateTransactionModal` (amount = 0)
-///   presents it as a sheet (`wrapInNavigationStack: true`). The
-///   internal NavigationStack supplies the Cancel toolbar item.
+///   and the scan button on `HomeView` present it as a sheet
+///   (`wrapInNavigationStack: true`). The internal NavigationStack
+///   supplies the Cancel toolbar item.
 struct ReceiptSourcePickerView: View {
     /// When true, wraps the body in its own `NavigationStack` and
     /// surfaces a Cancel toolbar item that closes via the sheet's

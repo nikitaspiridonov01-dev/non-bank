@@ -21,7 +21,7 @@ import requests
 
 BASE = "https://api.appstoreconnect.apple.com/v1"
 BUNDLE_ID = os.environ.get("ASC_BUNDLE_ID", "nikitaspiridonov.non-bank")
-TARGET = os.environ.get("TARGET_VERSION", "1.0.6")
+TARGET = os.environ.get("TARGET_VERSION", "1.0.7")
 MODE = os.environ.get("MODE", "metadata")
 DRY = os.environ.get("DRY_RUN", "0") == "1"
 SECONDARY_CATEGORY = os.environ.get("SECONDARY_CATEGORY", "UTILITIES")
@@ -57,9 +57,7 @@ Non Bank is for people who want to understand their money and settle up with fri
 
 Got an idea, or something you'd love Non Bank to do? Write to nonbankapp@gmail.com — every suggestion shapes what comes next."""
 
-WHATS_NEW_EN = ("• Long-press an amount to copy it on the split screens too: each person's share, debts to settle up, receipt items and the per-person breakdown\n"
-                "• Friend lists start with the people you split with most often, so there's no scrolling to find them\n"
-                "• “Recently used” now shows the split setups you use most; ones you haven't used in a while disappear on their own")
+WHATS_NEW_EN = "• Receipts photographed sideways or upside down are now turned upright automatically before they're read, so there's no need to rotate the photo first"
 
 LOCALES = {
     "en-US": {
@@ -97,9 +95,7 @@ LOCALES = {
 • Экспорт в CSV или JSON в любой момент
 
 Идеи и пожелания: nonbankapp@gmail.com""",
-        "whatsNew": ("• Сумму можно скопировать долгим нажатием и на экранах сплита: долю каждого участника, долги, позиции чека и разбивку по людям\n"
-                     "• В списках друзей первыми идут те, с кем вы делите расходы чаще всего, — листать больше не нужно\n"
-                     "• Блок «Recently used» показывает варианты сплита, которыми вы пользуетесь чаще всего, а давно не используемые исчезают сами"),
+        "whatsNew": "• Чеки, снятые боком или вверх ногами, теперь сами разворачиваются перед распознаванием — поворачивать фото заранее больше не нужно",
     },
     "es-MX": {
         "name": "Non Bank: Gastos y Cuentas",
@@ -128,9 +124,7 @@ PRIVADO POR DISEÑO
 • Exporta todo en CSV o JSON cuando quieras
 
 ¿Ideas? Escríbenos a nonbankapp@gmail.com""",
-        "whatsNew": ("• Mantén presionado un monto para copiarlo también en las pantallas de división: la parte de cada persona, las deudas, los artículos del ticket y el desglose por persona\n"
-                     "• Las listas de amigos empiezan por las personas con las que más divides gastos, sin tener que desplazarte\n"
-                     "• “Recently used” muestra las divisiones que más usas; las que no usas desde hace tiempo desaparecen solas"),
+        "whatsNew": "• Los tickets fotografiados de lado o al revés ahora se enderezan solos antes de leerlos, sin tener que girar la foto primero",
     },
     "de-DE": {
         "name": "Non Bank: Ausgaben & Teilen",
@@ -159,9 +153,7 @@ PRIVAT BY DESIGN
 • Export als CSV oder JSON jederzeit
 
 Ideen? Schreib an nonbankapp@gmail.com""",
-        "whatsNew": ("• Beträge lassen sich jetzt auch auf den Aufteilungs-Bildschirmen per langem Drücken kopieren: der Anteil jeder Person, offene Schulden, Belegpositionen und die Aufschlüsselung pro Person\n"
-                     "• Freundeslisten beginnen mit den Personen, mit denen du am häufigsten teilst – kein Scrollen mehr\n"
-                     "• „Recently used“ zeigt die Aufteilungen, die du am häufigsten nutzt; lange nicht genutzte verschwinden von selbst"),
+        "whatsNew": "• Seitlich oder kopfüber fotografierte Belege werden jetzt vor dem Auslesen automatisch gerade gedreht – du musst das Foto nicht mehr selbst drehen",
     },
     "fr-FR": {
         "name": "Non Bank: Dépenses & Partage",
@@ -190,9 +182,7 @@ PRIVÉ PAR CONCEPTION
 • Export CSV ou JSON à tout moment
 
 Des idées ? Écrivez à nonbankapp@gmail.com""",
-        "whatsNew": ("• Un appui long sur un montant permet aussi de le copier sur les écrans de partage : la part de chacun, les dettes à régler, les articles du ticket et le détail par personne\n"
-                     "• Les listes d'amis commencent par les personnes avec qui vous partagez le plus souvent, sans avoir à faire défiler\n"
-                     "• « Recently used » affiche les partages que vous utilisez le plus ; ceux que vous n'utilisez plus depuis un moment disparaissent d'eux-mêmes"),
+        "whatsNew": "• Les tickets photographiés de côté ou à l'envers sont désormais redressés automatiquement avant la lecture, plus besoin de faire pivoter la photo",
     },
 }
 

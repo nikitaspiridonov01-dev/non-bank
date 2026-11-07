@@ -6,7 +6,10 @@
 # certificate, fetch/create the App Store provisioning profile for the
 # bundle ID + entitlements, and sign the export with Apple's cloud
 # "Apple Distribution" certificate — the same path Xcode's Organizer
-# uses. No .p12 or profile has to be stored as a secret.
+# uses. No .p12 or profile has to be stored as a secret. The development
+# certificate made for the runner is revoked at the end of the run: its
+# private key goes with the machine, and left behind they filled the
+# team's certificate quota (run 12's archive failed on it).
 #
 # Secrets (Settings → Secrets and variables → Actions):
 #   ASC_KEY_ID       — App Store Connect API key ID (10 chars)
@@ -168,6 +171,27 @@ jobs:
             2>&1 | tee export.log | grep -E "error:|warning:|\*\* EXPORT|Upload|upload|Package Summary|Signing" || true
           grep -q "\*\* EXPORT SUCCEEDED \*\*" export.log
           echo "::notice::Uploaded ${BUNDLE_ID} ${{ steps.build.outputs.marketing }} (${{ steps.build.outputs.number }}) to App Store Connect — it appears in TestFlight after Apple's processing (usually 5–15 min)."
+
+      - name: Revoke the development certificate this runner made
+        # Only certificates in this runner's keychain: the one xcodebuild
+        # made for it. Distribution signing is Apple's cloud certificate and
+        # isn't touched; nor are certificates made in Xcode with an Apple ID.
+        if: always()
+        continue-on-error: true
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          security find-certificate -a -c "Apple Development" -p > "$RUNNER_TEMP/runner-certs.pem" 2>/dev/null || true
+          if ! grep -q "BEGIN CERTIFICATE" "$RUNNER_TEMP/runner-certs.pem"; then
+            echo "No development certificate on this runner."
+            exit 0
+          fi
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet "PyJWT[crypto]" requests
+          MODE=revoke-runner RUNNER_CERTS="$RUNNER_TEMP/runner-certs.pem" DRY_RUN=0 \
+            "$RUNNER_TEMP/venv/bin/python" "$GITHUB_WORKSPACE/.github/scripts/asc_certificates.py"
 
       - name: Upload build logs
         if: always()

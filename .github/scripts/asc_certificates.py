@@ -15,11 +15,14 @@ MODE=list (default): print every certificate. Read-only.
 MODE=revoke-ci: revoke the development certificates made with the API key
   ("Created via API"), i.e. CI's. Certificates made in Xcode with an Apple
   ID and every distribution certificate are left alone.
-  SERIAL=<hex> narrows it to the development certificate with that serial
-  (release.yml revoking the one its own runner made).
+MODE=revoke-runner: revoke the development certificates found in the PEM
+  bundle at RUNNER_CERTS (exported from the runner's keychain): the one
+  this runner made, at the end of a release run.
 DRY_RUN=1 prints what would be revoked without revoking.
 """
+import base64
 import os
+import re
 import time
 
 import jwt
@@ -28,7 +31,6 @@ import requests
 BASE = "https://api.appstoreconnect.apple.com/v1"
 MODE = os.environ.get("MODE", "list")
 DRY = os.environ.get("DRY_RUN", "0") == "1"
-SERIAL = os.environ.get("SERIAL", "").strip().upper().lstrip("0")
 DEVELOPMENT_TYPES = {"DEVELOPMENT", "IOS_DEVELOPMENT"}
 CI_MARK = "Created via API"
 
@@ -51,10 +53,6 @@ def attrs(cert):
     return cert["attributes"]
 
 
-def serial(cert):
-    return (attrs(cert).get("serialNumber") or "").upper().lstrip("0")
-
-
 def is_development(cert):
     return attrs(cert).get("certificateType") in DEVELOPMENT_TYPES
 
@@ -63,27 +61,42 @@ def is_ci(cert):
     return is_development(cert) and CI_MARK in f"{attrs(cert).get('name') or ''} {attrs(cert).get('displayName') or ''}"
 
 
+def der(cert):
+    content = attrs(cert).get("certificateContent")
+    return base64.b64decode(content) if content else None
+
+
+def runner_ders(path):
+    """The certificates in a PEM bundle (`security find-certificate -p`), as DER."""
+    text = open(path, encoding="ascii", errors="ignore").read()
+    blocks = re.findall(r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----", text, flags=re.S)
+    return {base64.b64decode("".join(b.split())) for b in blocks}
+
+
 def describe(cert):
     a = attrs(cert)
     return (f"{a.get('certificateType') or '?':<20} {a.get('name') or '-':<52} "
             f"display={a.get('displayName') or '-'!r:<24} expires {str(a.get('expirationDate'))[:10]}  "
-            f"serial {a.get('serialNumber')}  id {cert['id']}")
+            f"id {cert['id']}")
 
 
 def main():
     certs = sorted(call("GET", "/certificates", params={"limit": 200})["data"],
                    key=lambda c: attrs(c).get("expirationDate") or "")
-    print(f"{len(certs)} certificates ([CI] = development, made with the API key):")
-    for c in certs:
-        print(("  [CI] " if is_ci(c) else "       ") + describe(c))
+    if MODE in ("list", "revoke-ci"):
+        print(f"{len(certs)} certificates ([CI] = development, made with the API key):")
+        for c in certs:
+            print(("  [CI] " if is_ci(c) else "       ") + describe(c))
     if MODE == "list":
         return
-    if MODE != "revoke-ci":
-        raise SystemExit(f"unknown MODE {MODE!r}")
-    if SERIAL:
-        doomed = [c for c in certs if is_development(c) and serial(c) == SERIAL]
-    else:
+    if MODE == "revoke-ci":
         doomed = [c for c in certs if is_ci(c)]
+    elif MODE == "revoke-runner":
+        mine = runner_ders(os.environ["RUNNER_CERTS"])
+        print(f"\n{len(mine)} certificate(s) in this runner's keychain")
+        doomed = [c for c in certs if is_development(c) and der(c) in mine]
+    else:
+        raise SystemExit(f"unknown MODE {MODE!r}")
     print(f"\n{'would revoke' if DRY else 'revoking'} {len(doomed)}:")
     for c in doomed:
         print("  " + describe(c))

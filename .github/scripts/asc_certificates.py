@@ -8,6 +8,9 @@ so the certificate is dead weight, and they pile up until Apple's limit
 stops the next archive ("Your account has reached the maximum number of
 certificates": release run 12, 1.0.7 build 19).
 
+Run through asc-store-page.yml (mode `certificates` / `revoke-ci-certificates`)
+or by release.yml.
+
 MODE=list (default): print every certificate. Read-only.
 MODE=revoke-ci: revoke the development certificates made with the API key
   ("Created via API"), i.e. CI's. Certificates made in Xcode with an Apple

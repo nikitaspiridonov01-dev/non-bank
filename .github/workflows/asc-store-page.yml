@@ -3,13 +3,17 @@
 # ASC API, or attaches the processed build to it. Manual dispatch only —
 # nothing about the public store page changes without a person clicking
 # Run. Same ASC API key as release.yml. Never submits for review.
+#
+# Also the team's signing certificates (asc_certificates.py): `certificates`
+# lists them, read-only; `revoke-ci-certificates` revokes the development
+# certificates release runs left behind (dry run unless dry_run is 0).
 name: ASC store page
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "metadata | attach"
+        description: "metadata | attach | certificates | revoke-ci-certificates"
         required: false
         default: "metadata"
       dry_run:
@@ -42,4 +46,9 @@ jobs:
           TARGET_VERSION: ${{ inputs.target_version || '1.0.7' }}
           MODE: ${{ inputs.mode || 'metadata' }}
           DRY_RUN: ${{ inputs.dry_run || '1' }}
-        run: python .github/scripts/asc_store_page.py
+        run: |
+          case "$MODE" in
+            certificates) MODE=list python .github/scripts/asc_certificates.py ;;
+            revoke-ci-certificates) MODE=revoke-ci python .github/scripts/asc_certificates.py ;;
+            *) python .github/scripts/asc_store_page.py ;;
+          esac

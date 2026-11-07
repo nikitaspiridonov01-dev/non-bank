@@ -41,7 +41,8 @@ nonisolated enum ReceiptOrientation {
         /// Each line's letters (digits at half weight) times its confidence.
         var readability: Double = 0
         /// Lines ending in an amount ("149.99", "1.234,50 A"), by which half
-        /// of the photo, read this way, the amount sits in.
+        /// of the photo, read this way, the amount sits in. Only the right
+        /// half decides (see `pick`).
         var amountsRight = 0
         var amountsLeft = 0
     }
@@ -79,16 +80,23 @@ nonisolated enum ReceiptOrientation {
         return .up
     }
 
-    /// Of two opposite ways, the one the receipt reads in. The two
-    /// readings mirror each other: an amount on the right read one way is
-    /// on the left read the other, so both count. Failing a clear count,
-    /// the clearly more readable way; nil when neither is clear.
+    /// Of two opposite ways, the one the receipt reads in: the way that
+    /// finds clearly more amounts closing lines on the right. Failing a
+    /// clear count, the clearly more readable way; nil when neither is
+    /// clear.
+    ///
+    /// Amounts on the left count for neither way. Read the wrong way up the
+    /// amounts hardly read at all (2, 3, 4, 5, 7 turn into letters), so the
+    /// left of the wrong way says little — while the right way up, amounts
+    /// on the left are just that layout: an app screenshot with each price
+    /// under its item. Counted for the opposite way, three of those would
+    /// turn an upright screenshot upside down.
     static func pick(
         _ a: CGImagePropertyOrientation, _ readingA: Reading,
         or b: CGImagePropertyOrientation, _ readingB: Reading
     ) -> CGImagePropertyOrientation? {
-        let forA = readingA.amountsRight + readingB.amountsLeft
-        let forB = readingB.amountsRight + readingA.amountsLeft
+        let forA = readingA.amountsRight
+        let forB = readingB.amountsRight
         if max(forA, forB) >= minimumAmounts {
             if forA >= forB * amountsRatio && forA > forB { return a }
             if forB >= forA * amountsRatio && forB > forA { return b }

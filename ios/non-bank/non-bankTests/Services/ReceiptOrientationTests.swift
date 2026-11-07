@@ -50,6 +50,41 @@ final class ReceiptOrientationTests: XCTestCase {
         }
     }
 
+    /// An app's order screen, as a screenshot: each price on the line under
+    /// its item, on the left; only the total on the right.
+    private func orderScreenshot() -> UIImage {
+        let size = CGSize(width: 750, height: 1334)
+        let title: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 40, weight: .bold),
+            .foregroundColor: UIColor.black,
+        ]
+        let body: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 30, weight: .regular),
+            .foregroundColor: UIColor.black,
+        ]
+        let items = [
+            ("Margherita pizza", "12.90 EUR"),
+            ("Caesar salad", "8.50 EUR"),
+            ("Lemonade, large", "3.20 EUR"),
+            ("Tiramisu", "5.40 EUR"),
+            ("Delivery", "2.99 EUR"),
+            ("Service fee", "0.99 EUR"),
+        ]
+        return render(size) { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            ("Your order" as NSString).draw(at: CGPoint(x: 40, y: 60), withAttributes: title)
+            for (index, (name, price)) in items.enumerated() {
+                let y = 150 + CGFloat(index) * 110
+                (name as NSString).draw(at: CGPoint(x: 40, y: y), withAttributes: body)
+                (price as NSString).draw(at: CGPoint(x: 40, y: y + 44), withAttributes: body)
+            }
+            let total = "33.98 EUR" as NSString
+            ("Total" as NSString).draw(at: CGPoint(x: 40, y: 840), withAttributes: body)
+            total.draw(at: CGPoint(x: size.width - 40 - total.size(withAttributes: body).width, y: 840), withAttributes: body)
+        }
+    }
+
     /// `image`'s pixels turned the way `orientation` displays them.
     private func turned(_ image: UIImage, _ orientation: UIImage.Orientation) -> UIImage {
         let flagged = UIImage(cgImage: image.cgImage!, scale: 1, orientation: orientation)
@@ -71,6 +106,17 @@ final class ReceiptOrientationTests: XCTestCase {
         let original = receipt()
         XCTAssertEqual(orientation(of: original), .up)
         XCTAssertTrue(ReceiptOrientation.uprighted(original) === original)
+    }
+
+    /// Prices on the left are that screen's layout, not a sign it's upside
+    /// down.
+    func testUprightScreenshotWithPricesOnTheLeftIsLeftAsItIs() {
+        let screenshot = orderScreenshot()
+        let reading = ReceiptOrientation.reading(of: screenshot.cgImage!, orientation: .up)
+        // The layout this is about: the prices read, on the left.
+        XCTAssertGreaterThanOrEqual(reading.amountsLeft, ReceiptOrientation.minimumAmounts)
+        XCTAssertEqual(orientation(of: screenshot), .up)
+        XCTAssertTrue(ReceiptOrientation.uprighted(screenshot) === screenshot)
     }
 
     /// Turned a quarter one way, the receipt reads upright a quarter the
@@ -112,6 +158,34 @@ final class ReceiptOrientationTests: XCTestCase {
     func testReadingTurnedTheRightWayHasTheAmountsOnTheRight() {
         let reading = ReceiptOrientation.reading(of: turned(receipt(), .down).cgImage!, orientation: .down)
         XCTAssertGreaterThanOrEqual(reading.amountsRight, 10)
+    }
+
+    func testAmountsOnTheRightDecide() {
+        typealias Reading = ReceiptOrientation.Reading
+        let garbled = Reading(readability: 280, amountsRight: 1, amountsLeft: 0)
+        let upright = Reading(readability: 300, amountsRight: 12, amountsLeft: 0)
+        XCTAssertEqual(ReceiptOrientation.pick(.up, garbled, or: .down, upright), .down)
+        XCTAssertEqual(ReceiptOrientation.pick(.up, upright, or: .down, garbled), .up)
+    }
+
+    /// Amounts on the left of one reading don't count for the opposite
+    /// one; with nothing else clear, no way is picked.
+    func testAmountsOnTheLeftDecideNothing() {
+        typealias Reading = ReceiptOrientation.Reading
+        let screenshot = Reading(readability: 300, amountsRight: 1, amountsLeft: 6)
+        let upsideDown = Reading(readability: 280, amountsRight: 0, amountsLeft: 0)
+        XCTAssertNil(ReceiptOrientation.pick(.up, screenshot, or: .down, upsideDown))
+    }
+
+    /// No amounts to go by: the clearly more readable way, else none.
+    func testReadabilityDecidesWithoutAmounts() {
+        typealias Reading = ReceiptOrientation.Reading
+        XCTAssertEqual(
+            ReceiptOrientation.pick(.right, Reading(readability: 200), or: .left, Reading(readability: 60)),
+            .right
+        )
+        XCTAssertNil(ReceiptOrientation.pick(.right, Reading(readability: 200), or: .left, Reading(readability: 150)))
+        XCTAssertNil(ReceiptOrientation.pick(.right, Reading(readability: 20), or: .left, Reading(readability: 5)))
     }
 
     func testTrailingAmount() {

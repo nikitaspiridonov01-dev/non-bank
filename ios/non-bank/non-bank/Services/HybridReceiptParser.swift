@@ -64,9 +64,9 @@ actor HybridReceiptParser {
         var poolRemaining: Int? = nil
         /// Backend's "pool nearly empty" flag (<20 left). OR-ed across bands.
         var poolLow: Bool = false
-        /// Tiled reconciliation passes that ran: 1 = clean first parse,
-        /// 2-3 = escalated (upscale, then second provider). Each pass is N
-        /// extra AI calls.
+        /// Reconciliation passes that ran: 1 = clean first parse. A tiled
+        /// receipt escalates to 2-3 (upscale, then second provider), each
+        /// pass N extra AI calls; a whole-image one to 2 (the second read).
         var reconciliationPasses: Int = 1
         /// Set only on the OCR-fallback path: why cloud wasn't used.
         var cloudFallbackReason: CloudFallbackReason? = nil
@@ -164,7 +164,8 @@ actor HybridReceiptParser {
                 // A tall image already had its band passes above; a photo
                 // that shows only part of the receipt has no checksum.
                 guard tallBands == nil, isWholeReceipt else { return whole }
-                return await retryFramedIfOff(whole: whole, image: image, config: config, started: started)
+                return await rereadIfOff(
+                    whole: whole, image: image, prepared: prepared, config: config, started: started)
             } catch {
                 fallbackReason = Self.fallbackReason(for: error)
                 #if DEBUG
@@ -187,9 +188,13 @@ actor HybridReceiptParser {
     /// comes closer to its total is kept; the whole-image one on a tie,
     /// since it can't suffer from slice edges. (Slicing first misread a
     /// real Serbian receipt that the whole-image read got right.)
-    private func retryFramedIfOff(
+    ///
+    /// A receipt with no narrow strip to cut out — the ordinary short one
+    /// — gets a second read by another model instead (`secondRead`).
+    private func rereadIfOff(
         whole: Result,
         image: UIImage,
+        prepared: UIImage,
         config: CloudParseConfig,
         started: Date
     ) async -> Result {
@@ -198,9 +203,9 @@ actor HybridReceiptParser {
               let bands = ImagePreprocessing.tallReceiptBands(framed)
         else {
             #if DEBUG
-            print("[HybridReceiptParser] whole image Σ≠total, no narrow receipt to cut out → keeping it")
+            print("[HybridReceiptParser] whole image Σ≠total, no narrow receipt to cut out → second read")
             #endif
-            return whole
+            return await secondRead(of: prepared, after: whole, config: config, started: started)
         }
         #if DEBUG
         print("[HybridReceiptParser] whole image Σ≠total → receipt framed to \(Int(framed.size.width))×\(Int(framed.size.height)) px, \(bands.count) bands")
@@ -223,6 +228,53 @@ actor HybridReceiptParser {
         return kept
     }
 
+    /// A receipt that fits one frame whose items don't add up to its
+    /// printed total is read once more, by a different model: a model
+    /// misses a line or misreads a digit now and then, and two models
+    /// rarely the same one. Until this, such a receipt went to the review
+    /// screen as first read, a bought item short. The second read replaces
+    /// the first only when it settles the matter (`secondReadSettles`);
+    /// otherwise the first stands and the review screen shows its mismatch.
+    /// One more request, paid only by receipts that don't add up.
+    private func secondRead(
+        of image: UIImage,
+        after first: Result,
+        config: CloudParseConfig,
+        started: Date
+    ) async -> Result {
+        guard case .cloud(let firstProvider) = first.source else { return first }
+        var kept = first
+        kept.reconciliationPasses = 2
+        guard var second = try? await cloudParse(
+            image: image, config: config, started: started,
+            isWholeReceipt: true, excludeProvider: firstProvider
+        ) else {
+            return kept
+        }
+        let settles = Self.secondReadSettles(second, first: first)
+        #if DEBUG
+        let provider: String = { if case .cloud(let p) = second.source { return p } else { return "—" } }()
+        print("[HybridReceiptParser] second read (excluded=\(firstProvider), answered=\(provider)): gap \(Self.totalGap(second)) → keeping \(settles ? "second" : "first")")
+        #endif
+        guard settles else { return kept }
+        second.reconciliationPasses = 2
+        return second
+    }
+
+    /// True when a second read of the same receipt is to replace the
+    /// first: both read the same printed total, and the second's items add
+    /// up to it. Agreeing on the total is part of it because adding up
+    /// alone can be had the wrong way — on a receipt with tax added under
+    /// the subtotal, by taking the subtotal for the total.
+    static func secondReadSettles(_ second: Result, first: Result) -> Bool {
+        guard let firstTotal = first.parsedReceipt.totalAmount, firstTotal > 0,
+              let secondTotal = second.parsedReceipt.totalAmount,
+              abs(secondTotal - firstTotal) <= 0.05,
+              !second.parsedReceipt.items.isEmpty
+        else { return false }
+        return !hasTotalMismatch(second)
+    }
+
     /// How far Σ(items) is from the receipt's own printed total; infinity
     /// when there is no total to compare against.
     static func totalGap(_ result: Result) -> Double {
@@ -243,13 +295,15 @@ actor HybridReceiptParser {
         image: UIImage,
         config: CloudParseConfig,
         started: Date,
-        isWholeReceipt: Bool
+        isWholeReceipt: Bool,
+        excludeProvider: String? = nil
     ) async throws -> Result {
         let cloudResult = try await cloud.parse(
             image: image,
             backendURL: config.backendURL,
             categories: config.categories.map { ($0.name, $0.emoji) },
-            localeIdentifier: config.localeIdentifier
+            localeIdentifier: config.localeIdentifier,
+            excludeProvider: excludeProvider
         )
 
         // One photo of several has no total of its own to check against.

@@ -23,7 +23,7 @@ on:
       target_version:
         description: "App Store version to create/edit (CFBundleShortVersionString)"
         required: false
-        default: "1.0.7"
+        default: "1.0.8"
 
 permissions:
   contents: read
@@ -43,7 +43,7 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
           ASC_BUNDLE_ID: nikitaspiridonov.non-bank
-          TARGET_VERSION: ${{ inputs.target_version || '1.0.7' }}
+          TARGET_VERSION: ${{ inputs.target_version || '1.0.8' }}
           MODE: ${{ inputs.mode || 'metadata' }}
           DRY_RUN: ${{ inputs.dry_run || '1' }}
         run: |

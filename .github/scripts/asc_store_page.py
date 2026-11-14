@@ -21,7 +21,7 @@ import requests
 
 BASE = "https://api.appstoreconnect.apple.com/v1"
 BUNDLE_ID = os.environ.get("ASC_BUNDLE_ID", "nikitaspiridonov.non-bank")
-TARGET = os.environ.get("TARGET_VERSION", "1.0.7")
+TARGET = os.environ.get("TARGET_VERSION", "1.0.8")
 MODE = os.environ.get("MODE", "metadata")
 DRY = os.environ.get("DRY_RUN", "0") == "1"
 SECONDARY_CATEGORY = os.environ.get("SECONDARY_CATEGORY", "UTILITIES")
@@ -57,8 +57,8 @@ Non Bank is for people who want to understand their money and settle up with fri
 
 Got an idea, or something you'd love Non Bank to do? Write to nonbankapp@gmail.com — every suggestion shapes what comes next."""
 
-WHATS_NEW_EN = ("• Receipts photographed sideways or upside down are now turned upright automatically before they're read, so there's no need to rotate the photo first\n"
-                "• The scan button on the home screen now lets you choose: take a photo or pick one from your library")
+WHATS_NEW_EN = ("• Receipt scans are more complete: an item is no longer dropped when its name resembles a receipt label or when the prices don't add up\n"
+                "• If the items don't add up to the receipt total, the app now reads the receipt a second time on its own")
 
 LOCALES = {
     "en-US": {
@@ -96,8 +96,8 @@ LOCALES = {
 • Экспорт в CSV или JSON в любой момент
 
 Идеи и пожелания: nonbankapp@gmail.com""",
-        "whatsNew": ("• Чеки, снятые боком или вверх ногами, теперь сами разворачиваются перед распознаванием — поворачивать фото заранее больше не нужно\n"
-                     "• Кнопка сканирования на главном экране теперь предлагает выбор: сделать фото или выбрать из галереи"),
+        "whatsNew": ("• Сканирование чеков стало полнее: товар больше не пропадает, если его название похоже на служебную строку чека или сумма позиций не сходится\n"
+                     "• Если позиции не сходятся с итогом чека, приложение само читает чек второй раз"),
     },
     "es-MX": {
         "name": "Non Bank: Gastos y Cuentas",
@@ -126,8 +126,8 @@ PRIVADO POR DISEÑO
 • Exporta todo en CSV o JSON cuando quieras
 
 ¿Ideas? Escríbenos a nonbankapp@gmail.com""",
-        "whatsNew": ("• Los tickets fotografiados de lado o al revés ahora se enderezan solos antes de leerlos, sin tener que girar la foto primero\n"
-                     "• El botón de escanear de la pantalla principal ahora te deja elegir: tomar una foto o elegir una de tu galería"),
+        "whatsNew": ("• El escaneo de tickets es más completo: ya no se pierde un artículo cuando su nombre parece una línea del ticket o cuando los precios no cuadran\n"
+                     "• Si los artículos no suman el total del ticket, la app lo lee una segunda vez por su cuenta"),
     },
     "de-DE": {
         "name": "Non Bank: Ausgaben & Teilen",
@@ -156,8 +156,8 @@ PRIVAT BY DESIGN
 • Export als CSV oder JSON jederzeit
 
 Ideen? Schreib an nonbankapp@gmail.com""",
-        "whatsNew": ("• Seitlich oder kopfüber fotografierte Belege werden jetzt vor dem Auslesen automatisch gerade gedreht – du musst das Foto nicht mehr selbst drehen\n"
-                     "• Die Scan-Taste auf dem Startbildschirm lässt dich jetzt wählen: Foto aufnehmen oder aus der Mediathek auswählen"),
+        "whatsNew": ("• Belege werden vollständiger erfasst: Ein Artikel geht nicht mehr verloren, wenn sein Name wie eine Belegzeile klingt oder die Preise nicht aufgehen\n"
+                     "• Wenn die Positionen nicht die Belegsumme ergeben, liest die App den Beleg automatisch ein zweites Mal"),
     },
     "fr-FR": {
         "name": "Non Bank: Dépenses & Partage",
@@ -186,8 +186,8 @@ PRIVÉ PAR CONCEPTION
 • Export CSV ou JSON à tout moment
 
 Des idées ? Écrivez à nonbankapp@gmail.com""",
-        "whatsNew": ("• Les tickets photographiés de côté ou à l'envers sont désormais redressés automatiquement avant la lecture, plus besoin de faire pivoter la photo\n"
-                     "• Le bouton de scan de l'écran d'accueil vous laisse désormais choisir : prendre une photo ou en choisir une dans votre photothèque"),
+        "whatsNew": ("• La lecture des tickets est plus complète : un article n'est plus perdu quand son nom ressemble à une ligne du ticket ou quand les prix ne tombent pas juste\n"
+                     "• Si les articles ne correspondent pas au total du ticket, l'app le relit automatiquement une seconde fois"),
     },
 }
 

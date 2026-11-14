@@ -352,4 +352,32 @@ final class ReceiptLineFilterTests: XCTestCase {
             .skipNonProduct
         )
     }
+
+    // MARK: - Labels vs products that contain a label's word
+
+    func testIsBareLabel() {
+        for label in [
+            "TOTAL", "Total: 50.00", "Subtotal", "Card **** 1234", "VISA", "Kusur",
+            "Tax ID 123456789", "Укупан износ", "Gotovina", "Merci", "Ticket", "**** 1234",
+        ] {
+            XCTAssertTrue(ReceiptLineFilter.isBareLabel(label), label)
+        }
+        for product in [
+            "Colgate Total 75ml", "Table salt 1kg", "Greeting card", "Gift card 2000",
+            "SIM kartica", "Supa od mesa", "Merci Finest Selection 250g", "Bus ticket",
+            "Карта подарочная", "Hleb beli",
+        ] {
+            XCTAssertFalse(ReceiptLineFilter.isBareLabel(product), product)
+        }
+    }
+
+    func testIsTaxLine() {
+        for line in ["VAT 20%", "Sales tax", "PDV 20% 1.243,86", "НДС 20%", "Порез", "MwSt 19%"] {
+            XCTAssertTrue(ReceiptLineFilter.isTaxLine(line), line)
+            XCTAssertEqual(ReceiptLineFilter.classify(line), .skipNonProduct, line)
+        }
+        for line in ["Taxi", "Table salt", "TOTAL", "Card **** 1234", "Hleb"] {
+            XCTAssertFalse(ReceiptLineFilter.isTaxLine(line), line)
+        }
+    }
 }

@@ -114,8 +114,9 @@ final class HybridReceiptParserTests: XCTestCase {
     }
 
     func testPostProcess_pruningDropsOverstuffedItem() {
-        // Sum 220 against grandTotal 200 — the "Service 10%" line at 20 is
-        // the closest match to the overshoot and gets dropped.
+        // Sum 220 against grandTotal 200 — the trailing 20 explains the
+        // excess exactly and gets dropped; the "Salad" above it, at the
+        // same price, stays (stray lines sit under the items).
         let raw = ParsedReceipt(
             storeName: nil, date: nil,
             items: [
@@ -128,9 +129,7 @@ final class HybridReceiptParserTests: XCTestCase {
             currency: nil
         )
         let result = HybridReceiptParser.postProcess(raw)
-        let total = result.items.reduce(0) { $0 + $1.lineTotal }
-        XCTAssertEqual(total, 200, accuracy: 0.5)
-        XCTAssertEqual(result.items.count, 3)
+        XCTAssertEqual(result.items.map(\.name), ["Pizza", "Wine", "Salad"])
     }
 
     func testPostProcess_keepsAllItemsWhenSumDramaticallyExceedsGrandTotal() {
@@ -292,27 +291,232 @@ final class HybridReceiptParserTests: XCTestCase {
     }
 
     func testPostProcess_pruningSkipsDiscountVictims() {
-        // Sum of items = 100+50+(-10)+30 = 170, grand = 100. Overshoot 70.
-        // Naive prune would pick the item closest to 70 — but if "Discount"
-        // (-10) were eligible, removing it would *raise* sum to 180. The
-        // Round C-1 fix excludes discounts from victim candidates.
+        // Sum = 100 + (-10) + 30 = 120, grand = 90: the trailing "Mystery"
+        // explains the excess. The discount is never a candidate —
+        // removing it would *raise* the sum.
         let raw = ParsedReceipt(
             storeName: nil, date: nil,
             items: [
                 makeItem(name: "Pizza", total: 100),
-                makeItem(name: "Wine", total: 50),
                 makeItem(name: "Скидка", total: -10),   // .discount verdict
                 makeItem(name: "Mystery", total: 30)
             ],
-            totalAmount: 100,
+            totalAmount: 90,
             currency: nil
         )
         let result = HybridReceiptParser.postProcess(raw)
-        // Discount is preserved (negative).
-        XCTAssertNotNil(result.items.first { $0.name == "Скидка" })
-        // Sum should be at most grand + tolerance.
-        let sum = result.items.reduce(0) { $0 + $1.lineTotal }
-        XCTAssertLessThanOrEqual(sum, 100.5)
+        XCTAssertEqual(result.items.map(\.name), ["Pizza", "Скидка"])
+    }
+
+    // MARK: - Nothing bought is removed to make the sum fit
+
+    /// An excess no trailing line explains is a misread, not a stray line:
+    /// here one price read 100 too high. Every item stays, and the
+    /// mismatch is left for the review screen to show. (The old prune
+    /// removed the bread — the item closest to the excess — and reported
+    /// a receipt that added up.)
+    func testPostProcess_keepsEveryItemWhenNoLineExplainsTheExcess() {
+        let raw = ParsedReceipt(
+            storeName: nil, date: nil,
+            items: [
+                makeItem(name: "Sir gauda 300g", total: 559.99),   // printed 459.99
+                makeItem(name: "Mleko 1L", total: 149.99),
+                makeItem(name: "Hleb beli", total: 89.99),
+                makeItem(name: "Jogurt 1kg", total: 179.99)
+            ],
+            totalAmount: 879.96,
+            currency: nil
+        )
+        let result = HybridReceiptParser.postProcess(raw)
+        XCTAssertEqual(result.items.count, 4)
+        XCTAssertFalse(HybridReceiptParser.totalsMatch(in: result))
+    }
+
+    /// The same, with the excess from a discount the model didn't carry:
+    /// the cheap items near its size (the bag, the roll) are not eaten to
+    /// absorb it.
+    func testPostProcess_keepsCheapItemsWhenADiscountWasMissed() {
+        let raw = ParsedReceipt(
+            storeName: nil, date: nil,
+            items: [
+                makeItem(name: "Piletina 1kg", total: 899.99),
+                makeItem(name: "Kifla", total: 45),
+                makeItem(name: "Kesa", total: 10),
+                makeItem(name: "Sok 1L", total: 189.99)
+            ],
+            totalAmount: 1084.98,   // 60 off at the till
+            currency: nil
+        )
+        XCTAssertEqual(HybridReceiptParser.postProcess(raw).items.count, 4)
+    }
+
+    /// A total and the card line under it, in a language the blacklist
+    /// doesn't know: both go, the items stay.
+    func testPostProcess_prunesTrailingTotalAndPaymentLines() {
+        let raw = ParsedReceipt(
+            storeName: nil, date: nil,
+            items: [
+                makeItem(name: "Φέτα 400g", total: 300),
+                makeItem(name: "Ελιές", total: 200),
+                makeItem(name: "Ψωμί", total: 100),
+                makeItem(name: "Σύνολο", total: 600),
+                makeItem(name: "Κάρτα", total: 600)
+            ],
+            totalAmount: 600,
+            currency: nil
+        )
+        let result = HybridReceiptParser.postProcess(raw)
+        XCTAssertEqual(result.items.map(\.name), ["Φέτα 400g", "Ελιές", "Ψωμί"])
+    }
+
+    /// Only the last few lines are candidates: an item higher up that
+    /// happens to cost exactly the excess is not a stray line.
+    func testPrune_lineAboveTheTailIsNeverRemoved() {
+        let items = [
+            makeItem(name: "Limun", total: 20),
+            makeItem(name: "Pizza", total: 100),
+            makeItem(name: "Wine", total: 80),
+            makeItem(name: "Pasta", total: 55),
+            makeItem(name: "Salad", total: 45),
+            makeItem(name: "Water", total: 30)
+        ]
+        let result = HybridReceiptParser.pruneOverstuffedItems(items, grandTotal: 310)
+        XCTAssertEqual(result.count, 6)
+    }
+
+    /// A trailing line as large as the receipt is a total or cash line
+    /// even when the receipt was rounded for cash and nothing is exact.
+    func testPrune_totalSizedTrailingLineGoesWithinTolerance() {
+        let items = [
+            makeItem(name: "Kaffe", total: 32.40),
+            makeItem(name: "Bulle", total: 27.30),
+            makeItem(name: "Summa", total: 60)
+        ]
+        let result = HybridReceiptParser.pruneOverstuffedItems(items, grandTotal: 60)
+        XCTAssertEqual(result.map(\.name), ["Kaffe", "Bulle"])
+    }
+
+    // MARK: - Products named like labels
+
+    /// The blacklist's words inside product names ("Total", "Table",
+    /// "card", "mesa", "kartica"): the model read them as items, the
+    /// receipt adds up with them, they stay. One-word ones too ("Merci",
+    /// the chocolates).
+    func testPostProcess_keepsProductsNamedLikeLabelsWhenTheReceiptAddsUp() {
+        let names = [
+            "Colgate Total 75ml", "Table salt 1kg", "Greeting card", "Supa od mesa",
+            "SIM kartica", "Merci", "Bus ticket", "Hleb beli"
+        ]
+        let raw = ParsedReceipt(
+            storeName: nil, date: nil,
+            items: names.enumerated().map { makeItem(name: $0.element, total: 100 + Double($0.offset) * 10) },
+            totalAmount: 1080,
+            currency: nil
+        )
+        XCTAssertEqual(HybridReceiptParser.postProcess(raw).items.map(\.name), names)
+    }
+
+    /// Where the total can't decide (tax added on top, so the items never
+    /// add up to it), the name does: a product with a label's word in it
+    /// stays, a bare label goes.
+    func testPostProcess_withoutAMatchingTotalTheNameDecides() {
+        let raw = ParsedReceipt(
+            storeName: nil, date: nil,
+            items: [
+                makeItem(name: "Table salt", total: 1.99),
+                makeItem(name: "Gift card", total: 25),
+                makeItem(name: "Eggs", total: 3.49),
+                makeItem(name: "Subtotal", total: 30.48),
+                makeItem(name: "Change", total: 7.08)
+            ],
+            totalAmount: 32.92,   // 30.48 + 2.44 sales tax
+            currency: nil
+        )
+        let result = HybridReceiptParser.postProcess(raw)
+        XCTAssertEqual(result.items.map(\.name), ["Table salt", "Gift card", "Eggs"])
+    }
+
+    /// A payment line with more words than the label goes too: it is as
+    /// large as the receipt, and the receipt adds up without it.
+    func testPostProcess_dropsPaymentLineWithExtraWords() {
+        let raw = ParsedReceipt(
+            storeName: nil, date: nil,
+            items: [
+                makeItem(name: "Burger", total: 10),
+                makeItem(name: "Fries", total: 8),
+                makeItem(name: "Card payment", total: 18),
+                makeItem(name: "Change due", total: 2)
+            ],
+            totalAmount: 18,
+            currency: nil
+        )
+        XCTAssertEqual(HybridReceiptParser.postProcess(raw).items.map(\.name), ["Burger", "Fries"])
+    }
+
+    /// A one-word product the total doesn't account for is still a label
+    /// as far as anyone can tell: "Total" under items that already add up.
+    func testPostProcess_bareLabelGoesWhenTheReceiptAddsUpWithoutIt() {
+        let raw = ParsedReceipt(
+            storeName: nil, date: nil,
+            items: [
+                makeItem(name: "Merci", total: 459.99),
+                makeItem(name: "Mleko", total: 149.99),
+                makeItem(name: "Ukupno", total: 609.98)
+            ],
+            totalAmount: 609.98,
+            currency: nil
+        )
+        XCTAssertEqual(HybridReceiptParser.postProcess(raw).items.map(\.name), ["Merci", "Mleko"])
+    }
+
+    /// Tax lines are dropped as before, whatever the total says.
+    func testPostProcess_taxLineIsStillDropped() {
+        let raw = ParsedReceipt(
+            storeName: nil, date: nil,
+            items: [
+                makeItem(name: "Dinner", total: 42.50),
+                makeItem(name: "Tip", total: 9),
+                makeItem(name: "Sales tax", total: 3.51)
+            ],
+            totalAmount: 55.01,
+            currency: nil
+        )
+        XCTAssertEqual(HybridReceiptParser.postProcess(raw).items.map(\.name), ["Dinner", "Tip"])
+    }
+
+    /// One band of a tall receipt (or one photo of several): the total on
+    /// it is the whole receipt's, so it decides nothing and nothing is
+    /// pruned. Names still do: the product stays, the total line goes.
+    func testPostProcess_partOfAReceipt_totalIsNotAChecksum() {
+        let raw = ParsedReceipt(
+            storeName: nil, date: nil,
+            items: [
+                makeItem(name: "Table salt", total: 100),
+                makeItem(name: "Brot", total: 5000),          // costs what the receipt totals
+                makeItem(name: "Card payment", total: 5000),
+                makeItem(name: "UKUPNO", total: 5000)
+            ],
+            totalAmount: 5000,
+            currency: nil
+        )
+        let result = HybridReceiptParser.postProcess(raw, totalIsChecksum: false)
+        XCTAssertEqual(result.items.map(\.name), ["Table salt", "Brot"])
+    }
+
+    /// The OCR fallback keeps its strict filter: there the names come from
+    /// raw lines, not from a model's pick of the items.
+    func testPostProcess_ocrFallbackDropsEveryFlaggedName() {
+        let raw = ParsedReceipt(
+            storeName: nil, date: nil,
+            items: [
+                makeItem(name: "Table salt", total: 100),
+                makeItem(name: "Hleb", total: 90)
+            ],
+            totalAmount: nil,
+            currency: nil
+        )
+        let result = HybridReceiptParser.postProcess(raw, totalIsChecksum: false, readByModel: false)
+        XCTAssertEqual(result.items.map(\.name), ["Hleb"])
     }
 
     // MARK: - Helpers

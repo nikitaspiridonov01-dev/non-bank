@@ -159,7 +159,8 @@ actor HybridReceiptParser {
         var fallbackReason: CloudFallbackReason = .cloudOff
         if let config = cloudConfig {
             do {
-                let whole = try await cloudParse(image: prepared, config: config, started: started)
+                let whole = try await cloudParse(
+                    image: prepared, config: config, started: started, isWholeReceipt: isWholeReceipt)
                 // A tall image already had its band passes above; a photo
                 // that shows only part of the receipt has no checksum.
                 guard tallBands == nil, isWholeReceipt else { return whole }
@@ -241,7 +242,8 @@ actor HybridReceiptParser {
     private func cloudParse(
         image: UIImage,
         config: CloudParseConfig,
-        started: Date
+        started: Date,
+        isWholeReceipt: Bool
     ) async throws -> Result {
         let cloudResult = try await cloud.parse(
             image: image,
@@ -250,7 +252,8 @@ actor HybridReceiptParser {
             localeIdentifier: config.localeIdentifier
         )
 
-        let cleaned = Self.postProcess(cloudResult.receipt)
+        // One photo of several has no total of its own to check against.
+        let cleaned = Self.postProcess(cloudResult.receipt, totalIsChecksum: isWholeReceipt)
         let match = Self.totalsMatch(in: cleaned)
 
         await Self.recordPoolStats(
@@ -426,7 +429,9 @@ actor HybridReceiptParser {
                 #endif
                 return nil
             }
-            let cleaned = Self.postProcess(parsed.receipt)
+            // A band's items are part of the receipt; the total, when the
+            // band shows it, is the whole receipt's.
+            let cleaned = Self.postProcess(parsed.receipt, totalIsChecksum: false)
             receipts.append(cleaned)
             providers.append(parsed.provider)
             attemptsMax = max(attemptsMax, parsed.attemptedProvidersCount)
@@ -608,7 +613,7 @@ actor HybridReceiptParser {
         // most non-product rows, but the keyword filter catches anything
         // that slipped through (e.g. an item line that happens to contain
         // a discount keyword).
-        let cleaned = Self.postProcess(receipt)
+        let cleaned = Self.postProcess(receipt, totalIsChecksum: false, readByModel: false)
 
         await Self.recordTelemetry(
             tier: .ocrFallback,
@@ -719,13 +724,13 @@ actor HybridReceiptParser {
 
     // MARK: - Post-processing
 
-    /// Apply Phase-3.5 cleaning passes that work the same on cloud LLM
-    /// output and on the regex fallback path:
+    /// Cleaning passes over a read receipt, cloud model or OCR fallback:
     ///
-    /// 1. **Filter** items whose name matches the multi-language non-product
-    ///    blacklist (`Total`, `VAT`, `Card *1234`, `Tip`, `Service charge`,
-    ///    etc.). LLMs still hallucinate these on long receipts; regex parser
-    ///    also picks them up because they look item-shaped.
+    /// 1. **Filter** lines whose name matches the multi-language non-product
+    ///    blacklist (`Total`, `VAT`, `Card *1234`, …). Models still emit
+    ///    these now and then; the regex parser picks them up because they
+    ///    look item-shaped. On a model's items the blacklist alone is not
+    ///    enough to drop a line — see `flaggedLinesToDrop`.
     ///
     /// 2. **Normalize discounts** — a line is treated as a discount only
     ///    when it actually REDUCES the total. A name keyword alone is a
@@ -739,12 +744,23 @@ actor HybridReceiptParser {
     ///    amount is left as a positive `.item`; we trust the printed sign
     ///    over the name.
     ///
-    /// 3. **Prune** items that push `Σitems` above `grandTotal`. We greedily
-    ///    drop the item whose price is closest to the overshoot — this is
-    ///    almost always the line that snuck through (a payment line, a
-    ///    "service charge", a misread tip). Loops until the sum fits the
-    ///    tolerance window or we run out of items.
-    static func postProcess(_ parsed: ParsedReceipt) -> ParsedReceipt {
+    /// 3. **Prune** trailing lines that push `Σitems` above `grandTotal` and
+    ///    explain the excess exactly — a total or payment line that got
+    ///    past the blacklist (see `pruneOverstuffedItems`).
+    ///
+    /// - Parameters:
+    ///   - totalIsChecksum: `parsed` is a whole receipt, so its items should
+    ///     add up to its printed total. False for one band of a tall
+    ///     receipt, one photo of several, and the OCR fallback (which reads
+    ///     no total): there the total decides nothing and nothing is pruned.
+    ///   - readByModel: the items were picked by a vision model. False for
+    ///     the OCR fallback, where a blacklisted name is dropped outright,
+    ///     as its row filter does.
+    static func postProcess(
+        _ parsed: ParsedReceipt,
+        totalIsChecksum: Bool = true,
+        readByModel: Bool = true
+    ) -> ParsedReceipt {
         // Normalise names BEFORE classification/merge: strip the fiscal
         // code/unit/tax-category suffix some EU/Balkan printers append
         // (see `normalizingFiscalSuffix`). Two failures this prevents:
@@ -755,7 +771,11 @@ actor HybridReceiptParser {
         //      and keeps both → false duplicates.
         let normalizedInput = parsed.items.map(Self.normalizingFiscalSuffix)
         var droppedByFilter: [String] = []
-        let filteredItems = normalizedInput.compactMap { item -> ReceiptItem? in
+        var candidates: [ReceiptItem] = []
+        // Positions in `candidates` of lines the blacklist flags but a
+        // model read as items: decided together below.
+        var flagged: [Int] = []
+        for item in normalizedInput {
             switch ReceiptLineFilter.classify(item.name) {
             case .keep, .fee:
                 // Fee rows are kept (positive sign — they ADD to the
@@ -765,10 +785,8 @@ actor HybridReceiptParser {
                 // likewise kept as regular items. `ReceiptItem.kind`
                 // re-derives the classification via the same
                 // `ReceiptLineFilter.classify` call, so we don't need to
-                // stash the verdict on the row itself. Tax/VAT lines
-                // are not in this list — they're now `.skipNonProduct`
-                // (store-side metadata, never a buyer-tracked expense).
-                return item
+                // stash the verdict on the row itself.
+                candidates.append(item)
             case .discount:
                 // Sign beats name. If the line is already printed with a
                 // POSITIVE amount it's a real product the customer paid for
@@ -779,13 +797,28 @@ actor HybridReceiptParser {
                 // total. Only a non-positive amount (an explicit negative
                 // discount, or a sign-less keyword line where the name is
                 // the only available signal) gets forced negative.
-                if item.lineTotal > 0 { return item }
-                return Self.normalizeDiscount(item)
+                candidates.append(item.lineTotal > 0 ? item : Self.normalizeDiscount(item))
             case .skipNonProduct, .anchorTotal:
-                droppedByFilter.append(item.name)
-                return nil
+                // Tax / VAT lines are store-side metadata, never a
+                // buyer-tracked expense: dropped whoever read them.
+                if !readByModel || ReceiptLineFilter.isTaxLine(item.name) {
+                    droppedByFilter.append(item.name)
+                } else {
+                    flagged.append(candidates.count)
+                    candidates.append(item)
+                }
             }
         }
+        let notProducts = Self.flaggedLinesToDrop(
+            in: candidates,
+            flagged: flagged,
+            grandTotal: parsed.totalAmount,
+            totalIsChecksum: totalIsChecksum
+        )
+        droppedByFilter += notProducts.sorted().map { candidates[$0].name }
+        let filteredItems = candidates.enumerated()
+            .filter { !notProducts.contains($0.offset) }
+            .map(\.element)
         // Defense-in-depth: even with backend `sanitizeDiscountSemantics`
         // and the prompt's "single line is never a discount" rule, the LLM
         // very occasionally still emits a one-line subscription receipt
@@ -793,10 +826,9 @@ actor HybridReceiptParser {
         // Flip such cases here so the iOS UI never shows the nonsense
         // state regardless of which provider answered.
         let signCorrected = correctNonsensicalDiscounts(filteredItems)
-        let prunedItems = pruneOverstuffedItems(
-            signCorrected,
-            grandTotal: parsed.totalAmount
-        )
+        let prunedItems = totalIsChecksum
+            ? pruneOverstuffedItems(signCorrected, grandTotal: parsed.totalAmount)
+            : signCorrected
         #if DEBUG
         // Diagnostic for the "receipt parses N of M items" class of
         // issues. Surfaces in Xcode console (visible in the Debug
@@ -833,6 +865,75 @@ actor HybridReceiptParser {
             suggestedCategory: parsed.suggestedCategory
         )
     }
+
+    /// Which of the lines a model read as items but the non-product
+    /// blacklist flags (`flagged`, positions in `items`) are not products.
+    ///
+    /// The blacklist was written for raw OCR lines. On a model's item names
+    /// it also hits products that contain a label's word — "Colgate Total",
+    /// "Table salt", "Gift card", "Merci", "Supa od mesa" — and dropping on
+    /// the word alone removed a bought item from an otherwise right read,
+    /// with nothing to show for it. A flagged line now goes only when it
+    /// reads as a label:
+    ///
+    /// - nothing but the label's words in its name (`isBareLabel`), or
+    /// - an amount as large as the whole receipt (a total or payment line
+    ///   with more words: "Card payment", "Balance due").
+    ///
+    /// Where the receipt's own total is a checksum it decides instead: the
+    /// reading of the flagged lines under which the items add up to it. So
+    /// a one-word product ("Ticket", "Merci") stays when the total needs
+    /// it, and a label with extra words ("Change due") goes when the
+    /// receipt adds up without it.
+    static func flaggedLinesToDrop(
+        in items: [ReceiptItem],
+        flagged: [Int],
+        grandTotal: Double?,
+        totalIsChecksum: Bool
+    ) -> Set<Int> {
+        guard !flagged.isEmpty else { return [] }
+        let total = grandTotal.flatMap { $0 > 0 ? $0 : nil }
+        let byLooks = Set(flagged.filter { index in
+            if ReceiptLineFilter.isBareLabel(items[index].name) { return true }
+            guard let total else { return false }
+            return items[index].lineTotal >= total - tolerance(for: total)
+        })
+        // Every reading of up to 10 flagged lines is tried (1024 at most);
+        // receipts have one or two.
+        guard totalIsChecksum, let total, flagged.count <= 10 else { return byLooks }
+
+        let flaggedSet = Set(flagged)
+        let othersSum = items.indices
+            .filter { !flaggedSet.contains($0) }
+            .reduce(0.0) { $0 + items[$1].lineTotal }
+        // The reading closest to the total, among those that add up to it;
+        // between equally close ones, the one that agrees with the looks.
+        var best: (drop: Set<Int>, gap: Double, agreement: Int)?
+        for mask in 0..<(1 << flagged.count) {
+            var sum = othersSum
+            var drop: Set<Int> = []
+            for (bit, index) in flagged.enumerated() {
+                if mask & (1 << bit) != 0 {
+                    sum += items[index].lineTotal
+                } else {
+                    drop.insert(index)
+                }
+            }
+            let gap = abs(sum - total)
+            guard gap <= tolerance(for: total) else { continue }
+            let agreement = flagged.filter { drop.contains($0) == byLooks.contains($0) }.count
+            if let current = best {
+                let closer = gap < current.gap - centEpsilon
+                let asClose = abs(gap - current.gap) <= centEpsilon
+                guard closer || (asClose && agreement > current.agreement) else { continue }
+            }
+            best = (drop, gap, agreement)
+        }
+        return best?.drop ?? byLooks
+    }
+
+    /// Two amounts this close are the same amount.
+    private static let centEpsilon = 0.011
 
     /// Matches a trailing fiscal code/unit/tax-category suffix that some
     /// EU/Balkan fiscal printers append to product names, e.g. the
@@ -943,75 +1044,82 @@ actor HybridReceiptParser {
         )
     }
 
-    /// Iterative greedy pruning: while the items sum exceeds the receipt's
-    /// grand total by more than `tolerance(for:)`, drop the single item whose
-    /// `lineTotal` best explains the overshoot. This catches false positives
-    /// missed by the keyword filter (e.g. "Service 10%" when the LLM didn't
-    /// label it explicitly).
+    /// Removes trailing lines that are not items: a grand total, a payment
+    /// or a change line in a language the blacklist doesn't know. Such
+    /// lines sit under the items and carry printed amounts, so taking them
+    /// out leaves the items adding up to the printed total.
     ///
-    /// Discount items (negative `lineTotal`) are excluded from the victim
-    /// pool — removing one would *raise* the sum, the opposite of what the
-    /// loop is trying to do.
+    /// A line is only ever removed on that evidence — one of the last
+    /// `prunableTailLines` positive lines, and the rest adds up to the
+    /// total to the cent afterwards (or within the usual tolerance when the
+    /// removed line is as large as the whole receipt: a total or cash line
+    /// on a receipt rounded for cash). When no trailing line explains the
+    /// excess, everything stays and the review screen shows the mismatch.
+    ///
+    /// This used to drop, one after another, whichever item's price was
+    /// closest to the excess, as long as the gap shrank. An excess is far
+    /// more often a misread price, a unit price taken for a line total or a
+    /// discount the model didn't carry than a stray line, and then it
+    /// deleted bought items to make the sum fit — the "one item is missing
+    /// from a simple receipt" reports, often with no mismatch left to warn
+    /// about it.
+    ///
+    /// Discount lines (negative `lineTotal`) are never candidates —
+    /// removing one would *raise* the sum.
     static func pruneOverstuffedItems(
         _ items: [ReceiptItem],
         grandTotal: Double?
     ) -> [ReceiptItem] {
         guard let grand = grandTotal, grand > 0 else { return items }
-        // Sanity-check the inputs before pruning. When the items'
-        // sum dramatically exceeds the grand_total (more than 3×),
-        // the likely root cause is the LLM misreading the receipt's
-        // total — NOT that 70%+ of the items are hallucinations.
-        //
-        // Real-world LLM slip-throughs on receipts are 1-3 items
-        // (payment line, "service charge" that the prompt told it
-        // to skip, a misread tip), producing modest overshoot.
-        // Anything wildly past that signals a wrong total —
-        // a 43-item Serbian grocery shop summing to 11500 RSD
-        // observed as `grand_total: 1243.86` because Gemini parsed
-        // "11.243,86" as "1.243,86" (lost a thousands digit in EU
-        // formatting). Pruning here would delete real products to
-        // match the wrong total.
-        //
-        // When the guard trips we keep all items; the user sees the
-        // mismatch between item sum and total in the editor and can
-        // fix the total manually. That's a UX papercut, not a
-        // silently corrupted receipt.
-        let initialSum = items.reduce(0.0) { $0 + $1.lineTotal }
-        if initialSum > grand * 3 {
+        let sum = items.reduce(0.0) { $0 + $1.lineTotal }
+        let slack = tolerance(for: grand)
+        guard sum - grand > slack else { return items }
+        // When the items' sum dramatically exceeds the grand total (more
+        // than 3×), the likely root cause is the LLM misreading the
+        // receipt's total — a 43-item Serbian grocery shop summing to
+        // 11500 RSD observed as `grand_total: 1243.86` because Gemini
+        // parsed "11.243,86" as "1.243,86". Nothing is removed against a
+        // total like that; the user sees the mismatch in the editor and
+        // can fix the total.
+        if sum > grand * 3 {
             #if DEBUG
             print(
                 "[HybridReceiptParser.pruneOverstuffedItems] " +
-                "skipping prune: items_sum \(initialSum) " +
+                "skipping prune: items_sum \(sum) " +
                 "exceeds 3× grand_total (\(grand)) — total likely " +
                 "misread by the LLM"
             )
             #endif
             return items
         }
-        var remaining = items
-        // Hard cap so a malformed receipt can't infinite-loop.
-        let maxIterations = remaining.count
-        for _ in 0..<maxIterations {
-            let sum = remaining.reduce(0.0) { $0 + $1.lineTotal }
-            let overshoot = sum - grand
-            if overshoot <= tolerance(for: grand) { break }
-            // Find the item whose `lineTotal` is closest to the overshoot —
-            // that's the most likely false positive. Only positive items
-            // are eligible.
-            let candidates = remaining.indices.filter { remaining[$0].lineTotal > 0 }
-            guard let victimIndex = candidates.min(by: {
-                abs(remaining[$0].lineTotal - overshoot)
-                    < abs(remaining[$1].lineTotal - overshoot)
-            }) else { break }
-            // Bail if even the best candidate doesn't actually shrink the
-            // gap — pruning would over-correct.
-            let victim = remaining[victimIndex]
-            let newSum = sum - victim.lineTotal
-            if abs(newSum - grand) >= abs(sum - grand) { break }
-            remaining.remove(at: victimIndex)
+        let tail = Array(items.indices.filter { items[$0].lineTotal > 0 }.suffix(prunableTailLines))
+        // Fewest lines first; then the closest fit; then the later lines.
+        var best: (drop: [Int], gap: Double)?
+        for mask in 1..<(1 << tail.count) {
+            let drop = tail.enumerated().filter { mask & (1 << $0.offset) != 0 }.map(\.element)
+            let removed = drop.reduce(0.0) { $0 + items[$1].lineTotal }
+            let gap = abs(sum - removed - grand)
+            let dropsTotalSizedLine = drop.contains { items[$0].lineTotal >= grand - slack }
+            guard gap <= centEpsilon || (dropsTotalSizedLine && gap <= slack) else { continue }
+            if let current = best {
+                if drop.count != current.drop.count {
+                    guard drop.count < current.drop.count else { continue }
+                } else if abs(gap - current.gap) > centEpsilon {
+                    guard gap < current.gap else { continue }
+                } else {
+                    guard drop[0] > current.drop[0] else { continue }
+                }
+            }
+            best = (drop, gap)
         }
-        return remaining
+        guard let best else { return items }
+        let dropped = Set(best.drop)
+        return items.enumerated().filter { !dropped.contains($0.offset) }.map(\.element)
     }
+
+    /// How many of the last positive lines `pruneOverstuffedItems` looks
+    /// at: a total and the payment lines under it, with room to spare.
+    private static let prunableTailLines = 4
 }
 
 // MARK: - Convenience

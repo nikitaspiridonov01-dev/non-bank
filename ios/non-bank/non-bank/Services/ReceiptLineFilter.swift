@@ -101,8 +101,8 @@ struct ReceiptLineFilter {
     /// Tips are NOT classified at all anymore: a tip / gratuity line falls
     /// through to `.keep` (a regular item) unless it also matches `feeWords`
     /// (e.g. "service charge"). Manual tips are tagged in the editor via
-    /// `ReceiptItem.forcedKind = .tip`. Tax keywords remain in this list
-    /// (skipped as store-side metadata).
+    /// `ReceiptItem.forcedKind = .tip`. Tax keywords are skipped the same
+    /// way (store-side metadata); they live in `taxWords` below.
     private static let nonProductWords: [String] = [
         // Subtotals
         "subtotal", "sub-total", "sub total", "sous-total", "subtotale",
@@ -146,16 +146,6 @@ struct ReceiptLineFilter {
         "void", "refund", "возврат",
         "balance", "баланс", "saldo",
 
-        // Tax / VAT / sales-tax — store-side metadata (already baked
-        // into the grand total), not a buyer charge to track. Skipped
-        // so the line never enters the items list. Buyer-paid duties
-        // (city tax, tourist tax, …) are NOT here; if a receipt prints
-        // those with an explicit qualifier, the `.fee` list handles
-        // them via the same compound-word pattern as `cover charge`.
-        "vat", "tax", "taxes", "tva", "iva", "mwst", "ust", "umsatzsteuer",
-        "ндс", "nds", "налог", "nalog", "podatek", "pdv", "porez",
-        "impôt", "impot", "impuesto",
-
         // Round C-2 — staff & layout labels (English first, then EU)
         "waiter", "server", "host", "hostess",
         "table", "guest", "ticket", "tab",
@@ -192,17 +182,57 @@ struct ReceiptLineFilter {
         "стопа",   // Serbian Cyrillic: rate (стопе, стопу, стопом)
         "броач",   // Serbian Cyrillic: counter
         "рачун",   // Serbian Cyrillic: receipt / account
-        "пфр",     // Serbian Cyrillic: fiscal protocol abbreviation
-        // Tax stems — Serbian Cyrillic case-form catch-all. See the
-        // "store-side tax" rationale on `nonProductWords`.
+        "пфр"      // Serbian Cyrillic: fiscal protocol abbreviation
+    ]
+
+    /// Tax / VAT / sales-tax — store-side metadata (already baked into
+    /// the grand total), not a buyer charge to track. Skipped like the
+    /// other non-product words, so the line never enters the items list;
+    /// kept as its own list for `isTaxLine`. Buyer-paid duties (city tax,
+    /// tourist tax, …) are NOT here; if a receipt prints those with an
+    /// explicit qualifier, the `.fee` list handles them via the same
+    /// compound-word pattern as `cover charge`.
+    private static let taxWords: [String] = [
+        "vat", "tax", "taxes", "tva", "iva", "mwst", "ust", "umsatzsteuer",
+        "ндс", "nds", "налог", "nalog", "podatek", "pdv", "porez",
+        "impôt", "impot", "impuesto"
+    ]
+
+    /// Serbian Cyrillic case-form catch-all for tax.
+    private static let taxCyrillicStems: [String] = [
         "пореск",  // tax-related (порески, пореска)
         "порез"    // tax (пореза, порезу, порезом, порезе, порези)
     ]
 
+    private static let taxRegex = WordRegex(words: taxWords, stems: taxCyrillicStems)
+
     private static let nonProductRegex = WordRegex(
-        words: nonProductWords,
-        stems: nonProductCyrillicStems
+        words: nonProductWords + taxWords,
+        stems: nonProductCyrillicStems + taxCyrillicStems
     )
+
+    // MARK: - Lines a model read as items
+
+    // `classify` was written for raw OCR lines, where every line of the
+    // receipt is a candidate. A vision model has already picked the item
+    // lines; run on its item NAMES, the keyword lists also hit products —
+    // "Colgate Total", "Table salt", "Gift card", "Merci", "Supa od mesa".
+    // These two tell a label from a product that merely contains a label's
+    // word (see `HybridReceiptParser.postProcess`).
+
+    /// A tax / VAT line.
+    static func isTaxLine(_ text: String) -> Bool {
+        taxRegex.matches(in: text)
+    }
+
+    /// True when nothing in `text` reads as a product once the non-product
+    /// and grand-total keywords are taken out: no word of three or more
+    /// letters is left. "TOTAL", "Card **** 1234", "Kusur", "Tax ID 123"
+    /// are bare labels; "Colgate Total 75ml" and "Table salt" are not.
+    static func isBareLabel(_ text: String) -> Bool {
+        let rest = anchorTotalRegex.removingMatches(in: nonProductRegex.removingMatches(in: text))
+        return rest.range(of: #"\p{L}{3,}"#, options: .regularExpression) == nil
+    }
 
     // MARK: - Fee keywords
     //
@@ -433,6 +463,14 @@ struct ReceiptLineFilter {
             let lower = text.lowercased()
             let range = NSRange(lower.startIndex..., in: lower)
             return regex.firstMatch(in: lower, options: [], range: range) != nil
+        }
+
+        /// `text`, lowercased, with every match blanked out.
+        func removingMatches(in text: String) -> String {
+            let lower = text.lowercased()
+            guard let regex else { return lower }
+            let range = NSRange(lower.startIndex..., in: lower)
+            return regex.stringByReplacingMatches(in: lower, options: [], range: range, withTemplate: " ")
         }
     }
 }

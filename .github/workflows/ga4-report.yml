@@ -18,7 +18,7 @@ on:
         required: false
         default: ""
       report:
-        description: "all | daily | devices | first_opens | events | versions | friend_detail | screens | audience | retention | gsc_probe | gsc_token | gsc_verify | gsc_submit | gsc_status | gsc_owner"
+        description: "all | daily | devices | first_opens | events | versions | friend_detail | screens | audience | retention | gsc_probe | gsc_token | gsc_verify | gsc_submit | gsc_status | gsc_owner | bing_status"
         required: false
         default: "all"
   push:
@@ -51,10 +51,13 @@ jobs:
           DAYS: ${{ inputs.days || '30' }}
           REPORT: ${{ inputs.report || 'all' }}
           OWNER_EMAIL: ${{ inputs.owner_email || '' }}
+          BING_WEBMASTER_API_KEY: ${{ secrets.BING_WEBMASTER_API_KEY }}
         run: |
           # gsc_* modes drive Search Console through the same service account
-          # (see .github/scripts/search_console.py); everything else is GA4.
+          # (see .github/scripts/search_console.py); bing_status reads Bing
+          # Webmaster Tools with its API key; everything else is GA4.
           case "$REPORT" in
             gsc_*) python .github/scripts/search_console.py --mode "${REPORT#gsc_}" ;;
+            bing_*) python .github/scripts/bing_webmaster.py ;;
             *)     python .github/scripts/ga4_report.py --days "$DAYS" --report "$REPORT" ;;
           esac

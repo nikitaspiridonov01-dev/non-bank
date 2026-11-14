@@ -81,7 +81,7 @@ jobs:
       - name: Smoke-check the public site
         if: (github.event.inputs.env || 'production') != 'staging'
         run: |
-          for p in / /robots.txt /sitemap.xml /og.png /support /privacy; do
+          for p in / /robots.txt /sitemap.xml /og.png /support /privacy /split-receipt-by-item /sr/podela-racuna /ru/kak-razdelit-schet; do
             code=$(curl -s -o /dev/null -w "%{http_code}" "https://non-bank.app$p")
             echo "$p -> $code"
             [ "$code" = "200" ] || exit 1

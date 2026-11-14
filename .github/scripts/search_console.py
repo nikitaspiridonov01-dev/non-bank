@@ -102,7 +102,14 @@ def submit(s):
 
 
 INSPECT = "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect"
-PAGES = ["https://non-bank.app/", "https://non-bank.app/support", "https://non-bank.app/privacy"]
+PAGES = [
+    "https://non-bank.app/",
+    "https://non-bank.app/split-receipt-by-item",
+    "https://non-bank.app/sr/podela-racuna",
+    "https://non-bank.app/ru/kak-razdelit-schet",
+    "https://non-bank.app/support",
+    "https://non-bank.app/privacy",
+]
 
 
 def status(s):

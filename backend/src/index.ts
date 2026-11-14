@@ -8,6 +8,7 @@ import { handleSharePage } from "./share.ts";
 import { handlePrivacyPage } from "./privacy.ts";
 import { handleSupportPage } from "./support.ts";
 import { handleLandingPage } from "./landing.ts";
+import { handleGuidePage } from "./guides.ts";
 import { handleRobots, handleSitemap, handleOgImage, handleIcon, handleSiteFile } from "./seo.ts";
 import {
   handleUploadShareItems,
@@ -213,6 +214,11 @@ export default {
       // falls through to the JSON 404. Usable as the App Store Marketing URL.
       if (url.pathname === "/" && req.method === "GET") {
         return handleLandingPage();
+      }
+      // How-to guides in English, Serbian and Russian (see guides.ts).
+      if (req.method === "GET") {
+        const guide = handleGuidePage(url.pathname);
+        if (guide) return guide;
       }
       // Search-engine + link-preview plumbing for the public site (see seo.ts).
       if (req.method === "GET") {

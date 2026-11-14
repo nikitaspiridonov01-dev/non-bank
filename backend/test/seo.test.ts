@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { handleLandingPage } from "../src/landing.ts";
 import { handleSupportPage } from "../src/support.ts";
 import { handlePrivacyPage } from "../src/privacy.ts";
+import { GUIDES, handleGuidePage } from "../src/guides.ts";
 import {
   handleRobots,
   handleSitemap,
@@ -133,5 +134,65 @@ describe("ownership files", () => {
     const res = handleSiteFile("/googleb9b14a1f82881a17.html");
     expect(res).not.toBeNull();
     expect(await res!.text()).toBe("google-site-verification: googleb9b14a1f82881a17.html");
+  });
+});
+
+describe("guides", () => {
+  const visibleText = (html: string) =>
+    html
+      .replace(/<script[\s\S]*?<\/script>/g, " ")
+      .replace(/<style[\s\S]*?<\/style>/g, " ")
+      .replace(/<[^>]+>/g, " ");
+
+  it.each(GUIDES.map((g) => [g.path, g] as const))("%s is a full page in its own language", async (path, g) => {
+    const res = handleGuidePage(path)!;
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain(`<html lang="${g.lang}">`);
+    expect(html.match(/<link rel="canonical"/g)?.length).toBe(1);
+    expect(html).toContain(`<link rel="canonical" href="${SITE_URL}${path}">`);
+    expect(html.match(/<h1[ >]/g)?.length).toBe(1);
+    expect(html.match(/<title>/g)?.length).toBe(1);
+    expect(html.match(/application\/ld\+json/g)?.length).toBe(1);
+    expect(html).toContain(`<meta property="og:locale" content="${g.locale}">`);
+    expect(html).toContain(`<meta property="og:type" content="article">`);
+    // Every language version names every other one, English as x-default.
+    for (const o of GUIDES) {
+      expect(html).toContain(`<link rel="alternate" hreflang="${o.hreflang}" href="${SITE_URL}${o.path}">`);
+      if (o !== g) expect(html).toContain(`href="${o.path}"`);
+    }
+    expect(html).toContain(`<link rel="alternate" hreflang="x-default" href="${SITE_URL}${GUIDES[0].path}">`);
+    expect(html).toContain(`href="/"`);
+    expect(html).toContain(`apps.apple.com/app/id${APP_STORE_ID}`);
+    // A real article, not a stub.
+    expect(visibleText(html).split(/\s+/).filter(Boolean).length).toBeGreaterThan(550);
+    // The FAQ markup is the visible FAQ; the article says which language it is in.
+    const ld = JSON.parse(html.match(/<script type="application\/ld\+json">(.*?)<\/script>/s)![1]);
+    const byType = (t: string) => ld.find((o: { "@type": string }) => o["@type"] === t);
+    expect(byType("FAQPage").mainEntity.map((q: { name: string }) => q.name)).toEqual(g.faq.map((f) => f.q));
+    expect(html.match(/<details>/g)?.length).toBe(g.faq.length);
+    expect(byType("Article").inLanguage).toBe(g.lang);
+    expect(byType("Article").headline).toBe(g.h1);
+  });
+
+  it("titles and descriptions fit in search results", () => {
+    for (const g of GUIDES) {
+      expect(g.title.length).toBeLessThanOrEqual(60);
+      expect(g.description.length).toBeLessThanOrEqual(160);
+    }
+  });
+
+  it("every guide is in the sitemap", () => {
+    for (const g of GUIDES) expect(SITE_PAGES.some((p) => p.path === g.path)).toBe(true);
+  });
+
+  it("a trailing slash redirects to the guide; other paths aren't guides", () => {
+    const res = handleGuidePage(GUIDES[1].path + "/")!;
+    expect(res.status).toBe(301);
+    expect(res.headers.get("Location")).toBe(SITE_URL + GUIDES[1].path);
+    expect(handleGuidePage("/")).toBeNull();
+    expect(handleGuidePage("/support")).toBeNull();
+    expect(handleGuidePage("/ru/")).toBeNull();
   });
 });

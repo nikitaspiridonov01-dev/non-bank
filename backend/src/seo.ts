@@ -26,7 +26,10 @@ export const SUPPORT_EMAIL = "nonbankapp@gmail.com";
 /** Public HTML pages, in sitemap order. `lastmod` is bumped by hand when a
  *  page's content changes materially (search engines treat it as a hint). */
 export const SITE_PAGES: ReadonlyArray<{ path: string; lastmod: string; priority: string }> = [
-  { path: "/", lastmod: "2026-10-13", priority: "1.0" },
+  { path: "/", lastmod: "2026-11-14", priority: "1.0" },
+  { path: "/split-receipt-by-item", lastmod: "2026-11-14", priority: "0.8" },
+  { path: "/sr/podela-racuna", lastmod: "2026-11-14", priority: "0.8" },
+  { path: "/ru/kak-razdelit-schet", lastmod: "2026-11-14", priority: "0.8" },
   { path: "/support", lastmod: "2026-10-13", priority: "0.6" },
   { path: "/privacy", lastmod: "2026-10-13", priority: "0.4" },
 ];
@@ -40,6 +43,13 @@ export interface SeoPage {
   description: string;
   /** Extra JSON-LD objects to emit alongside the shared SoftwareApplication. */
   jsonLd?: ReadonlyArray<Record<string, unknown>>;
+  /** og:locale of the page's language; "en_US" unless given. */
+  locale?: string;
+  /** og:type; "website" unless given ("article" for the guides). */
+  ogType?: string;
+  /** The page in other languages, as hreflang alternates (include the page
+   *  itself and an "x-default"). */
+  alternates?: ReadonlyArray<{ hreflang: string; path: string }>;
 }
 
 /** Structured data describing the app itself. Shared by every page so a
@@ -98,12 +108,15 @@ export function seoHead(page: SeoPage): string {
     `<title>${esc(page.title)}</title>`,
     `<meta name="description" content="${esc(page.description)}">`,
     `<link rel="canonical" href="${canonical}">`,
+    ...(page.alternates ?? []).map(
+      (a) => `<link rel="alternate" hreflang="${esc(a.hreflang)}" href="${SITE_URL}${a.path}">`,
+    ),
     `<meta name="robots" content="index, follow, max-image-preview:large">`,
     `<meta name="theme-color" content="#0a0807">`,
     `<meta name="apple-itunes-app" content="app-id=${APP_STORE_ID}">`,
     `<link rel="icon" type="image/png" sizes="1024x1024" href="/icon.png">`,
     `<link rel="apple-touch-icon" href="/apple-touch-icon.png">`,
-    `<meta property="og:type" content="website">`,
+    `<meta property="og:type" content="${esc(page.ogType ?? "website")}">`,
     `<meta property="og:site_name" content="${APP_NAME}">`,
     `<meta property="og:url" content="${canonical}">`,
     `<meta property="og:title" content="${esc(page.title)}">`,
@@ -112,7 +125,7 @@ export function seoHead(page: SeoPage): string {
     `<meta property="og:image:width" content="1200">`,
     `<meta property="og:image:height" content="630">`,
     `<meta property="og:image:alt" content="${APP_NAME}: scan a receipt, split it item by item">`,
-    `<meta property="og:locale" content="en_US">`,
+    `<meta property="og:locale" content="${esc(page.locale ?? "en_US")}">`,
     `<meta name="twitter:card" content="summary_large_image">`,
     `<meta name="twitter:title" content="${esc(page.title)}">`,
     `<meta name="twitter:description" content="${esc(page.description)}">`,

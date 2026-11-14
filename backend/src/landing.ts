@@ -13,6 +13,7 @@
 // JSON-LD below in sync — they are the same answers.
 
 import { seoHead, APP_STORE_URL, SUPPORT_EMAIL } from "./seo.ts";
+import { GUIDES } from "./guides.ts";
 
 export function handleLandingPage(): Response {
   return new Response(LANDING_HTML, {
@@ -74,6 +75,12 @@ const faqHtml = FAQ.map(
         <summary>${f.q}</summary>
         <p>${f.a}</p>
       </details>`,
+).join("\n");
+
+// Links to the how-to guides (guides.ts), each in its own language.
+const guidesHtml = GUIDES.map(
+  (g) =>
+    `        <li><a href="${g.path}" hreflang="${g.hreflang}" lang="${g.lang}">${g.h1}</a> <span>${g.languageName}</span></li>`,
 ).join("\n");
 
 const LANDING_HTML = `<!DOCTYPE html>
@@ -163,6 +170,9 @@ ${HEAD}
   .faq summary::after { content: "+"; float: right; color: var(--text-tertiary); }
   .faq details[open] summary::after { content: "–"; }
   .faq p { font-size: 14px; margin: 8px 0 0; }
+  ul.guides { list-style: none; display: grid; gap: 10px; }
+  ul.guides li { font-size: 15px; }
+  ul.guides span { font-size: 13px; color: var(--text-tertiary); margin-left: 6px; }
 </style>
 </head>
 <body>
@@ -228,6 +238,13 @@ ${HEAD}
       <div class="uses">
         <span>Group trips</span><span>Roommates and rent</span><span>Dinners out</span><span>Couples' budgets</span><span>Road trips</span><span>Weekend getaways</span><span>Shared groceries</span>
       </div>
+    </section>
+
+    <section>
+      <h2>Guides</h2>
+      <ul class="guides">
+${guidesHtml}
+      </ul>
     </section>
 
     <section class="faq">

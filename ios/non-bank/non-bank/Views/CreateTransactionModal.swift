@@ -371,6 +371,10 @@ struct CreateTransactionModal: View {
         let payers: [Payer]
     }
     @State private var showFriendForm: Bool = false
+    /// Friends created during this add / edit: the friend pickers in it
+    /// list them first. Lives as long as this modal, so the next
+    /// transaction's pickers start from the usual order.
+    @State private var friendsCreatedInFlow = FriendsCreatedInFlow()
     // @State private var showWhoPays: Bool = false  // WhoPaysPicker — preserved for future
     @State private var selectedTab: TransactionTab = .expense
     @State private var youIncludedInSplit: Bool = true  // whether "You" is selected as split participant
@@ -1580,6 +1584,7 @@ struct CreateTransactionModal: View {
                 }
                 .environmentObject(friendStore)
                 .environmentObject(transactionStore)
+                .environment(friendsCreatedInFlow)
             }
             .sheet(isPresented: $showFriendForm, onDismiss: {
                 // If friend form dismissed with no friends selected, revert to expense
@@ -1589,6 +1594,7 @@ struct CreateTransactionModal: View {
                 }
             }) {
                 FriendFormView(existingGroups: friendStore.allGroups, isCompact: true) { newFriend in
+                    friendsCreatedInFlow.record(newFriend.id)
                     Task {
                         await friendStore.add(newFriend)
                         vm.selectFriendsAndResolveSplitMode([newFriend])
@@ -1618,6 +1624,7 @@ struct CreateTransactionModal: View {
                 .environmentObject(friendStore)
                 .environmentObject(transactionStore)
                 .environmentObject(categoryStore)
+                .environment(friendsCreatedInFlow)
             }
             // The legacy `showWhoPaid` standalone sheet was removed in
             // Phase 4.3 cleanup — who-paid is now a step inside the

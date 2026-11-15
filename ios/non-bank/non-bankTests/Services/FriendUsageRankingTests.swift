@@ -77,4 +77,56 @@ final class FriendUsageRankingTests: XCTestCase {
         XCTAssertEqual(order([]), ["Alia", "Denis", "Dragana", "Elena", "Miha"])
         XCTAssertTrue(FriendUsageRanking.sorted([], by: [:]).isEmpty)
     }
+
+    // MARK: - Friends created in this flow
+
+    /// A friend created mid-transaction has never been split with, so by
+    /// usage alone it came last ("Roth" below everyone). Within the flow
+    /// it is listed first, above the people split with most often; more
+    /// of them, newest first.
+    func testFriendsCreatedInThisFlowComeFirst_newestFirst() {
+        let usage = FriendUsageRanking.usage(in: [
+            split(1, daysAgo: 10, with: [("miha", 0)]),
+            split(2, daysAgo: 9, with: [("dragana", 0)]),
+        ])
+        func order(_ created: FriendsCreatedInFlow) -> [String] {
+            FriendUsageRanking.sorted(alphabetical, by: usage, createdInFlow: created.ids).map(\.name)
+        }
+        let created = FriendsCreatedInFlow()
+        XCTAssertEqual(order(created), ["Dragana", "Miha", "Alia", "Denis", "Elena"])
+
+        created.record("elena")
+        XCTAssertEqual(order(created), ["Elena", "Dragana", "Miha", "Alia", "Denis"])
+
+        created.record("alia")
+        XCTAssertEqual(order(created), ["Alia", "Elena", "Dragana", "Miha", "Denis"])
+    }
+
+    /// The next transaction starts its own list: the usual order again.
+    func testANewFlowStartsWithTheUsualOrder() {
+        let usage = FriendUsageRanking.usage(in: [split(1, daysAgo: 1, with: [("miha", 0)])])
+        let earlierFlow = FriendsCreatedInFlow()
+        earlierFlow.record("elena")
+        XCTAssertEqual(
+            FriendUsageRanking.sorted(alphabetical, by: usage, createdInFlow: FriendsCreatedInFlow().ids).map(\.name),
+            ["Miha", "Alia", "Denis", "Dragana", "Elena"]
+        )
+    }
+
+    /// Recording a friend twice keeps one entry, moved to the front; a
+    /// created friend the picker doesn't show (filtered out by a search)
+    /// changes nothing for the others.
+    func testRecordingKeepsOneEntryAndHiddenFriendsDontMatter() {
+        let created = FriendsCreatedInFlow()
+        created.record("elena")
+        created.record("alia")
+        created.record("elena")
+        XCTAssertEqual(created.ids, ["elena", "alia"])
+
+        let shown = [denis, miha]
+        XCTAssertEqual(
+            FriendUsageRanking.sorted(shown, by: [:], createdInFlow: created.ids).map(\.name),
+            ["Denis", "Miha"]
+        )
+    }
 }

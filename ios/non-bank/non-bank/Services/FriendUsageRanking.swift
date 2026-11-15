@@ -36,8 +36,26 @@ enum FriendUsageRanking {
     /// `friends` with the most used first; at equal counts, the more
     /// recently used first. Friends never split with keep their incoming
     /// (alphabetical) order, after everyone else.
-    static func sorted(_ friends: [Friend], by usage: [String: Usage]) -> [Friend] {
-        friends.enumerated().sorted { a, b in
+    ///
+    /// - Parameter createdInFlow: friends created in the current add / edit
+    ///   flow, newest first (`FriendsCreatedInFlow`). They go before
+    ///   everyone, in that order: just created, selected, and in sight.
+    static func sorted(
+        _ friends: [Friend],
+        by usage: [String: Usage],
+        createdInFlow: [String] = []
+    ) -> [Friend] {
+        let flowPosition = Dictionary(
+            createdInFlow.enumerated().map { ($0.element, $0.offset) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return friends.enumerated().sorted { a, b in
+            let flowA = flowPosition[a.element.id], flowB = flowPosition[b.element.id]
+            if flowA != nil || flowB != nil {
+                guard let flowA else { return false }
+                guard let flowB else { return true }
+                return flowA < flowB
+            }
             let usageA = usage[a.element.id], usageB = usage[b.element.id]
             let countA = usageA?.count ?? 0, countB = usageB?.count ?? 0
             if countA != countB { return countA > countB }

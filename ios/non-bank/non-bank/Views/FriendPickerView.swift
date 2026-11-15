@@ -6,6 +6,9 @@ struct FriendPickerView: View {
     @EnvironmentObject var friendStore: FriendStore
     /// Only read, to put the friends you split with most often first.
     @EnvironmentObject var transactionStore: TransactionStore
+    /// Friends created in the current add / edit-transaction flow: listed
+    /// first. nil outside such a flow.
+    @Environment(FriendsCreatedInFlow.self) private var createdInFlow: FriendsCreatedInFlow?
 
     /// Currently selected friend IDs (toggle set)
     @State private var selection: Set<String>
@@ -92,10 +95,14 @@ struct FriendPickerView: View {
                 $0.groups.contains(where: { $0.lowercased().contains(query) })
             }
         }
-        // The people you split with most often first — no scrolling past
-        // the alphabet to reach them. Display order only: the confirmed
-        // selection keeps the store's order.
-        return FriendUsageRanking.sorted(result, by: FriendUsageRanking.usage(in: transactionStore.transactions))
+        // Friends just created in this flow first, then the people you
+        // split with most often — no scrolling to reach either. Display
+        // order only: the confirmed selection keeps the store's order.
+        return FriendUsageRanking.sorted(
+            result,
+            by: FriendUsageRanking.usage(in: transactionStore.transactions),
+            createdInFlow: createdInFlow?.ids ?? []
+        )
     }
 
     /// "You" row is hidden when the caller explicitly excludes the
@@ -189,6 +196,7 @@ struct FriendPickerView: View {
             if !searchText.isEmpty { searchText = "" }
         }) {
             FriendFormView(existingGroups: friendStore.allGroups, isCompact: true) { newFriend in
+                createdInFlow?.record(newFriend.id)
                 Task {
                     await friendStore.add(newFriend)
                     selection.insert(newFriend.id)

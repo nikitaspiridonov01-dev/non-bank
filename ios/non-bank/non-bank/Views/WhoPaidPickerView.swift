@@ -52,6 +52,9 @@ struct WhoPaidPickerView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var friendStore: FriendStore
     @EnvironmentObject var transactionStore: TransactionStore
+    /// Friends created in the current add / edit-transaction flow, passed
+    /// on to the friend picker below. nil outside such a flow.
+    @Environment(FriendsCreatedInFlow.self) private var createdInFlow: FriendsCreatedInFlow?
 
     let participants: [WhoPaidParticipant]
     let totalAmount: Double
@@ -447,6 +450,7 @@ struct WhoPaidPickerView: View {
             }
         }) {
             FriendFormView(existingGroups: friendStore.allGroups, isCompact: true) { newFriend in
+                createdInFlow?.record(newFriend.id)
                 Task {
                     await friendStore.add(newFriend)
                     pendingNewFriendForPicker = newFriend
@@ -467,6 +471,7 @@ struct WhoPaidPickerView: View {
             }
             .environmentObject(friendStore)
             .environmentObject(transactionStore)
+            .environment(createdInFlow)
         }
     }
 

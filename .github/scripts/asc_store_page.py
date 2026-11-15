@@ -58,7 +58,8 @@ Non Bank is for people who want to understand their money and settle up with fri
 Got an idea, or something you'd love Non Bank to do? Write to nonbankapp@gmail.com — every suggestion shapes what comes next."""
 
 WHATS_NEW_EN = ("• Receipt scans are more complete: an item is no longer dropped when its name resembles a receipt label or when the prices don't add up\n"
-                "• If the items don't add up to the receipt total, the app now reads the receipt a second time on its own")
+                "• If the items don't add up to the receipt total, the app now reads the receipt a second time on its own\n"
+                "• A friend you create while adding a transaction now appears at the top of the list, already selected")
 
 LOCALES = {
     "en-US": {
@@ -97,7 +98,8 @@ LOCALES = {
 
 Идеи и пожелания: nonbankapp@gmail.com""",
         "whatsNew": ("• Сканирование чеков стало полнее: товар больше не пропадает, если его название похоже на служебную строку чека или сумма позиций не сходится\n"
-                     "• Если позиции не сходятся с итогом чека, приложение само читает чек второй раз"),
+                     "• Если позиции не сходятся с итогом чека, приложение само читает чек второй раз\n"
+                     "• Друг, созданный во время добавления транзакции, теперь появляется в самом верху списка, уже выбранным"),
     },
     "es-MX": {
         "name": "Non Bank: Gastos y Cuentas",
@@ -127,7 +129,8 @@ PRIVADO POR DISEÑO
 
 ¿Ideas? Escríbenos a nonbankapp@gmail.com""",
         "whatsNew": ("• El escaneo de tickets es más completo: ya no se pierde un artículo cuando su nombre parece una línea del ticket o cuando los precios no cuadran\n"
-                     "• Si los artículos no suman el total del ticket, la app lo lee una segunda vez por su cuenta"),
+                     "• Si los artículos no suman el total del ticket, la app lo lee una segunda vez por su cuenta\n"
+                     "• Un amigo que creas al agregar una transacción ahora aparece arriba de la lista, ya seleccionado"),
     },
     "de-DE": {
         "name": "Non Bank: Ausgaben & Teilen",
@@ -157,7 +160,8 @@ PRIVAT BY DESIGN
 
 Ideen? Schreib an nonbankapp@gmail.com""",
         "whatsNew": ("• Belege werden vollständiger erfasst: Ein Artikel geht nicht mehr verloren, wenn sein Name wie eine Belegzeile klingt oder die Preise nicht aufgehen\n"
-                     "• Wenn die Positionen nicht die Belegsumme ergeben, liest die App den Beleg automatisch ein zweites Mal"),
+                     "• Wenn die Positionen nicht die Belegsumme ergeben, liest die App den Beleg automatisch ein zweites Mal\n"
+                     "• Freunde, die du beim Hinzufügen einer Buchung anlegst, erscheinen jetzt ganz oben in der Liste – bereits ausgewählt"),
     },
     "fr-FR": {
         "name": "Non Bank: Dépenses & Partage",
@@ -187,7 +191,8 @@ PRIVÉ PAR CONCEPTION
 
 Des idées ? Écrivez à nonbankapp@gmail.com""",
         "whatsNew": ("• La lecture des tickets est plus complète : un article n'est plus perdu quand son nom ressemble à une ligne du ticket ou quand les prix ne tombent pas juste\n"
-                     "• Si les articles ne correspondent pas au total du ticket, l'app le relit automatiquement une seconde fois"),
+                     "• Si les articles ne correspondent pas au total du ticket, l'app le relit automatiquement une seconde fois\n"
+                     "• Un ami créé pendant l'ajout d'une opération apparaît désormais en haut de la liste, déjà sélectionné"),
     },
 }
 

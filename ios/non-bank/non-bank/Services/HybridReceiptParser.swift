@@ -231,11 +231,21 @@ actor HybridReceiptParser {
     /// A receipt that fits one frame whose items don't add up to its
     /// printed total is read once more, by a different model: a model
     /// misses a line or misreads a digit now and then, and two models
-    /// rarely the same one. Until this, such a receipt went to the review
-    /// screen as first read, a bought item short. The second read replaces
-    /// the first only when it settles the matter (`secondReadSettles`);
-    /// otherwise the first stands and the review screen shows its mismatch.
-    /// One more request, paid only by receipts that don't add up.
+    /// rarely the same one. One more request, paid only by receipts that
+    /// don't add up. What the second read settles:
+    ///
+    /// - **The items** (`secondReadSettles`): both read the same total, and
+    ///   the second's items add up to it — the first missed or misread a
+    ///   line. The second read is the result.
+    /// - **The total** (`correctedTotal`): the second's items add up to its
+    ///   total, and that total is what the FIRST read's items add up to as
+    ///   well — the first got every line and misread the total. The first
+    ///   read is the result, with the second's total. (1.0.8 build 22: all
+    ///   items right, "Prices don't add up" against a misread total. Before
+    ///   1.0.8 the prune pass deleted an item to fit such a total.)
+    ///
+    /// Otherwise the first read stands and the review screen shows its
+    /// mismatch.
     private func secondRead(
         of image: UIImage,
         after first: Result,
@@ -251,14 +261,41 @@ actor HybridReceiptParser {
         ) else {
             return kept
         }
-        let settles = Self.secondReadSettles(second, first: first)
         #if DEBUG
         let provider: String = { if case .cloud(let p) = second.source { return p } else { return "—" } }()
-        print("[HybridReceiptParser] second read (excluded=\(firstProvider), answered=\(provider)): gap \(Self.totalGap(second)) → keeping \(settles ? "second" : "first")")
+        print("[HybridReceiptParser] second read (excluded=\(firstProvider), answered=\(provider)): items \(second.parsedReceipt.items.count), total \(second.parsedReceipt.totalAmount ?? 0), gap \(Self.totalGap(second))")
         #endif
-        guard settles else { return kept }
-        second.reconciliationPasses = 2
-        return second
+        if Self.secondReadSettles(second, first: first) {
+            second.reconciliationPasses = 2
+            return second
+        }
+        if let total = Self.correctedTotal(first: first, second: second) {
+            let read = first.parsedReceipt
+            var corrected = Result(
+                parsedReceipt: ParsedReceipt(
+                    storeName: read.storeName,
+                    date: read.date,
+                    items: read.items,
+                    totalAmount: total,
+                    currency: read.currency,
+                    suggestedCategory: read.suggestedCategory,
+                    language: read.language
+                ),
+                confidence: .high,
+                totalsMatch: true,
+                source: first.source,
+                attemptedProvidersCount: first.attemptedProvidersCount,
+                poolRemaining: first.poolRemaining,
+                poolLow: first.poolLow
+            )
+            corrected.reconciliationPasses = 2
+            corrected.layout = first.layout
+            #if DEBUG
+            print("[HybridReceiptParser] second read: first read's items stand, total \(read.totalAmount ?? 0) → \(total)")
+            #endif
+            return corrected
+        }
+        return kept
     }
 
     /// True when a second read of the same receipt is to replace the
@@ -274,6 +311,38 @@ actor HybridReceiptParser {
         else { return false }
         return !hasTotalMismatch(second)
     }
+
+    /// The receipt's total when the first read got every line but misread
+    /// the total; nil otherwise. Three figures from two models agree on it:
+    /// the second read's total, its items' sum, and the first read's
+    /// items' sum. Against them stands one reading — the first's total.
+    ///
+    /// A first total LOWER than its items is always corrected: the printed
+    /// total of a receipt is never below its lines (a discount the models
+    /// skipped would make the second read land on the lower printed total,
+    /// not on the items). A HIGHER one is corrected too, except where
+    /// sales tax is added under the subtotal (US and Canadian receipts, or
+    /// no currency read): there the first total may be right, and the
+    /// second read a model that took the subtotal for the total.
+    static func correctedTotal(first: Result, second: Result) -> Double? {
+        guard let firstTotal = first.parsedReceipt.totalAmount, firstTotal > 0,
+              let secondTotal = second.parsedReceipt.totalAmount, secondTotal > 0,
+              !first.parsedReceipt.items.isEmpty,
+              !second.parsedReceipt.items.isEmpty,
+              !hasTotalMismatch(second)
+        else { return nil }
+        let firstItems = first.parsedReceipt.items.reduce(0.0) { $0 + $1.lineTotal }
+        guard abs(firstItems - secondTotal) <= 0.05, abs(firstTotal - secondTotal) > 0.05 else { return nil }
+        if firstTotal > firstItems {
+            let currency = (first.parsedReceipt.currency ?? second.parsedReceipt.currency)?.uppercased()
+            guard let currency, !salesTaxOnTopCurrencies.contains(currency) else { return nil }
+        }
+        return secondTotal
+    }
+
+    /// Currencies of countries whose receipts add sales tax under the
+    /// subtotal, so the printed total is above the item lines by design.
+    private static let salesTaxOnTopCurrencies: Set<String> = ["USD", "CAD"]
 
     /// How far Σ(items) is from the receipt's own printed total; infinity
     /// when there is no total to compare against.

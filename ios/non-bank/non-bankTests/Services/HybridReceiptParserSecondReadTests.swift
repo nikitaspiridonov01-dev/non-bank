@@ -13,12 +13,12 @@ final class HybridReceiptParserSecondReadTests: XCTestCase {
         ReceiptItem(name: name, quantity: 1, price: total, total: total)
     }
 
-    private func result(_ totals: [Double], total: Double?) -> HybridReceiptParser.Result {
+    private func result(_ totals: [Double], total: Double?, currency: String? = "RSD") -> HybridReceiptParser.Result {
         HybridReceiptParser.Result(
             parsedReceipt: ParsedReceipt(
                 storeName: nil, date: nil,
                 items: totals.enumerated().map { item("Item \($0.offset)", $0.element) },
-                totalAmount: total, currency: "RSD"
+                totalAmount: total, currency: currency
             ),
             confidence: .medium, totalsMatch: false,
             source: .cloud(provider: "test"), attemptedProvidersCount: 1
@@ -46,6 +46,51 @@ final class HybridReceiptParserSecondReadTests: XCTestCase {
         let first = result([30, 12.50], total: 46.01)
         XCTAssertFalse(HybridReceiptParser.secondReadSettles(result([30, 12.50], total: 42.50), first: first))
         XCTAssertFalse(HybridReceiptParser.secondReadSettles(result([30, 12.50], total: nil), first: first))
+    }
+
+    // MARK: - When the second read corrects the first read's total
+
+    /// Every line read right, the total misread low (a digit): the second
+    /// model's items and total, and the first's items, all say 419.97.
+    func testCorrectedTotal_firstTotalMisreadLow() {
+        let first = result([149.99, 89.99, 179.99], total: 410.97)
+        let second = result([149.99, 89.99, 179.99], total: 419.97)
+        XCTAssertEqual(HybridReceiptParser.correctedTotal(first: first, second: second) ?? 0, 419.97, accuracy: 0.001)
+        // Below its items the total is corrected whatever the currency.
+        XCTAssertNotNil(HybridReceiptParser.correctedTotal(
+            first: result([30, 12.50], total: 40, currency: "USD"),
+            second: result([30, 12.50], total: 42.50, currency: "USD")))
+    }
+
+    /// Misread high — the cash given taken for the total — on a receipt
+    /// whose prices include VAT.
+    func testCorrectedTotal_firstTotalMisreadHigh() {
+        let first = result([1200, 494.38], total: 2000)
+        let second = result([1200, 494.38], total: 1694.38)
+        XCTAssertEqual(HybridReceiptParser.correctedTotal(first: first, second: second) ?? 0, 1694.38, accuracy: 0.001)
+    }
+
+    /// US sales tax sits on top of the items: a first total above them may
+    /// be right, and a second read at the items' sum took the subtotal.
+    /// Same with no currency read.
+    func testCorrectedTotal_notAboveTheItemsWhereTaxIsAddedOnTop() {
+        for currency in ["USD", "CAD", nil] as [String?] {
+            let first = result([30, 12.50], total: 46.01, currency: currency)
+            let second = result([30, 12.50], total: 42.50, currency: currency)
+            XCTAssertNil(HybridReceiptParser.correctedTotal(first: first, second: second), currency ?? "nil")
+        }
+    }
+
+    /// The second read lands on a total the first read's items don't add
+    /// up to, or its own items don't add up: nothing to correct.
+    func testCorrectedTotal_needsAllThreeToAgree() {
+        let first = result([149.99, 89.99, 179.99], total: 410.97)
+        // A discount both models skipped: the second reads the real, lower total.
+        XCTAssertNil(HybridReceiptParser.correctedTotal(first: first, second: result([149.99, 89.99, 179.99], total: 399.97)))
+        // The second's items are off.
+        XCTAssertNil(HybridReceiptParser.correctedTotal(first: first, second: result([149.99, 99.99, 179.99], total: 419.97)))
+        // The second reads the same total as the first: a matter for the items, not the total.
+        XCTAssertNil(HybridReceiptParser.correctedTotal(first: first, second: result([149.99, 80.99, 179.99], total: 410.97)))
     }
 
     // MARK: - The whole path, against a stubbed backend
@@ -122,6 +167,23 @@ final class HybridReceiptParserSecondReadTests: XCTestCase {
         XCTAssertEqual(result.parsedReceipt.items.count, 3)
         XCTAssertEqual(result.reconciliationPasses, 1)
         XCTAssertEqual(requests.count, 1)
+    }
+
+    /// The first model reads every line but misreads the total; the second
+    /// reads the same lines and the right total. The first read's items
+    /// stand, with the right total: nothing to warn about.
+    func testMisreadTotalIsCorrectedByTheSecondRead() async throws {
+        let (result, requests) = try await parse([
+            response(provider: "gemini", items: full, total: 410.97),
+            response(provider: "mistral", items: [("MLEKO 1L", 149.99), ("HLEB", 89.99), ("JOGURT", 179.99)], total: 419.97),
+        ])
+        XCTAssertEqual(result.parsedReceipt.items.map(\.name), ["Mleko 1L", "Hleb beli", "Jogurt 1kg"])
+        XCTAssertEqual(result.parsedReceipt.totalAmount ?? 0, 419.97, accuracy: 0.001)
+        XCTAssertTrue(result.totalsMatch)
+        XCTAssertEqual(result.source, .cloud(provider: "gemini"))
+        XCTAssertEqual(result.reconciliationPasses, 2)
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests[1].contains("name=\"exclude_provider\"\r\n\r\ngemini\r\n"))
     }
 
     /// The second read is off as well: the first stands, mismatch and all.

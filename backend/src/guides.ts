@@ -1,15 +1,21 @@
 // How-to guides on the public site, one per language, each written for a
 // search with little competition that a new site can realistically rank for:
 //
-//   /split-receipt-by-item   "split a receipt by item"            (English)
-//   /sr/podela-racuna        "podela računa"                      (Serbian, Latin)
-//   /ru/kak-razdelit-schet   "как разделить счёт в ресторане"     (Russian)
+//   /split-receipt-by-item        "split a receipt by item"              (English)
+//   /sr/podela-racuna             "podela računa"                        (Serbian, Latin)
+//   /ru/kak-razdelit-schet        "как разделить счёт в ресторане"       (Russian)
+//   /es/como-dividir-la-cuenta    "cómo dividir la cuenta"               (Spanish, Mexico)
+//   /de/rechnung-teilen           "Rechnung teilen"                      (German)
+//   /fr/partager-l-addition       "partager l'addition"                  (French)
 //
 // Each is a real answer, not a doorway page: when to split by item, the
 // method step by step, a worked example whose numbers add up, shared dishes /
-// tax / tip / discounts, an FAQ, and then the app. The three cover the same
-// topic, so they name each other as hreflang alternates (English is the
-// x-default). Claims about the app match what it does: shared items split
+// tax / tip / discounts, an FAQ, and then the app. Each is written for its
+// country's habits (VAT in the prices, how much people tip), not translated
+// word for word. They cover the same topic, so they name each other as
+// hreflang alternates (English is the x-default). The app's own interface is
+// English only, and the non-English guides say so. Claims about the app
+// match what it does: shared items split
 // among whoever had them; service charges, fees and discounts spread in
 // proportion to each person's items; a tip too once it is marked as one
 // (see SplitShareCalculator.swift). Keep each FAQ and its FAQPage JSON-LD in
@@ -44,9 +50,9 @@ export interface Guide {
   cta: string;
   alsoIn: string;
   nav: { home: string; privacy: string; support: string };
+  /** First published (ISO date); also the Article's dateModified. */
+  published: string;
 }
-
-const PUBLISHED = "2026-11-14";
 
 const EN: Guide = {
   path: "/split-receipt-by-item",
@@ -164,6 +170,7 @@ const EN: Guide = {
   cta: "Get Non Bank free on the App Store",
   alsoIn: "Also in",
   nav: { home: "Home", privacy: "Privacy Policy", support: "Support" },
+  published: "2026-11-14",
 };
 
 const SR: Guide = {
@@ -279,6 +286,7 @@ const SR: Guide = {
   cta: "Preuzmite Non Bank besplatno na App Store-u",
   alsoIn: "Takođe na",
   nav: { home: "Početna", privacy: "Politika privatnosti", support: "Podrška" },
+  published: "2026-11-14",
 };
 
 const RU: Guide = {
@@ -394,9 +402,382 @@ const RU: Guide = {
   cta: "Скачать Non Bank бесплатно в App Store",
   alsoIn: "Читать на",
   nav: { home: "Главная", privacy: "Политика конфиденциальности", support: "Поддержка" },
+  published: "2026-11-14",
 };
 
-export const GUIDES: ReadonlyArray<Guide> = [EN, SR, RU];
+// The App Store page is localized for Mexico (es-MX), so the example is a
+// Mexican dinner in pesos; the advice holds for Spain too (IVA is in the
+// prices in both). "Cuenta" is the bill here, so "account" is avoided:
+// "sin registrarte" instead.
+const ES: Guide = {
+  path: "/es/como-dividir-la-cuenta",
+  lang: "es",
+  hreflang: "es",
+  locale: "es_MX",
+  languageName: "Español",
+  title: "Cómo dividir la cuenta en un restaurante, con propina",
+  description:
+    "Divide la cuenta de forma justa: lo que pidió cada uno, platos compartidos y propina proporcional. Un ejemplo con números y cómo hacerlo en el iPhone.",
+  eyebrow: "Guía",
+  h1: "Cómo dividir la cuenta según lo que pidió cada uno",
+  lede: "Dividir la cuenta en partes iguales es rápido, pero pocas veces es justo: alguien pidió unos tacos y un agua de jamaica, y otro una arrachera y dos cervezas. Dividirla por consumo significa que cada uno paga lo que pidió, más su parte justa de los platos compartidos y de la propina. Aquí te explicamos cómo hacerlo a mano, con un ejemplo, y cómo hacerlo en unos cuantos toques.",
+  body: `
+    <section>
+      <h2>Cuándo dividir por consumo</h2>
+      <p>Divide en partes iguales cuando todos pidieron más o menos lo mismo, o cuando la diferencia es un café. Divide por consumo cuando los pedidos son muy distintos: alguien no toma alcohol, alguien solo pidió una entrada, alguien llegó para el postre. Importa sobre todo con los amigos con los que sales cada semana, porque las pequeñas injusticias se van sumando.</p>
+    </section>
+
+    <section>
+      <h2>Paso a paso</h2>
+      <ol class="howto">
+        <li><strong>Revisa la cuenta línea por línea.</strong> Junto a cada plato o bebida, anota el nombre de quien lo pidió.</li>
+        <li><strong>Divide lo compartido.</strong> Una pizza para la mesa o una botella de vino se divide entre quienes de verdad la compartieron, no entre toda la mesa.</li>
+        <li><strong>Suma lo de cada persona.</strong> Ese es su subtotal. Todos los subtotales juntos dan el total de la cuenta antes de la propina.</li>
+        <li><strong>Reparte la propina en proporción.</strong> Quien pidió el 40% de la cuenta deja el 40% de la propina. Lo más fácil: si dejan el 10%, suma un 10% al subtotal de cada uno.</li>
+        <li><strong>Comprueba el total.</strong> Las partes de todos deben sumar exactamente lo que se pagó. Si al redondear sobra un peso, asígnaselo a una persona.</li>
+        <li><strong>Págale a quien pagó.</strong> Si una persona pagó toda la cuenta, cada uno le devuelve su parte.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Un ejemplo con números</h2>
+      <p>Lucía, Diego y Sofía fueron a cenar. La cuenta dice:</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Consumo</th><th class="num">Precio (MXN)</th><th>Quién lo pidió</th></tr></thead>
+        <tbody>
+          <tr><td>Guacamole para compartir</td><td class="num">$150</td><td>Lucía, Diego, Sofía</td></tr>
+          <tr><td>Tacos al pastor</td><td class="num">$120</td><td>Lucía</td></tr>
+          <tr><td>Agua de jamaica</td><td class="num">$40</td><td>Lucía</td></tr>
+          <tr><td>Arrachera</td><td class="num">$260</td><td>Diego</td></tr>
+          <tr><td>2 × cerveza</td><td class="num">$130</td><td>Diego</td></tr>
+          <tr><td>Enchiladas suizas</td><td class="num">$200</td><td>Sofía</td></tr>
+          <tr class="total"><td>Total</td><td class="num">$900</td><td></td></tr>
+        </tbody>
+      </table></div>
+      <p>En México el IVA ya viene incluido en los precios, así que no hay que repartirlo aparte. Dejan 10% de propina, es decir, $90. El guacamole lo compartieron los tres, así que a cada uno le tocan $50. Entonces:</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th></th><th class="num">Consumo</th><th class="num">Propina 10%</th><th class="num">Paga</th></tr></thead>
+        <tbody>
+          <tr><td>Lucía</td><td class="num">$210</td><td class="num">$21</td><td class="num">$231</td></tr>
+          <tr><td>Diego</td><td class="num">$440</td><td class="num">$44</td><td class="num">$484</td></tr>
+          <tr><td>Sofía</td><td class="num">$250</td><td class="num">$25</td><td class="num">$275</td></tr>
+          <tr class="total"><td>Total</td><td class="num">$900</td><td class="num">$90</td><td class="num">$990</td></tr>
+        </tbody>
+      </table></div>
+      <p>Si hubieran dividido en partes iguales, cada uno habría pagado $330: Lucía habría pagado $99 de más, Sofía $55 de más, y Diego $154 menos de lo que costó su cena.</p>
+    </section>
+
+    <section>
+      <h2>Platos compartidos, propina, IVA y descuentos</h2>
+      <ul class="points">
+        <li><strong>Los platos compartidos</strong> se dividen solo entre quienes los comieron. Si dos de cinco compartieron una botella de vino, se divide entre dos.</li>
+        <li><strong>La propina y el cargo por servicio</strong> se reparten en proporción, así que quien pidió más deja más. Una propina igual para todos es más simple, pero entonces quien pidió menos deja el porcentaje más alto de su propio consumo. Si la cuenta ya incluye el servicio, no lo dejes dos veces.</li>
+        <li><strong>El IVA</strong> ya está incluido en los precios en México y en España, así que no hay nada extra que repartir. Si el impuesto se suma aparte, como en Estados Unidos, se reparte en proporción, igual que la propina.</li>
+        <li><strong>Los descuentos</strong> son para quien pidió los productos a los que se aplican. Un descuento sobre toda la cuenta se reparte en proporción, como la propina.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Divide la cuenta en unos cuantos toques</h2>
+      <p>Con una servilleta y la calculadora del teléfono se puede, pero toma diez minutos. ${APP_NAME}, una app gratuita para iPhone, lo hace por ti:</p>
+      <div class="steps">
+        <div class="step"><div>
+          <h3>Escanea la cuenta</h3>
+          <p>Toma una foto del ticket o elige una captura de pantalla de un pedido en línea. ${APP_NAME} lee cada línea, los precios y el total, incluidos los tickets en español.</p>
+        </div></div>
+        <div class="step"><div>
+          <h3>Marca quién pidió qué</h3>
+          <p>Asigna cada producto a tus amigos; lo compartido se divide entre quienes lo compartieron. Los cargos por servicio, las comisiones y los descuentos se reparten en proporción automáticamente, y la propina también, en cuanto la marcas como propina.</p>
+        </div></div>
+        <div class="step"><div>
+          <h3>Salda cuentas</h3>
+          <p>La parte de cada uno se suma al saldo que llevas con ese amigo, compensado entre todas las cenas y viajes. Márcalo como saldado cuando llegue el dinero.</p>
+        </div></div>
+      </div>
+      <p class="note">Sin conectar tu banco, sin registrarte y sin anuncios. Tus datos se quedan en tu iPhone. Por ahora la app está en inglés.</p>
+    </section>`,
+  faqHeading: "Preguntas frecuentes",
+  faq: [
+    {
+      q: "¿La propina se divide en partes iguales o según lo que pidió cada uno?",
+      a: "Según lo que pidió cada uno, en proporción a su subtotal. La propina es un porcentaje del consumo, así que quien pidió más deja más. Dividirla en partes iguales está bien cuando todos pidieron más o menos lo mismo.",
+    },
+    {
+      q: "¿Cuánta propina se deja en México?",
+      a: "Lo habitual es entre el 10 y el 15% del consumo, según el servicio. Antes de calcularla, revisa que la cuenta no incluya ya el servicio, para no dejarlo dos veces.",
+    },
+    {
+      q: "¿Cómo se divide un plato compartido?",
+      a: "Divide su precio entre el número de personas que de verdad lo compartieron y suma esa parte al subtotal de cada una. Quien no lo probó no paga nada por él.",
+    },
+    {
+      q: "¿Qué hago si los productos no suman el total de la cuenta?",
+      a: "Busca en la cuenta un cargo por servicio, un descuento o una propina ya incluida. Reparte la diferencia en proporción al subtotal de cada uno, igual que la propina.",
+    },
+    {
+      q: "¿Y si una sola persona pagó toda la cuenta?",
+      a: "Cada uno le devuelve su parte. Si sales con frecuencia con los mismos amigos, en vez de devolver el dinero después de cada cena, lleva un saldo: Non Bank lo compensa entre todas las cuentas compartidas.",
+    },
+    {
+      q: "¿Hay una app para dividir la cuenta por consumo?",
+      a: "Sí. Non Bank es una app gratuita para iPhone: escaneas el ticket, marcas quién pidió qué y calcula la parte de cada uno, con platos compartidos y propina. No necesitas registrarte ni conectar tu banco.",
+    },
+  ],
+  cta: "Descarga Non Bank gratis en el App Store",
+  alsoIn: "También en",
+  nav: { home: "Inicio", privacy: "Política de privacidad", support: "Soporte" },
+  published: "2026-11-24",
+};
+
+// In Germany the waiter often asks "Zusammen oder getrennt?" and splits at
+// the table, so the case for doing it yourself is the one where a single
+// person pays. "Konto" means a bank account, so: "keine Registrierung".
+const DE: Guide = {
+  path: "/de/rechnung-teilen",
+  lang: "de",
+  hreflang: "de",
+  locale: "de_DE",
+  languageName: "Deutsch",
+  title: "Rechnung teilen im Restaurant: fair, mit Trinkgeld",
+  description:
+    "So teilst du die Rechnung fair: wer was hatte, geteilte Gerichte und Trinkgeld anteilig. Mit Rechenbeispiel – und wie es auf dem iPhone in Sekunden geht.",
+  eyebrow: "Ratgeber",
+  h1: "Rechnung teilen: So zahlt jeder, was er bestellt hat",
+  lede: "Die Rechnung einfach durch alle zu teilen geht schnell, ist aber selten fair: Die eine hatte nur einen Salat und eine Apfelschorle, der andere ein Schnitzel und zwei Weizen. Teilt ihr nach Bestellung, zahlt jeder, was er bestellt hat, plus seinen fairen Anteil an geteilten Gerichten und am Trinkgeld. Hier steht, wie das von Hand geht, mit einem Rechenbeispiel, und wie es mit ein paar Fingertipps klappt.",
+  body: `
+    <section>
+      <h2>Wann nach Bestellung teilen?</h2>
+      <p>Gleichmäßig zu teilen reicht, wenn alle ungefähr dasselbe bestellt haben oder der Unterschied ein Kaffee ist. Nach Bestellung teilen solltest du, wenn die Bestellungen weit auseinanderliegen: Jemand trinkt keinen Alkohol, jemand hatte nur eine Vorspeise, jemand kam erst zum Dessert. Oft fragt die Bedienung ohnehin „Zusammen oder getrennt?“. Selbst rechnen musst du, wenn einer alles bezahlt: bei großen Gruppen, mit einer Karte für alle, bei einer Lieferbestellung oder im Urlaub. Besonders lohnt es sich mit Freunden, mit denen du jede Woche essen gehst, denn kleine Ungerechtigkeiten summieren sich.</p>
+    </section>
+
+    <section>
+      <h2>Schritt für Schritt</h2>
+      <ol class="howto">
+        <li><strong>Geh die Rechnung Zeile für Zeile durch.</strong> Schreib neben jede Position, wer sie bestellt hat.</li>
+        <li><strong>Teile, was geteilt wurde.</strong> Eine Pizza für den Tisch oder eine Flasche Wein wird durch die Zahl der Leute geteilt, die wirklich etwas davon hatten, nicht durch alle am Tisch.</li>
+        <li><strong>Rechne zusammen, was jeder hatte.</strong> Das ist seine Zwischensumme. Alle Zwischensummen zusammen ergeben den Rechnungsbetrag vor dem Trinkgeld.</li>
+        <li><strong>Verteile das Trinkgeld anteilig.</strong> Wer 40&nbsp;% der Rechnung bestellt hat, gibt auch 40&nbsp;% des Trinkgelds. Am einfachsten: Bei 10&nbsp;% Trinkgeld schlägst du auf jede Zwischensumme 10&nbsp;% auf.</li>
+        <li><strong>Prüf die Summe.</strong> Alle Anteile zusammen müssen genau den bezahlten Betrag ergeben. Bleibt nach dem Runden ein Cent übrig, schreib ihn einer Person zu.</li>
+        <li><strong>Zurückzahlen.</strong> Wer die Rechnung bezahlt hat, bekommt von allen anderen ihren jeweiligen Anteil zurück.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Ein Rechenbeispiel</h2>
+      <p>Lena, Jonas und Mia waren zusammen essen. Auf der Rechnung steht:</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Position</th><th class="num">Preis</th><th>Für wen</th></tr></thead>
+        <tbody>
+          <tr><td>Pizza Margherita</td><td class="num">12,00&nbsp;€</td><td>Lena, Jonas, Mia</td></tr>
+          <tr><td>Gemischter Salat</td><td class="num">8,50&nbsp;€</td><td>Lena</td></tr>
+          <tr><td>Apfelschorle</td><td class="num">3,50&nbsp;€</td><td>Lena</td></tr>
+          <tr><td>Schnitzel mit Pommes</td><td class="num">18,50&nbsp;€</td><td>Jonas</td></tr>
+          <tr><td>2 × Weizenbier</td><td class="num">9,50&nbsp;€</td><td>Jonas</td></tr>
+          <tr><td>Spaghetti Carbonara</td><td class="num">14,00&nbsp;€</td><td>Mia</td></tr>
+          <tr class="total"><td>Summe</td><td class="num">66,00&nbsp;€</td><td></td></tr>
+        </tbody>
+      </table></div>
+      <p>Die Mehrwertsteuer ist in Deutschland schon in den Preisen enthalten, die muss also niemand extra aufteilen. Sie geben 10&nbsp;% Trinkgeld, also 6,60&nbsp;€. Die Pizza haben sich alle drei geteilt, also zahlt jeder 4,00&nbsp;€ davon. Dann:</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th></th><th class="num">Bestellt</th><th class="num">Trinkgeld 10&nbsp;%</th><th class="num">Zahlt</th></tr></thead>
+        <tbody>
+          <tr><td>Lena</td><td class="num">16,00&nbsp;€</td><td class="num">1,60&nbsp;€</td><td class="num">17,60&nbsp;€</td></tr>
+          <tr><td>Jonas</td><td class="num">32,00&nbsp;€</td><td class="num">3,20&nbsp;€</td><td class="num">35,20&nbsp;€</td></tr>
+          <tr><td>Mia</td><td class="num">18,00&nbsp;€</td><td class="num">1,80&nbsp;€</td><td class="num">19,80&nbsp;€</td></tr>
+          <tr class="total"><td>Summe</td><td class="num">66,00&nbsp;€</td><td class="num">6,60&nbsp;€</td><td class="num">72,60&nbsp;€</td></tr>
+        </tbody>
+      </table></div>
+      <p>Hätten sie gleichmäßig geteilt, hätte jeder 24,20&nbsp;€ gezahlt: Lena 6,60&nbsp;€ zu viel, Mia 4,40&nbsp;€ zu viel, und Jonas 11,00&nbsp;€ weniger, als sein Essen gekostet hat.</p>
+    </section>
+
+    <section>
+      <h2>Geteilte Gerichte, Trinkgeld, Mehrwertsteuer und Rabatte</h2>
+      <ul class="points">
+        <li><strong>Geteilte Gerichte</strong> werden nur unter denen aufgeteilt, die davon hatten. Haben sich zwei von fünf eine Flasche Wein geteilt, wird sie durch zwei geteilt.</li>
+        <li><strong>Trinkgeld und Servicegebühren</strong> werden anteilig verteilt: Wer mehr bestellt hat, gibt mehr. Gleiches Trinkgeld für alle ist einfacher, aber dann gibt, wer am wenigsten bestellt hat, den höchsten Prozentsatz seiner eigenen Bestellung. Rundet ihr einfach auf, ist die Differenz zur Rechnung das Trinkgeld, und auch die lässt sich anteilig verteilen.</li>
+        <li><strong>Die Mehrwertsteuer</strong> ist in Deutschland und fast ganz Europa schon im Preis enthalten, da gibt es nichts zusätzlich aufzuteilen. Wird eine Steuer erst auf der Rechnung aufgeschlagen, wie in den USA, verteilst du sie anteilig, wie das Trinkgeld.</li>
+        <li><strong>Rabatte</strong> bekommt, wessen Positionen sie betreffen. Ein Rabatt auf die ganze Rechnung wird anteilig verteilt, wie das Trinkgeld.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Rechnung teilen mit ein paar Fingertipps</h2>
+      <p>Mit Bierdeckel und Taschenrechner geht es auch, dauert aber zehn Minuten. ${APP_NAME}, eine kostenlose iPhone-App, erledigt das für dich:</p>
+      <div class="steps">
+        <div class="step"><div>
+          <h3>Rechnung scannen</h3>
+          <p>Fotografiere die Rechnung oder den Kassenbon, oder wähle einen Screenshot einer Online-Bestellung. ${APP_NAME} liest jede Position, die Preise und die Summe, auch auf deutschen Belegen.</p>
+        </div></div>
+        <div class="step"><div>
+          <h3>Antippen, wer was hatte</h3>
+          <p>Ordne die Positionen deinen Freunden zu; Geteiltes wird unter denen aufgeteilt, die es geteilt haben. Servicegebühren, Zuschläge und Rabatte werden automatisch anteilig verteilt, das Trinkgeld auch, sobald du es als Trinkgeld markierst.</p>
+        </div></div>
+        <div class="step"><div>
+          <h3>Abrechnen</h3>
+          <p>Jeder Anteil landet im laufenden Saldo mit diesem Freund, verrechnet über alle Abendessen und Reisen. Ist das Geld da, markierst du die Schuld als beglichen.</p>
+        </div></div>
+      </div>
+      <p class="note">Kein Bank-Login, keine Registrierung, keine Werbung. Deine Daten bleiben auf deinem iPhone. Die App gibt es bisher nur auf Englisch.</p>
+    </section>`,
+  faqHeading: "Häufige Fragen",
+  faq: [
+    {
+      q: "Teilt man das Trinkgeld gleichmäßig oder nach Bestellung?",
+      a: "Nach Bestellung, anteilig zur Zwischensumme jedes Einzelnen. Das Trinkgeld ist ein Prozentsatz der Rechnung, also gibt mehr, wer mehr bestellt hat. Gleichmäßig ist in Ordnung, wenn alle ungefähr dasselbe hatten.",
+    },
+    {
+      q: "Wie viel Trinkgeld gibt man in Deutschland?",
+      a: "Üblich sind etwa 5 bis 10 %, oft wird einfach aufgerundet. Den Betrag mit Trinkgeld sagst du beim Bezahlen gleich mit an, zum Beispiel „Machen Sie 30“ bei einer Rechnung über 27,40 €.",
+    },
+    {
+      q: "Wie rechnet man ein Gericht ab, das sich mehrere geteilt haben?",
+      a: "Teile den Preis durch die Zahl der Leute, die wirklich davon gegessen haben, und rechne jedem von ihnen diesen Anteil zu. Wer nichts davon hatte, zahlt dafür nichts.",
+    },
+    {
+      q: "Was, wenn die Positionen nicht die Rechnungssumme ergeben?",
+      a: "Such auf der Rechnung nach einer Servicegebühr, einem Rabatt oder einem Gutschein. Verteile die Differenz anteilig zu den Zwischensummen, genau wie das Trinkgeld.",
+    },
+    {
+      q: "Was, wenn einer die ganze Rechnung bezahlt hat?",
+      a: "Alle anderen zahlen ihm ihren Anteil zurück. Wenn ihr oft mit denselben Leuten essen geht, führt lieber einen laufenden Saldo, statt jedes Mal zurückzuzahlen: Non Bank verrechnet ihn über alle gemeinsamen Rechnungen.",
+    },
+    {
+      q: "Gibt es eine App, um die Rechnung nach Bestellung zu teilen?",
+      a: "Ja. Non Bank ist eine kostenlose iPhone-App: Rechnung scannen, antippen, wer was hatte, und sie berechnet jeden Anteil, mit geteilten Positionen und Trinkgeld. Ohne Registrierung und ohne Bank-Login.",
+    },
+  ],
+  cta: "Non Bank kostenlos im App Store laden",
+  alsoIn: "Auch auf",
+  nav: { home: "Startseite", privacy: "Datenschutz", support: "Support" },
+  published: "2026-11-24",
+};
+
+// In France service is included in the prices ("service compris") and a tip
+// is optional, so the example has none and instead shows the other common
+// unfairness: a bottle of wine split among only the people who drank it.
+// French typography puts a non-breaking space before : ; ? ! — &nbsp; in
+// the HTML fields,   in the plain-text ones (title, FAQ, alsoIn).
+const FR: Guide = {
+  path: "/fr/partager-l-addition",
+  lang: "fr",
+  hreflang: "fr",
+  locale: "fr_FR",
+  languageName: "Français",
+  title: "Partager l'addition au restaurant, plat par plat",
+  description:
+    "Partagez l'addition au plus juste : qui a pris quoi, plats et vin partagés, pourboire. Un exemple chiffré, et comment le faire en un instant sur iPhone.",
+  eyebrow: "Guide",
+  h1: "Comment partager l'addition au restaurant, plat par plat",
+  lede: "Diviser l'addition en parts égales, c'est rapide, mais rarement juste&nbsp;: l'une a pris un croque-monsieur et une limonade, l'autre une entrecôte et la moitié d'une bouteille de vin. Partager plat par plat, c'est payer ce que l'on a commandé, plus sa juste part des plats partagés et du pourboire éventuel. Voici comment faire à la main, avec un exemple chiffré, et comment le faire en quelques gestes.",
+  body: `
+    <section>
+      <h2>Quand partager plat par plat</h2>
+      <p>Partagez en parts égales quand tout le monde a commandé à peu près la même chose, ou quand l'écart se résume à un café. Partagez plat par plat quand les commandes sont très différentes&nbsp;: quelqu'un ne boit pas d'alcool, quelqu'un n'a pris qu'une entrée, quelqu'un est arrivé pour le dessert. C'est surtout utile avec les amis avec qui vous dînez chaque semaine, parce que les petites injustices finissent par s'additionner. Et c'est indispensable quand une seule personne règle l'addition pour toute la table.</p>
+    </section>
+
+    <section>
+      <h2>Étape par étape</h2>
+      <ol class="howto">
+        <li><strong>Parcourez l'addition ligne par ligne.</strong> À côté de chaque plat ou boisson, notez qui l'a pris.</li>
+        <li><strong>Divisez ce qui a été partagé.</strong> Une pizza pour la table ou une bouteille de vin se divise entre ceux qui en ont vraiment profité, pas entre toute la table.</li>
+        <li><strong>Additionnez la part de chacun.</strong> C'est son sous-total. Tous les sous-totaux réunis donnent le montant de l'addition avant pourboire.</li>
+        <li><strong>Répartissez le pourboire au prorata.</strong> Qui a commandé 40&nbsp;% de l'addition laisse 40&nbsp;% du pourboire. Le plus simple&nbsp;: pour un pourboire de 5&nbsp;%, ajoutez 5&nbsp;% au sous-total de chacun.</li>
+        <li><strong>Vérifiez le total.</strong> Les parts de tous doivent donner exactement la somme payée. S'il reste un centime après l'arrondi, attribuez-le à une personne.</li>
+        <li><strong>Remboursez.</strong> Celui qui a réglé l'addition est remboursé par les autres, chacun pour sa part.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Un exemple chiffré</h2>
+      <p>Léa, Hugo et Chloé ont dîné ensemble. Sur l'addition&nbsp;:</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Plat</th><th class="num">Prix</th><th>Pour qui</th></tr></thead>
+        <tbody>
+          <tr><td>Planche mixte</td><td class="num">18,00&nbsp;€</td><td>Léa, Hugo, Chloé</td></tr>
+          <tr><td>Bouteille de côtes-du-rhône</td><td class="num">30,00&nbsp;€</td><td>Léa, Hugo</td></tr>
+          <tr><td>Salade de chèvre chaud</td><td class="num">14,00&nbsp;€</td><td>Léa</td></tr>
+          <tr><td>Entrecôte frites</td><td class="num">24,00&nbsp;€</td><td>Hugo</td></tr>
+          <tr><td>Croque-monsieur</td><td class="num">12,00&nbsp;€</td><td>Chloé</td></tr>
+          <tr><td>Limonade</td><td class="num">4,00&nbsp;€</td><td>Chloé</td></tr>
+          <tr class="total"><td>Total</td><td class="num">102,00&nbsp;€</td><td></td></tr>
+        </tbody>
+      </table></div>
+      <p>En France, la TVA et le service sont déjà compris dans les prix&nbsp;: il n'y a rien à ajouter. La planche se partage à trois, soit 6,00&nbsp;€ chacun, et la bouteille à deux, puisque Chloé ne boit pas de vin, soit 15,00&nbsp;€ chacun pour Léa et Hugo. Ensuite&nbsp;:</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th></th><th class="num">Sa commande</th><th class="num">Partagé</th><th class="num">Paie</th></tr></thead>
+        <tbody>
+          <tr><td>Léa</td><td class="num">14,00&nbsp;€</td><td class="num">21,00&nbsp;€</td><td class="num">35,00&nbsp;€</td></tr>
+          <tr><td>Hugo</td><td class="num">24,00&nbsp;€</td><td class="num">21,00&nbsp;€</td><td class="num">45,00&nbsp;€</td></tr>
+          <tr><td>Chloé</td><td class="num">16,00&nbsp;€</td><td class="num">6,00&nbsp;€</td><td class="num">22,00&nbsp;€</td></tr>
+          <tr class="total"><td>Total</td><td class="num">54,00&nbsp;€</td><td class="num">48,00&nbsp;€</td><td class="num">102,00&nbsp;€</td></tr>
+        </tbody>
+      </table></div>
+      <p>En parts égales, chacun aurait payé 34,00&nbsp;€&nbsp;: Chloé, qui n'a pas bu de vin, aurait payé 12,00&nbsp;€ de trop, tandis que Hugo aurait payé 11,00&nbsp;€ de moins que son repas, et Léa 1,00&nbsp;€ de moins.</p>
+    </section>
+
+    <section>
+      <h2>Plats partagés, pourboire, TVA et remises</h2>
+      <ul class="points">
+        <li><strong>Les plats partagés</strong> se divisent seulement entre ceux qui en ont pris. Si deux personnes sur cinq ont partagé une bouteille de vin, elle se divise par deux.</li>
+        <li><strong>Le pourboire</strong> est facultatif en France, puisque le service est compris dans les prix. Si vous en laissez un, le plus juste est de le partager au prorata&nbsp;: qui a commandé plus laisse plus. Un pourboire égal pour tous est plus simple, mais celui qui a commandé le moins laisse alors le plus gros pourcentage de sa commande.</li>
+        <li><strong>La TVA</strong> est déjà incluse dans les prix en France et dans presque toute l'Europe, il n'y a donc rien à répartir. Si une taxe est ajoutée sur l'addition, comme aux États-Unis, répartissez-la au prorata, comme le pourboire.</li>
+        <li><strong>Les remises</strong> vont à ceux dont les plats sont concernés. Une remise sur toute l'addition se répartit au prorata, comme le pourboire.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Partager l'addition en quelques gestes</h2>
+      <p>Sur un coin de nappe, c'est possible, mais il faut dix minutes et une calculatrice. ${APP_NAME}, une application gratuite pour iPhone, le fait pour vous&nbsp;:</p>
+      <div class="steps">
+        <div class="step"><div>
+          <h3>Scannez l'addition</h3>
+          <p>Prenez en photo l'addition ou le ticket de caisse, ou choisissez une capture d'écran d'une commande en ligne. ${APP_NAME} lit chaque ligne, les prix et le total, y compris sur les tickets en français.</p>
+        </div></div>
+        <div class="step"><div>
+          <h3>Indiquez qui a pris quoi</h3>
+          <p>Attribuez chaque article à vos amis&nbsp;; ce qui a été partagé est divisé entre ceux qui l'ont partagé. Frais de service, suppléments et remises sont répartis au prorata automatiquement, et le pourboire aussi, dès que vous l'indiquez comme pourboire.</p>
+        </div></div>
+        <div class="step"><div>
+          <h3>Faites les comptes</h3>
+          <p>La part de chacun s'ajoute au solde que vous avez avec cet ami, compensé sur tous vos dîners et voyages. Marquez-la comme réglée quand l'argent est rendu.</p>
+        </div></div>
+      </div>
+      <p class="note">Sans connexion à votre banque, sans création de compte et sans publicité. Vos données restent sur votre iPhone. L'application est pour l'instant en anglais.</p>
+    </section>`,
+  faqHeading: "Questions fréquentes",
+  faq: [
+    {
+      q: "Faut-il partager le pourboire à parts égales ou selon la commande ?",
+      a: "Selon la commande, au prorata du sous-total de chacun. Le pourboire est un pourcentage de l'addition, donc qui a commandé plus laisse plus. À parts égales, c'est acceptable quand tout le monde a commandé à peu près la même chose.",
+    },
+    {
+      q: "Faut-il laisser un pourboire en France ?",
+      a: "Ce n'est pas obligatoire : le service est compris dans les prix. Beaucoup de gens arrondissent l'addition ou laissent quelques euros quand le service était bon.",
+    },
+    {
+      q: "Comment partager un plat commun ?",
+      a: "Divisez son prix par le nombre de personnes qui en ont vraiment mangé, et ajoutez cette part au sous-total de chacune. Celui qui n'en a pas pris ne paie rien pour ce plat.",
+    },
+    {
+      q: "Et si les plats ne correspondent pas au total de l'addition ?",
+      a: "Cherchez sur l'addition des frais de service, une remise ou un supplément. Répartissez la différence au prorata des sous-totaux, comme le pourboire.",
+    },
+    {
+      q: "Et si une seule personne a payé toute l'addition ?",
+      a: "Chacun lui rembourse sa part. Si vous dînez souvent avec les mêmes amis, tenez plutôt un solde au lieu de rembourser à chaque fois : Non Bank le compense sur toutes vos additions partagées.",
+    },
+    {
+      q: "Existe-t-il une application pour partager l'addition plat par plat ?",
+      a: "Oui. Non Bank est une application gratuite pour iPhone : vous scannez l'addition, vous indiquez qui a pris quoi, et elle calcule la part de chacun, plats partagés et pourboire compris. Sans création de compte ni connexion à votre banque.",
+    },
+  ],
+  cta: "Télécharger Non Bank gratuitement sur l'App Store",
+  alsoIn: "Également en ",
+  nav: { home: "Accueil", privacy: "Confidentialité", support: "Assistance" },
+  published: "2026-11-24",
+};
+
+export const GUIDES: ReadonlyArray<Guide> = [EN, SR, RU, ES, DE, FR];
 
 function esc(s: string): string {
   return s
@@ -419,8 +800,8 @@ function render(g: Guide): string {
     headline: g.h1,
     description: g.description,
     inLanguage: g.lang,
-    datePublished: PUBLISHED,
-    dateModified: PUBLISHED,
+    datePublished: g.published,
+    dateModified: g.published,
     mainEntityOfPage: canonical,
     image: `${SITE_URL}/og.png`,
     author: { "@type": "Organization", name: APP_NAME, url: SITE_URL + "/" },

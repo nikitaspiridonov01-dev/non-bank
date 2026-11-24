@@ -26,10 +26,13 @@ export const SUPPORT_EMAIL = "nonbankapp@gmail.com";
 /** Public HTML pages, in sitemap order. `lastmod` is bumped by hand when a
  *  page's content changes materially (search engines treat it as a hint). */
 export const SITE_PAGES: ReadonlyArray<{ path: string; lastmod: string; priority: string }> = [
-  { path: "/", lastmod: "2026-11-14", priority: "1.0" },
+  { path: "/", lastmod: "2026-11-24", priority: "1.0" },
   { path: "/split-receipt-by-item", lastmod: "2026-11-14", priority: "0.8" },
   { path: "/sr/podela-racuna", lastmod: "2026-11-14", priority: "0.8" },
   { path: "/ru/kak-razdelit-schet", lastmod: "2026-11-14", priority: "0.8" },
+  { path: "/es/como-dividir-la-cuenta", lastmod: "2026-11-24", priority: "0.8" },
+  { path: "/de/rechnung-teilen", lastmod: "2026-11-24", priority: "0.8" },
+  { path: "/fr/partager-l-addition", lastmod: "2026-11-24", priority: "0.8" },
   { path: "/support", lastmod: "2026-10-13", priority: "0.6" },
   { path: "/privacy", lastmod: "2026-10-13", priority: "0.4" },
 ];

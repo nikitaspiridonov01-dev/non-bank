@@ -107,6 +107,9 @@ PAGES = [
     "https://non-bank.app/split-receipt-by-item",
     "https://non-bank.app/sr/podela-racuna",
     "https://non-bank.app/ru/kak-razdelit-schet",
+    "https://non-bank.app/es/como-dividir-la-cuenta",
+    "https://non-bank.app/de/rechnung-teilen",
+    "https://non-bank.app/fr/partager-l-addition",
     "https://non-bank.app/support",
     "https://non-bank.app/privacy",
 ]
